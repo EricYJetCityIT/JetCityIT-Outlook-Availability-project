@@ -3,7 +3,7 @@
 ---
 
 ## ✅ Completed Features
-- Tech slot submission with drag-to-paint (8am–6pm, Mon–Fri)
+- Tech slot submission with drag-to-paint (6am–9pm, Mon–Fri)
 - Manager heatmap view + individual per-user color-coded view
 - Compact sticky week picker bar with year button and week label
 - Single-month Google Calendar-style dropdown picker
