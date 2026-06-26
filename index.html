@@ -79,6 +79,16 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .cal-day.cal-in-week.cal-selected-start{background:var(--green);color:#fff;border-radius:5px 0 0 5px}
 .cal-day.cal-in-week.cal-selected-end{background:var(--green);color:#fff;border-radius:0 5px 5px 0}
 .cal-footer{margin-top:12px;border-top:1px solid var(--border);padding-top:10px;display:flex;align-items:center;justify-content:space-between}
+
+/* ── Holiday styling ── */
+.cal-day.cal-holiday{color:#C4320A;font-weight:600}
+.cal-day.cal-holiday::before{content:"";width:5px;height:5px;background:#F97316;border-radius:50%;position:absolute;top:3px;right:3px}
+.mc-cell.is-holiday{color:#C4320A;font-weight:600;position:relative}
+.mc-cell.is-holiday::before{content:"";width:4px;height:4px;background:#F97316;border-radius:50%;position:absolute;top:2px;right:2px}
+.holiday-badge{display:inline-flex;align-items:center;gap:3px;background:#FFF7ED;color:#C4320A;border:1px solid #FDBA74;border-radius:4px;font-size:10px;font-weight:600;padding:1px 5px;margin-left:4px;white-space:nowrap;vertical-align:middle;line-height:1.4}
+.holiday-badge-sm{font-size:9px;padding:1px 4px}
+.col-head-holiday{display:flex;flex-direction:column;align-items:center;gap:1px}
+.col-head-holiday .holiday-name{font-size:9px;color:#C4320A;font-weight:500;line-height:1;white-space:nowrap;max-width:60px;overflow:hidden;text-overflow:ellipsis}
 .cal-footer span{font-size:11px;color:var(--text3)}
 .cal-today-btn{font-size:12px;color:var(--green);border:none;background:none;cursor:pointer;font-weight:500;font-family:inherit}
 .month-nav{position:relative}
@@ -138,10 +148,10 @@ input[type=text]::placeholder{color:var(--text3)}
 .grid-col-heads span.today{color:var(--green)}
 .slot-row{display:grid;grid-template-columns:46px repeat(5,1fr);gap:3px;margin-bottom:3px}
 .time-lbl{font-size:11px;color:var(--text3);display:flex;align-items:center;padding-right:6px;user-select:none;font-variant-numeric:tabular-nums}
-.slot{height:26px;border-radius:4px;cursor:pointer;background:var(--surface2);border:1.5px solid var(--border);transition:background .08s,border-color .08s,transform .06s;user-select:none;-webkit-user-select:none}
+.slot{height:26px;border-radius:4px;cursor:pointer;background:var(--green);border:1.5px solid var(--green-dark);transition:background .08s,border-color .08s,transform .06s;user-select:none;-webkit-user-select:none}
 .slot:hover{background:#D9F5ED;border-color:var(--green-mid);transform:scaleY(1.06)}
-.slot.on{background:var(--green);border-color:var(--green-dark)}
-.slot.on:hover{background:var(--green-dark)}
+.slot.on{background:#FEE2E2;border-color:#FCA5A5}
+.slot.on:hover{background:#FECACA;border-color:#F87171}
 .hour-sep{height:1px;background:var(--border);margin:4px 0 4px 46px;opacity:.6}
 
 /* ── Legend ── */
@@ -323,11 +333,11 @@ input[type=text]::placeholder{color:var(--text3)}
       <div class="card-head">
         <div>
           <div class="card-title" id="grid-title">Select your available slots</div>
-          <div class="card-sub">Click to toggle · 30-min blocks · 6 am – 9 pm</div>
+          <div class="card-sub">Click to mark when you're <strong>unavailable</strong> · 30-min blocks · 6 am – 8 pm</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <span class="hrs-tag" id="hrs-badge" style="display:none"></span>
-          <button class="btn btn-ghost btn-sm" onclick="clearAllSlots()">Clear</button>
+          <span class="hrs-tag" id="hrs-badge" style="display:none;background:#FEE2E2;color:#B91C1C"></span>
+          <button class="btn btn-ghost btn-sm" onclick="clearAllSlots()">Reset</button>
           <button class="btn btn-primary btn-sm" id="save-btn" onclick="saveSlots()">
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Save
@@ -339,7 +349,7 @@ input[type=text]::placeholder{color:var(--text3)}
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
           <div class="legend">
             <span class="legend-item"><span class="ldot" style="background:var(--green);border:1.5px solid var(--green-dark)"></span>Available</span>
-            <span class="legend-item"><span class="ldot" style="background:var(--surface2);border:1.5px solid var(--border)"></span>Unavailable</span>
+            <span class="legend-item"><span class="ldot" style="background:#FEE2E2;border:1.5px solid #FCA5A5"></span>Unavailable</span>
           </div>
           <div class="msg" id="save-msg"></div>
         </div>
@@ -359,8 +369,80 @@ input[type=text]::placeholder{color:var(--text3)}
 
 <script>
 const DAYS=['Mon','Tue','Wed','Thu','Fri'];
-const START=6,END=21,N=(END-START)*2;
+const START=6,END=20,N=(END-START)*2;
 const G='#16A37F',GB='#0D6E56';
+
+// ── US Federal Holidays ───────────────────────────────────────────────────────
+// Returns a Map of 'YYYY-MM-DD' -> holiday name for a given year
+function buildHolidayMap(year){
+  const map = new Map();
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function key(y,m,d){ return y+'-'+pad(m)+'-'+pad(d); }
+  // Fixed holidays (shifted if weekend: Sat->Fri, Sun->Mon)
+  function observed(y,m,d){
+    const dt = new Date(y,m-1,d);
+    const dow = dt.getDay();
+    if(dow===6) return new Date(y,m-1,d-1); // Sat -> Fri
+    if(dow===0) return new Date(y,m-1,d+1); // Sun -> Mon
+    return dt;
+  }
+  function addFixed(y,m,d,name){
+    const dt = observed(y,m,d);
+    map.set(key(dt.getFullYear(),dt.getMonth()+1,dt.getDate()), name);
+  }
+  // Nth weekday of a month: nth=1 means first, dow=1 means Monday
+  function nthWeekday(y,m,nth,dow){
+    const dt = new Date(y,m-1,1);
+    let count=0;
+    while(true){
+      if(dt.getDay()===dow){ count++; if(count===nth) return new Date(dt); }
+      dt.setDate(dt.getDate()+1);
+    }
+  }
+  // Last weekday of a month
+  function lastWeekday(y,m,dow){
+    const dt = new Date(y,m,0); // last day of month
+    while(dt.getDay()!==dow) dt.setDate(dt.getDate()-1);
+    return new Date(dt);
+  }
+
+  addFixed(year,1,1,"New Year's Day");
+  // MLK Day: 3rd Monday in January
+  const mlk = nthWeekday(year,1,3,1);
+  map.set(key(mlk.getFullYear(),mlk.getMonth()+1,mlk.getDate()),'MLK Day');
+  // Presidents Day: 3rd Monday in February
+  const pres = nthWeekday(year,2,3,1);
+  map.set(key(pres.getFullYear(),pres.getMonth()+1,pres.getDate()),"Presidents' Day");
+  // Memorial Day: Last Monday in May
+  const mem = lastWeekday(year,5,1);
+  map.set(key(mem.getFullYear(),mem.getMonth()+1,mem.getDate()),'Memorial Day');
+  // Juneteenth
+  addFixed(year,6,19,'Juneteenth');
+  // Independence Day
+  addFixed(year,7,4,'Independence Day');
+  // Labor Day: 1st Monday in September
+  const labor = nthWeekday(year,9,1,1);
+  map.set(key(labor.getFullYear(),labor.getMonth()+1,labor.getDate()),'Labor Day');
+  // Columbus Day: 2nd Monday in October
+  const col = nthWeekday(year,10,2,1);
+  map.set(key(col.getFullYear(),col.getMonth()+1,col.getDate()),'Columbus Day');
+  // Veterans Day
+  addFixed(year,11,11,'Veterans Day');
+  // Thanksgiving: 4th Thursday in November
+  const tg = nthWeekday(year,11,4,4);
+  map.set(key(tg.getFullYear(),tg.getMonth()+1,tg.getDate()),'Thanksgiving');
+  // Christmas
+  addFixed(year,12,25,'Christmas');
+  return map;
+}
+
+// Get holiday name for a Date object (or null)
+function getHoliday(dt){
+  const y = dt.getFullYear();
+  const map = buildHolidayMap(y);
+  const key = y+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  return map.get(key)||null;
+}
 
 // ── Tech color palette (fill, border, light bg, text) ────────────────────────
 const TECH_COLORS=[
@@ -543,6 +625,9 @@ function renderYearCal(){
     const cell=document.createElement('div');
     let cls='mc-cell';
     if(isToday) cls+=' is-today';
+    // Holiday check
+    const hName = getHoliday(dt);
+    if(hName) cls+=' is-holiday';
 
     if(!isWeekend){
       cls+=' wk-day';
@@ -558,8 +643,9 @@ function renderYearCal(){
       const wMon=getMondayOf(dt);
       const wKey=weekKey(wMon);
       cell.onclick=(()=>{const k=wKey;return()=>{selectWeek(k);closeYearCal();};})();
-      cell.title=fmt(wMon)+' – '+fmt(new Date(wMon.getTime()+4*86400000));
+      cell.title=fmt(wMon)+' – '+fmt(new Date(wMon.getTime()+4*86400000))+(hName?' · 🏛 '+hName:'');
     }
+    if(hName && isWeekend) cell.title=hName;
     cell.className=cls;
     cell.textContent=d;
     gridContainer.appendChild(cell);
@@ -602,7 +688,7 @@ function onWeekChanged(){
   const week=getSelectedWeek();
   updateBarWeekLabel();
   // Update tech view description
-  document.getElementById('tech-week-desc').textContent='Week of '+week.label+' · Click slots you\'re free, then save.';
+  document.getElementById('tech-week-desc').textContent='Week of '+week.label+' · All times are available by default — tap to mark when you\'re unavailable.';
   // If grid is open, reload slots for new week
   if(currentTech&&document.getElementById('slot-card').style.display!=='none'){
     const saved=getSlots(currentTech);
@@ -669,7 +755,7 @@ function loadSlots(){
   currentTech=name;
   const saved=getSlots(name);
   techSlots=saved||DAYS.map(()=>new Set());
-  document.getElementById('grid-title').textContent='Hi '+name.split(' ')[0]+'! Mark your available slots';
+  document.getElementById('grid-title').textContent='Hi '+name.split(' ')[0]+'! Tap any slots you\'re unavailable';
   document.getElementById('slot-card').style.display='block';
   document.getElementById('slot-card').scrollIntoView({behavior:'smooth',block:'nearest'});
   renderGrid();
@@ -692,7 +778,9 @@ function renderGrid(){
     const date=new Date(week.monDate);date.setDate(week.monDate.getDate()+i);
     const dayNum=date.getDate();
     const isToday=isCurrentWeek&&i===today;
-    html+=`<span class="${isToday?'today':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${isToday?'var(--green)':'var(--text3)'}">${dayNum}</span></span>`;
+    const hName=getHoliday(date);
+    const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>10?hName.slice(0,9)+'…':hName}</span>`:'';
+    html+=`<span class="${isToday?'today':''}" style="${hName?'color:#C4320A;':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${isToday?'var(--green)':hName?'#C4320A':'var(--text3)'}">${dayNum}</span>${hBadge}</span>`;
   });
   html+='</div>';
 
@@ -784,7 +872,7 @@ function toggleSlot(day,slot){
 function updateBadge(){
   const total=techSlots.reduce((a,s)=>a+s.size,0);
   const el=document.getElementById('hrs-badge');
-  if(total>0){el.textContent=(total*.5).toFixed(1)+' hrs marked';el.style.display='';}
+  if(total>0){el.textContent=(total*.5).toFixed(1)+' hrs unavailable';el.style.display='';}
   else el.style.display='none';
 }
 
@@ -835,19 +923,22 @@ function renderManager(){
   const total=techData.length;
   subLbl.textContent=`Week of ${week.label} · ${total} tech${total!==1?'s':''} submitted`;
 
+  // overlapCount = number of techs AVAILABLE at each slot (i.e. did NOT mark it unavailable)
   const overlapCount=DAYS.map(()=>new Array(N).fill(0));
   techData.forEach(({slotSets})=>{
     slotSets.forEach((s,di)=>{
-      for(let i=0;i<N;i++){if(s.has(START*2+i))overlapCount[di][i]++;}
+      for(let i=0;i<N;i++){if(!s.has(START*2+i))overlapCount[di][i]++;}
     });
   });
 
-  const totalFreeSlots=techData.map(({slotSets})=>slotSets.reduce((a,s)=>a+s.size,0));
+  // avg available = total slots - unavailable slots marked
+  const totalUnavailSlots=techData.map(({slotSets})=>slotSets.reduce((a,s)=>a+s.size,0));
+  const avgAvailHrs=total>0?((N*total-totalUnavailSlots.reduce((a,b)=>a+b,0))*.5/total).toFixed(1):0;
   const maxOverlap=overlapCount.flat().reduce((a,b)=>Math.max(a,b),0);
 
   let html=`<div class="stats-row">
     <div class="stat-pill"><span class="pip"></span><strong>${total}</strong> tech${total!==1?'s':''} submitted</div>
-    <div class="stat-pill"><span class="pip"></span><strong>${(totalFreeSlots.reduce((a,b)=>a+b,0)*.5/total).toFixed(1)} hrs</strong> avg available</div>
+    <div class="stat-pill"><span class="pip"></span><strong>${avgAvailHrs} hrs</strong> avg available</div>
     <div class="stat-pill"><span class="pip"></span><strong>${maxOverlap}</strong> max overlap</div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
@@ -877,7 +968,12 @@ function buildHeatmap(overlapCount,total){
 
   let html=`<div class="card"><div class="card-head"><div><div class="card-title">Team overlap heatmap</div><div class="card-sub">How many techs are free at each time</div></div></div><div class="card-body"><div class="grid-outer"><div class="overlap-grid">`;
   html+='<div class="grid-col-heads"><span></span>';
-  DAYS.forEach((d,i)=>{html+=`<span class="${i===today?'today':''}">${d}</span>`;});
+  DAYS.forEach((d,i)=>{
+    const date=new Date(getSelectedWeek().monDate);date.setDate(date.getDate()+i);
+    const hName=getHoliday(date);
+    const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>8?hName.slice(0,7)+'…':hName}</span>`:'';
+    html+=`<span class="${i===today?'today':''}" style="${hName?'color:#C4320A;':''}">${d}${hBadge}</span>`;
+  });
   html+='</div>';
 
   for(let s=0;s<N;s++){
@@ -917,27 +1013,35 @@ function buildIndividual(techData){
   let html='<div class="tech-list">';
   techData.forEach(({name,slotSets},idx)=>{
     const c=TECH_COLORS[idx%TECH_COLORS.length];
-    const total=slotSets.reduce((a,s)=>a+s.size,0);
+    // unavailSlots = how many slots marked unavailable; available = total - unavail
+    const unavailSlots=slotSets.reduce((a,s)=>a+s.size,0);
+    const availSlots=N*DAYS.length-unavailSlots;
     html+=`<div class="tech-card" style="border-left:4px solid ${c.fill}">
       <div class="tech-card-head">
         <div class="avatar" style="background:${c.light};color:${c.text};border-color:${c.fill}">${initials(name)}</div>
         <div class="tech-info">
           <div class="tech-name-lbl">${esc(name)}</div>
-          <div class="tech-hrs-lbl">${(total*.5).toFixed(1)} hrs available</div>
+          <div class="tech-hrs-lbl">${(availSlots*.5).toFixed(1)} hrs available</div>
         </div>
-        <span class="hrs-tag" style="font-size:11px;background:${c.light};color:${c.text}">${total} slots</span>
+        <span class="hrs-tag" style="font-size:11px;background:${c.light};color:${c.text}">${availSlots} slots free</span>
       </div>
       <div class="tech-card-body"><div class="grid-outer"><div class="slot-grid">
         <div class="grid-col-heads"><span></span>`;
-    DAYS.forEach((d,i)=>{html+=`<span class="${i===today?'today':''}">${d}</span>`;});
+    DAYS.forEach((d,i)=>{
+      const date=new Date(getSelectedWeek().monDate);date.setDate(date.getDate()+i);
+      const hName=getHoliday(date);
+      const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>8?hName.slice(0,7)+'…':hName}</span>`:'';
+      html+=`<span class="${i===today?'today':''}" style="${hName?'color:#C4320A;':''}">${d}${hBadge}</span>`;
+    });
     html+='</div>';
     for(let s=0;s<N;s++){
       const abs=START*2+s;
       if(s>0&&abs%2===0)html+='<div class="hour-sep"></div>';
       html+='<div class="slot-row"><div class="time-lbl">'+slotLabel(abs)+'</div>';
       DAYS.forEach((_,di)=>{
-        const on=slotSets[di].has(abs);
-        html+=`<div style="height:22px;border-radius:4px;background:${on?c.fill:'var(--surface2)'};border:1.5px solid ${on?c.border:'var(--border)'}"></div>`;
+        const unavail=slotSets[di].has(abs);
+        // available = tech color, unavailable = light red
+        html+=`<div style="height:22px;border-radius:4px;background:${unavail?'#FEE2E2':c.fill};border:1.5px solid ${unavail?'#FCA5A5':c.border}"></div>`;
       });
       html+='</div>';
     }
@@ -1043,12 +1147,17 @@ function renderCalDropdown(){
     if(isInWeek && !isWeekend) cls += ' cal-in-week';
     if(isStart) cls += ' cal-week-start cal-selected-start';
     if(isEnd) cls += ' cal-week-end cal-selected-end';
+    // Holiday
+    const hName = getHoliday(thisDate);
+    if(hName) cls += ' cal-holiday';
+    const titleAttr = hName ? 'title="' + hName + '"' : '';
 
     const onclick = isWeekend ? '' : 'onclick="calSelectDay(' + calViewYear + ',' + calViewMonth + ',' + d + ')"';
-    html += '<div class="' + cls + '" ' + onclick + '>' + d + '</div>';
+    html += '<div class="' + cls + '" ' + onclick + ' ' + titleAttr + '>' + d + '</div>';
   }
   html += '</div>';
   html += '<div class="cal-footer"><span>Click any weekday to select that week</span><button class="cal-today-btn" onclick="calGoToday()">Today</button></div>';
+  html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="color:#C4320A;font-weight:600">●</span> US federal holiday</div>';
   el.innerHTML = html;
 }
 
@@ -1109,6 +1218,9 @@ function calGoToday(){
   let adminUsers = USER_SLOTS.map(u => ({ ...u }));
   let adminEditingId = null;
   let adminEditName = '';
+
+  // Last login records keyed by username: { time, location, browser, device }
+  let adminLoginHistory = {};
 
   // ── Inject styles ──
   const style = document.createElement('style');
@@ -1183,6 +1295,7 @@ function calGoToday(){
       margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
     }
     .adm-acct-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    @media (max-width: 500px) { .adm-acct-grid { grid-template-columns: 1fr; } }
     .adm-acct-card {
       background: #fff; border: 1.5px solid #E4E7EC; border-radius: 8px; padding: 14px 16px;
     }
@@ -1227,7 +1340,14 @@ function calGoToday(){
       background: #fff; color: #0F1724; font-size: 13px; font-family: inherit;
       outline: none; width: 90%; box-sizing: border-box;
     }
-    .adm-info-note {
+    .adm-last-login {
+      margin-top: 10px; padding-top: 10px;
+      border-top: 1px solid #E4E7EC;
+      font-size: 11px; color: #8A93A2; line-height: 1.6;
+    }
+    .adm-last-login-label { font-weight: 600; color: #4B5565; margin-bottom: 2px; }
+    .adm-last-login-row { display: flex; align-items: center; gap: 5px; }
+    .adm-never { font-size: 11px; color: #C8CDDA; font-style: italic; margin-top: 10px; padding-top: 10px; border-top: 1px solid #E4E7EC; }
       background: #F0F2F5; border-radius: 8px; padding: 12px 14px;
       font-size: 12px; color: #8A93A2; margin-top: 16px; line-height: 1.6;
     }
@@ -1344,17 +1464,39 @@ function calGoToday(){
   function renderDashboard() {
     const activeCount = adminUsers.filter(u => u.active).length;
 
-    let adminCards = ADMIN_ACCOUNTS.map(a => `
-      <div class="adm-acct-card ${a.username === adminCurrentUser.username ? 'active-card' : ''}">
-        <div style="font-weight:600;font-size:14px;color:#0F1724;margin-bottom:2px">${a.name}</div>
-        <div style="font-size:12px;color:#8A93A2">${a.username}</div>
-        <div style="font-size:11px;color:#8A93A2;margin-top:4px">${a.phone}</div>
-        <div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;margin-top:8px;color:#0D6E56">
-          <span style="width:5px;height:5px;background:#16A37F;border-radius:50%;display:inline-block"></span>
-          ${a.username === adminCurrentUser.username ? 'Signed in' : 'Active'}
+    let adminCards = ADMIN_ACCOUNTS.map(a => {
+      const h = adminLoginHistory[a.username];
+      const lastLoginHtml = h
+        ? `<div class="adm-last-login">
+             <div class="adm-last-login-label">Last login</div>
+             <div class="adm-last-login-row">
+               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+               ${escHtml(h.time)}
+             </div>
+             <div class="adm-last-login-row">
+               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+               ${escHtml(h.location)}
+             </div>
+             <div class="adm-last-login-row">
+               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+               ${escHtml(h.browser)} · ${escHtml(h.device)}
+             </div>
+           </div>`
+        : `<div class="adm-never">No logins recorded yet</div>`;
+
+      return `
+        <div class="adm-acct-card ${a.username === adminCurrentUser.username ? 'active-card' : ''}">
+          <div style="font-weight:600;font-size:14px;color:#0F1724;margin-bottom:2px">${escHtml(a.name)}</div>
+          <div style="font-size:12px;color:#8A93A2">${escHtml(a.username)}</div>
+          <div style="font-size:11px;color:#8A93A2;margin-top:4px">${escHtml(a.phone)}</div>
+          <div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;margin-top:8px;color:#0D6E56">
+            <span style="width:5px;height:5px;background:#16A37F;border-radius:50%;display:inline-block"></span>
+            ${a.username === adminCurrentUser.username ? 'Signed in' : 'Active'}
+          </div>
+          ${lastLoginHtml}
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     let userRows = adminUsers.map(u => {
       const isEditing = adminEditingId === u.id;
@@ -1469,9 +1611,36 @@ function calGoToday(){
     const err = document.getElementById('adm-sms-error');
     if (entered !== adminSmsCode) { if (err) err.style.display = 'block'; return; }
     if (err) err.style.display = 'none';
+
+    // Record login time + device immediately, then fetch geo async
+    const now = new Date();
+    const ua = navigator.userAgent;
+    const browser = detectBrowser(ua);
+    const device = detectDevice(ua);
+    adminLoginHistory[adminCurrentUser.username] = {
+      time: now.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }),
+      browser,
+      device,
+      location: 'Looking up…',
+    };
+
     adminStep = 'dashboard';
     adminEditingId = null;
     renderStep();
+
+    // Fetch geolocation in background — updates card when done
+    fetch('https://ipapi.co/json/')
+      .then(r => r.json())
+      .then(d => {
+        const loc = [d.city, d.region, d.country_name].filter(Boolean).join(', ') || 'Unknown location';
+        adminLoginHistory[adminCurrentUser.username].location = loc;
+        // Re-render dashboard only if still on it
+        if (adminStep === 'dashboard') renderStep();
+      })
+      .catch(() => {
+        adminLoginHistory[adminCurrentUser.username].location = 'Location unavailable';
+        if (adminStep === 'dashboard') renderStep();
+      });
   }
 
   // ── Logout ──
@@ -1504,6 +1673,26 @@ function calGoToday(){
     adminEditingId = null;
     renderStep();
   };
+
+  // ── Browser / device detection ──
+  function detectBrowser(ua) {
+    if (/Edg\//.test(ua)) return 'Edge';
+    if (/OPR\/|Opera/.test(ua)) return 'Opera';
+    if (/Chrome\//.test(ua) && !/Chromium/.test(ua)) return 'Chrome';
+    if (/Firefox\//.test(ua)) return 'Firefox';
+    if (/Safari\//.test(ua) && !/Chrome/.test(ua)) return 'Safari';
+    return 'Unknown browser';
+  }
+  function detectDevice(ua) {
+    if (/iPad/.test(ua)) return 'iPad';
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/Android.*Mobile/.test(ua)) return 'Android phone';
+    if (/Android/.test(ua)) return 'Android tablet';
+    if (/Macintosh/.test(ua)) return 'Mac';
+    if (/Windows/.test(ua)) return 'Windows PC';
+    if (/Linux/.test(ua)) return 'Linux';
+    return 'Unknown device';
+  }
 
   // ── Helpers ──
   function escHtml(str) {
