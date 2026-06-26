@@ -1090,18 +1090,15 @@ const msalConfig = {
   },
   cache: { cacheLocation: 'sessionStorage' }
 };
-let msalInstance = null;
+const msalInstance = new msal.PublicClientApplication(msalConfig);
 
-document.addEventListener('DOMContentLoaded', function(){
-  msalInstance = new msal.PublicClientApplication(msalConfig);
-  msalInstance.initialize().then(() => {
-    const accounts = msalInstance.getAllAccounts();
-    if(accounts.length > 0){
-      const name = accounts[0].name || accounts[0].username.split('@')[0];
-      finishLogin(name);
-    }
-  });
-});
+msalInstance.initialize().then(() => {
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length > 0){
+    const name = accounts[0].name || accounts[0].username.split('@')[0];
+    finishLogin(name);
+  }
+}).catch(e => console.error('MSAL init error:', e));
 
 async function msSignIn(){
   const btn = document.getElementById('ms-login-btn');
