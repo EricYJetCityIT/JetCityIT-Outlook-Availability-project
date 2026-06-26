@@ -1173,6 +1173,10 @@ async function pushToCalendar(){
 
   const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monStr}T00:00:00&endDateTime=${friStr}T00:00:00&$select=id,subject,categories&$top=200`;
   const viewResp = await fetch(viewUrl, { headers: authHeader });
+  if(!viewResp.ok){
+    const err = await viewResp.json().catch(()=>({}));
+    throw new Error(`Calendar read failed (${viewResp.status}): ${err.error?.message || viewResp.statusText}`);
+  }
   const viewData = await viewResp.json();
 
   if(viewData.value){
@@ -1210,7 +1214,7 @@ async function pushToCalendar(){
           categories: [CAL_CATEGORY],
           start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
           end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
-          showAs: 'free',
+          showAs: 'busy',
           isReminderOn: false
         });
         runStart = null;
@@ -1219,13 +1223,17 @@ async function pushToCalendar(){
   });
 
   // 3. Post all events to the shared mailbox
-  await Promise.all(events.map(ev =>
-    fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
+  await Promise.all(events.map(async ev => {
+    const r = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
       method: 'POST',
       headers: { ...authHeader, 'Content-Type': 'application/json' },
       body: JSON.stringify(ev)
-    })
-  ));
+    });
+    if(!r.ok){
+      const err = await r.json().catch(()=>({}));
+      throw new Error(`Event create failed (${r.status}): ${err.error?.message || r.statusText}`);
+    }
+  }));
 
   return events.length;
 }
