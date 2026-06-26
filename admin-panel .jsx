@@ -8,8 +8,8 @@ import { useState } from "react";
 //   4. Move credentials out of source code into a config file or env vars
 
 const ACCOUNTS = [
-  { username: "admin1", password: "JetCity!1", phone: "***-***-1001", name: "Admin 1" },
-  { username: "admin2", password: "JetCity!2", phone: "***-***-1002", name: "Admin 2" },
+  { username: "dylanm", password: "PapaPutin1!", phone: "000-000-0000", name: "Dylan" },
+  { username: "ericy", password: "PapaPutin2!", phone: "000-000-0000", name: "Eric" },
   { username: "admin3", password: "JetCity!3", phone: "***-***-1003", name: "Admin 3" },
   { username: "admin4", password: "JetCity!4", phone: "***-***-1004", name: "Admin 4" },
 ];
