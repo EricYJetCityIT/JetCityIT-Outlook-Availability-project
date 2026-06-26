@@ -896,21 +896,30 @@ function updateBadge(){
 
 function clearAllSlots(){techSlots=DAYS.map(()=>new Set());renderGrid();}
 
-function saveSlots(){
+async function saveSlots(){
   if(!currentTech)return;
   const btn=document.getElementById('save-btn');
   btn.disabled=true;
   btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
-  setTimeout(()=>{
-    try{
-      setSlots(currentTech,techSlots);
-      showMsg('save-msg','✓ Saved for week of '+getSelectedWeek().label,'ok');
-    }catch(e){
-      showMsg('save-msg','Could not save — check browser settings.','err');
-    }
+  try{
+    setSlots(currentTech,techSlots);
+  }catch(e){
+    showMsg('save-msg','Could not save — check browser settings.','err');
     btn.disabled=false;
     btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
-  },400);
+    return;
+  }
+  // Push to shared mailbox calendar
+  try{
+    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Syncing calendar…';
+    const count = await pushToCalendar();
+    showMsg('save-msg','✓ Saved & synced '+count+' slot'+(count!==1?'s':'')+' to shared calendar','ok');
+  }catch(e){
+    console.error('Calendar sync error:',e);
+    showMsg('save-msg','✓ Saved locally — calendar sync failed: '+e.message,'err');
+  }
+  btn.disabled=false;
+  btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
 }
 
 function showMsg(id,text,type){
@@ -1091,11 +1100,18 @@ const msalConfig = {
   cache: { cacheLocation: 'sessionStorage' }
 };
 var msalInstance = new msal.PublicClientApplication(msalConfig);
+var msalAccount = null;
+
+const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite'];
+const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
+const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+const CAL_CATEGORY = 'JetCityIT-Availability';
 
 msalInstance.initialize().then(() => {
   var accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
-    var name = accounts[0].name || accounts[0].username.split('@')[0];
+    msalAccount = accounts[0];
+    var name = msalAccount.name || msalAccount.username.split('@')[0];
     finishLogin(name);
   }
 }).catch(function(e){ console.error('MSAL init error:', e); });
@@ -1107,8 +1123,9 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
-    const resp = await msalInstance.loginPopup({ scopes: ['User.Read'] });
-    const name = resp.account.name || resp.account.username.split('@')[0];
+    const resp = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    msalAccount = resp.account;
+    const name = msalAccount.name || msalAccount.username.split('@')[0];
     finishLogin(name);
   } catch(e) {
     errEl.textContent = e.message || 'Sign-in failed. Please try again.';
@@ -1130,6 +1147,87 @@ function finishLogin(name){
     hdr.appendChild(badge);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
+}
+
+// ── Graph API helpers ─────────────────────────────────────────────────────────
+async function getGraphToken(){
+  if(!msalAccount) throw new Error('Not signed in');
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: msalAccount });
+    return r.accessToken;
+  } catch(e) {
+    const r = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES, account: msalAccount });
+    return r.accessToken;
+  }
+}
+
+async function pushToCalendar(){
+  const week = getSelectedWeek();
+  const token = await getGraphToken();
+  const authHeader = { 'Authorization': 'Bearer ' + token };
+
+  // 1. Fetch all events in the week on the shared mailbox and delete ones we created
+  const monStr = week.monDate.toISOString().split('T')[0];
+  const friDate = new Date(week.monDate); friDate.setDate(week.monDate.getDate() + 5);
+  const friStr = friDate.toISOString().split('T')[0];
+
+  const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monStr}T00:00:00&endDateTime=${friStr}T00:00:00&$select=id,subject,categories&$top=200`;
+  const viewResp = await fetch(viewUrl, { headers: authHeader });
+  const viewData = await viewResp.json();
+
+  if(viewData.value){
+    const toDelete = viewData.value.filter(ev =>
+      (ev.categories || []).includes(CAL_CATEGORY) &&
+      ev.subject.includes(currentTech)
+    );
+    await Promise.all(toDelete.map(ev =>
+      fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
+        method: 'DELETE', headers: authHeader
+      })
+    ));
+  }
+
+  // 2. Build calendar events from contiguous available slot blocks
+  const events = [];
+  techSlots.forEach((daySlots, dayIdx) => {
+    const dayDate = new Date(week.monDate);
+    dayDate.setDate(week.monDate.getDate() + dayIdx);
+    const dateStr = dayDate.toISOString().split('T')[0];
+
+    let runStart = null;
+    for(let s = 0; s <= N; s++){
+      const inSlot = s < N && daySlots.has(START * 2 + s);
+      if(inSlot && runStart === null){
+        runStart = s;
+      } else if(!inSlot && runStart !== null){
+        const absStart = START * 2 + runStart;
+        const absEnd   = START * 2 + s;
+        const sh = Math.floor(absStart / 2), sm = (absStart % 2) * 30;
+        const eh = Math.floor(absEnd   / 2), em = (absEnd   % 2) * 30;
+        const pad = n => String(n).padStart(2,'0');
+        events.push({
+          subject: `[JCIT] ${currentTech} — Available`,
+          categories: [CAL_CATEGORY],
+          start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
+          end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
+          showAs: 'free',
+          isReminderOn: false
+        });
+        runStart = null;
+      }
+    }
+  });
+
+  // 3. Post all events to the shared mailbox
+  await Promise.all(events.map(ev =>
+    fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
+      method: 'POST',
+      headers: { ...authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify(ev)
+    })
+  ));
+
+  return events.length;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
