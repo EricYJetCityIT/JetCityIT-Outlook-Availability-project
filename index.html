@@ -254,8 +254,8 @@ input[type=text]::placeholder{color:var(--text3)}
 }
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
-</head>
 <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+</head>
 <body>
 
 <!-- ── Microsoft Login Overlay ── -->
@@ -1090,15 +1090,17 @@ const msalConfig = {
   },
   cache: { cacheLocation: 'sessionStorage' }
 };
-const msalInstance = new msal.PublicClientApplication(msalConfig);
+let msalInstance = null;
 
-// Initialize MSAL then check for an existing session
-msalInstance.initialize().then(() => {
-  const accounts = msalInstance.getAllAccounts();
-  if(accounts.length > 0){
-    const name = accounts[0].name || accounts[0].username.split('@')[0];
-    finishLogin(name);
-  }
+document.addEventListener('DOMContentLoaded', function(){
+  msalInstance = new msal.PublicClientApplication(msalConfig);
+  msalInstance.initialize().then(() => {
+    const accounts = msalInstance.getAllAccounts();
+    if(accounts.length > 0){
+      const name = accounts[0].name || accounts[0].username.split('@')[0];
+      finishLogin(name);
+    }
+  });
 });
 
 async function msSignIn(){
