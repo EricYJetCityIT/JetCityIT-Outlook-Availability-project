@@ -1092,6 +1092,15 @@ const msalConfig = {
 };
 const msalInstance = new msal.PublicClientApplication(msalConfig);
 
+// Initialize MSAL then check for an existing session
+msalInstance.initialize().then(() => {
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length > 0){
+    const name = accounts[0].name || accounts[0].username.split('@')[0];
+    finishLogin(name);
+  }
+});
+
 async function msSignIn(){
   const btn = document.getElementById('ms-login-btn');
   const errEl = document.getElementById('ms-login-err');
@@ -1099,6 +1108,7 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
+    await msalInstance.initialize();
     const resp = await msalInstance.loginPopup({ scopes: ['User.Read'] });
     const name = resp.account.name || resp.account.username.split('@')[0];
     finishLogin(name);
@@ -1111,12 +1121,8 @@ async function msSignIn(){
 }
 
 function finishLogin(name){
-  // Auto-fill name input and show header badge
   const nameInput = document.getElementById('tech-name');
   if(nameInput){ nameInput.value = name; }
-  const hdrName = document.querySelector('.hdr-name');
-  if(hdrName){ hdrName.textContent = 'Team Availability'; }
-  // Add signed-in badge to header
   const hdr = document.querySelector('.hdr');
   if(hdr && !document.getElementById('ms-user-badge')){
     const badge = document.createElement('div');
@@ -1127,15 +1133,6 @@ function finishLogin(name){
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
 }
-
-// Check if already signed in from a previous session
-(function checkExistingSession(){
-  const accounts = msalInstance.getAllAccounts();
-  if(accounts.length > 0){
-    const name = accounts[0].name || accounts[0].username.split('@')[0];
-    finishLogin(name);
-  }
-})();
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (function init(){
