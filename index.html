@@ -1090,15 +1090,15 @@ const msalConfig = {
   },
   cache: { cacheLocation: 'sessionStorage' }
 };
-const msalInstance = new msal.PublicClientApplication(msalConfig);
+var msalInstance = new msal.PublicClientApplication(msalConfig);
 
 msalInstance.initialize().then(() => {
-  const accounts = msalInstance.getAllAccounts();
+  var accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
-    const name = accounts[0].name || accounts[0].username.split('@')[0];
+    var name = accounts[0].name || accounts[0].username.split('@')[0];
     finishLogin(name);
   }
-}).catch(e => console.error('MSAL init error:', e));
+}).catch(function(e){ console.error('MSAL init error:', e); });
 
 async function msSignIn(){
   const btn = document.getElementById('ms-login-btn');
@@ -1107,7 +1107,6 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
-    await msalInstance.initialize();
     const resp = await msalInstance.loginPopup({ scopes: ['User.Read'] });
     const name = resp.account.name || resp.account.username.split('@')[0];
     finishLogin(name);
