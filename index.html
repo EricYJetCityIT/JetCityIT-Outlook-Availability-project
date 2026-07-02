@@ -1222,8 +1222,9 @@ async function pushToCalendar(){
     const addBlocks = (isAvail) => {
       let runStart = null;
       for(let s = 0; s <= N; s++){
-        const isUnavail = s < N && daySlots.has(START * 2 + s);
-        const inBlock = isAvail ? !isUnavail : isUnavail;
+        const inBlock = isAvail
+          ? (s < N && !daySlots.has(START * 2 + s))
+          : (s < N &&  daySlots.has(START * 2 + s));
         if(inBlock && runStart === null){ runStart = s; }
         else if(!inBlock && runStart !== null){
           const absStart = START * 2 + runStart;
@@ -1235,7 +1236,7 @@ async function pushToCalendar(){
             categories: [isAvail ? CAL_CATEGORY_AVAIL : CAL_CATEGORY_UNAVAIL],
             start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
             end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
-            showAs: isAvail ? 'free' : 'busy',
+            showAs: 'busy',
             isReminderOn: false
           });
           runStart = null;
