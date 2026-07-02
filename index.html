@@ -1168,11 +1168,15 @@ async function pushToCalendar(){
   const authHeader = { 'Authorization': 'Bearer ' + token };
 
   // 1. Fetch all events in the week on the shared mailbox and delete ones we created
-  const monStr = week.monDate.toISOString().split('T')[0];
-  const friDate = new Date(week.monDate); friDate.setDate(week.monDate.getDate() + 5);
-  const friStr = friDate.toISOString().split('T')[0];
+  // Use explicit UTC (Z suffix) and extend through Sunday to cover Friday 9pm PST → Saturday UTC
+  const monDate = new Date(week.monDate);
+  monDate.setUTCHours(0, 0, 0, 0);
+  const sunDate = new Date(monDate);
+  sunDate.setUTCDate(monDate.getUTCDate() + 7);
+  const monISO = monDate.toISOString();
+  const sunISO = sunDate.toISOString();
 
-  const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monStr}T00:00:00&endDateTime=${friStr}T00:00:00&$select=id,subject,categories&$top=200`;
+  const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monISO}&endDateTime=${sunISO}&$select=id,subject,categories&$top=200`;
   const viewResp = await fetch(viewUrl, { headers: authHeader });
   if(!viewResp.ok){
     const err = await viewResp.json().catch(()=>({}));
@@ -1185,11 +1189,11 @@ async function pushToCalendar(){
       (ev.subject || '').includes('[JCIT]') &&
       (ev.subject || '').includes(currentTech)
     );
-    await Promise.all(toDelete.map(ev =>
-      fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
+    for(const ev of toDelete){
+      await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
         method: 'DELETE', headers: authHeader
-      })
-    ));
+      });
+    }
   }
 
   // 2. Attempt to set up green/red categories on the shared mailbox (fails silently if no permission)
@@ -1248,8 +1252,8 @@ async function pushToCalendar(){
     addBlocks(false);
   });
 
-  // 4. Post all events to the shared mailbox
-  await Promise.all(events.map(async ev => {
+  // 4. Post all events to the shared mailbox sequentially to avoid throttling
+  for(const ev of events){
     const r = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
       method: 'POST',
       headers: { ...authHeader, 'Content-Type': 'application/json' },
@@ -1259,7 +1263,7 @@ async function pushToCalendar(){
       const err = await r.json().catch(()=>({}));
       throw new Error(`Event create failed (${r.status}): ${err.error?.message || r.statusText}`);
     }
-  }));
+  }
 
   return events.length;
 }
