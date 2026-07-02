@@ -1218,9 +1218,13 @@ async function pushToCalendar(){
   const events = [];
   const pad = n => String(n).padStart(2,'0');
 
-  techSlots.forEach((daySlots, dayIdx) => {
-    const dayDate = new Date(week.monDate);
-    dayDate.setDate(week.monDate.getDate() + dayIdx);
+  // Always iterate exactly 5 days (Mon–Fri), filling missing days with empty Sets
+  // to guard against stale localStorage data that was saved with fewer days.
+  const slots5 = Array.from({length: 5}, (_, i) => techSlots[i] || new Set());
+
+  slots5.forEach((daySlots, dayIdx) => {
+    // Use monDate (already UTC-normalised to midnight) + offset for reliable date strings
+    const dayDate = new Date(monDate.getTime() + dayIdx * 86400000);
     const dateStr = dayDate.toISOString().split('T')[0];
 
     const addBlocks = (isAvail) => {
