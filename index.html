@@ -1105,7 +1105,8 @@ var msalAccount = null;
 const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
 const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const CAL_CATEGORY = 'JetCityIT-Availability';
+const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
+const CAL_CATEGORY_UNAVAIL = 'JetCityIT-Unavailable';
 
 msalInstance.initialize().then(() => {
   var accounts = msalInstance.getAllAccounts();
@@ -1181,8 +1182,8 @@ async function pushToCalendar(){
 
   if(viewData.value){
     const toDelete = viewData.value.filter(ev =>
-      (ev.categories || []).includes(CAL_CATEGORY) &&
-      ev.subject.includes(currentTech)
+      (ev.subject || '').includes('[JCIT]') &&
+      (ev.subject || '').includes(currentTech)
     );
     await Promise.all(toDelete.map(ev =>
       fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
@@ -1191,38 +1192,62 @@ async function pushToCalendar(){
     ));
   }
 
-  // 2. Build calendar events from contiguous available slot blocks
+  // 2. Attempt to set up green/red categories on the shared mailbox (fails silently if no permission)
+  try {
+    const catResp = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, { headers: authHeader });
+    if(catResp.ok){
+      const catData = await catResp.json();
+      const existing = new Set((catData.value || []).map(c => c.displayName));
+      const catHeaders = { ...authHeader, 'Content-Type': 'application/json' };
+      const toMake = [];
+      if(!existing.has(CAL_CATEGORY_AVAIL))   toMake.push({ displayName: CAL_CATEGORY_AVAIL,   color: 'preset4' });
+      if(!existing.has(CAL_CATEGORY_UNAVAIL)) toMake.push({ displayName: CAL_CATEGORY_UNAVAIL, color: 'preset0' });
+      await Promise.all(toMake.map(cat =>
+        fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, {
+          method: 'POST', headers: catHeaders, body: JSON.stringify(cat)
+        })
+      ));
+    }
+  } catch(e){ console.warn('Category color setup skipped:', e.message); }
+
+  // 3. Build calendar events for both available and unavailable blocks
   const events = [];
+  const pad = n => String(n).padStart(2,'0');
+
   techSlots.forEach((daySlots, dayIdx) => {
     const dayDate = new Date(week.monDate);
     dayDate.setDate(week.monDate.getDate() + dayIdx);
     const dateStr = dayDate.toISOString().split('T')[0];
 
-    let runStart = null;
-    for(let s = 0; s <= N; s++){
-      const inSlot = s < N && !daySlots.has(START * 2 + s);
-      if(inSlot && runStart === null){
-        runStart = s;
-      } else if(!inSlot && runStart !== null){
-        const absStart = START * 2 + runStart;
-        const absEnd   = START * 2 + s;
-        const sh = Math.floor(absStart / 2), sm = (absStart % 2) * 30;
-        const eh = Math.floor(absEnd   / 2), em = (absEnd   % 2) * 30;
-        const pad = n => String(n).padStart(2,'0');
-        events.push({
-          subject: `[JCIT] ${currentTech} — Available`,
-          categories: [CAL_CATEGORY],
-          start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
-          end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
-          showAs: 'busy',
-          isReminderOn: false
-        });
-        runStart = null;
+    const addBlocks = (isAvail) => {
+      let runStart = null;
+      for(let s = 0; s <= N; s++){
+        const isUnavail = s < N && daySlots.has(START * 2 + s);
+        const inBlock = isAvail ? !isUnavail : isUnavail;
+        if(inBlock && runStart === null){ runStart = s; }
+        else if(!inBlock && runStart !== null){
+          const absStart = START * 2 + runStart;
+          const absEnd   = START * 2 + s;
+          const sh = Math.floor(absStart / 2), sm = (absStart % 2) * 30;
+          const eh = Math.floor(absEnd   / 2), em = (absEnd   % 2) * 30;
+          events.push({
+            subject: `[JCIT] ${currentTech} — ${isAvail ? 'Available' : 'Unavailable'}`,
+            categories: [isAvail ? CAL_CATEGORY_AVAIL : CAL_CATEGORY_UNAVAIL],
+            start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
+            end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
+            showAs: isAvail ? 'free' : 'busy',
+            isReminderOn: false
+          });
+          runStart = null;
+        }
       }
-    }
+    };
+
+    addBlocks(true);
+    addBlocks(false);
   });
 
-  // 3. Post all events to the shared mailbox
+  // 4. Post all events to the shared mailbox
   await Promise.all(events.map(async ev => {
     const r = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
       method: 'POST',
