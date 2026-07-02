@@ -1102,7 +1102,7 @@ const msalConfig = {
 var msalInstance = new msal.PublicClientApplication(msalConfig);
 var msalAccount = null;
 
-const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite'];
+const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
 const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const CAL_CATEGORY = 'JetCityIT-Availability';
