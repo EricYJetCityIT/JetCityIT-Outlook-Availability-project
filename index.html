@@ -1200,7 +1200,7 @@ async function pushToCalendar(){
 
     let runStart = null;
     for(let s = 0; s <= N; s++){
-      const inSlot = s < N && daySlots.has(START * 2 + s);
+      const inSlot = s < N && !daySlots.has(START * 2 + s);
       if(inSlot && runStart === null){
         runStart = s;
       } else if(!inSlot && runStart !== null){
