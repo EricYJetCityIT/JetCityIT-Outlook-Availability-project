@@ -21,6 +21,9 @@
   - Unavailable blocks → `[JCIT] {Name} — Unavailable` events (red category)
   - Old events for the tech/week are deleted and replaced on each save
   - Contiguous blocks merged into single events (no per-slot spam)
+  - Events created one at a time (sequential, not parallel) to prevent throttling/partial failures
+  - calendarView deletion query uses explicit UTC timestamps covering full Mon–Sun to ensure Friday evening events (which land in UTC on Saturday) are always found and cleaned up
+  - Always syncs exactly 5 days (Mon–Fri) regardless of what is in localStorage, preventing missing Friday events from stale saved data
 
 ---
 
@@ -48,10 +51,13 @@
 | `Calendars.ReadWrite` | Read/write signed-in user's own calendar |
 | `Calendars.ReadWrite.Shared` | Read/write shared mailbox calendar (`crewavailability@jetcityit.com`) |
 
-### Still Needed (for green/red category colors in Outlook)
-- `MailboxSettings.ReadWrite` — allows the app to set category colors (green/red) on the shared mailbox automatically
+### Category Colors (green/red) — Status
+- The app attempts to auto-create `JetCityIT-Available` (green, preset4) and `JetCityIT-Unavailable` (red, preset0) categories on the shared mailbox at save time
+- If `MailboxSettings.ReadWrite` is granted via Azure (see below), colors apply automatically
+- If not granted, events still show correctly with correct labels — just may appear in default Outlook grey instead of green/red
+
+### Optional: Add MailboxSettings.ReadWrite for automatic color setup
 - Steps: Azure Portal → App Registrations → the app → API Permissions → Add permission → Microsoft Graph → Delegated → `MailboxSettings.ReadWrite` → Grant admin consent
-- Without this: events still appear correctly, but may show in default grey color instead of green/red
 
 ---
 
@@ -64,6 +70,18 @@
   Add-MailboxFolderPermission -Identity "crewavailability@jetcityit.com:\Calendar" -User ericy@jetcityit.com -AccessRights Editor
   ```
 - View the shared calendar in Outlook Web: File → Open another mailbox → `crewavailability@jetcityit.com`
+
+---
+
+## 🐛 Bug Fixes Log (Calendar Sync)
+
+| Commit | What was fixed |
+|---|---|
+| `b65b538` | Logic inversion: code was creating "Available" events for *unavailable* slots and vice versa — one character fix (`!daySlots.has`) |
+| `6582143` | Available blocks for fully-available days never terminated — loop reached `s=N` with `inBlock=true` so the block never closed and no event was created; also changed `showAs` back to `'busy'` so events show as solid blocks |
+| `0036bb9` | Added Unavailable (red) events — previously only Available events were pushed; now both types are created per save |
+| `0db9d8e` | calendarView query used bare `T00:00:00` (no timezone) causing Friday evening events (which are Saturday UTC) to fall outside the cleanup range and pile up; also switched all event DELETEs and POSTs from `Promise.all` (parallel) to sequential `for` loops to prevent partial failures from API throttling |
+| `9ca14d0` | Friday events silently skipped when localStorage had stale data with fewer than 5 days — `forEach` would stop before Friday; fixed by always forcing exactly 5 days with `Array.from({length:5})` and using UTC-offset date math instead of local `setDate()` |
 
 ---
 
