@@ -142,11 +142,11 @@ input[type=text]::placeholder{color:var(--text3)}
 
 /* ── Grid ── */
 .grid-outer{overflow-x:auto;-webkit-overflow-scrolling:touch;user-select:none;-webkit-user-select:none}
-.slot-grid{min-width:360px}
-.grid-col-heads{display:grid;grid-template-columns:46px repeat(5,1fr);gap:3px;margin-bottom:6px}
+.slot-grid{min-width:490px}
+.grid-col-heads{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:6px}
 .grid-col-heads span{text-align:center;font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.02em}
 .grid-col-heads span.today{color:var(--green)}
-.slot-row{display:grid;grid-template-columns:46px repeat(5,1fr);gap:3px;margin-bottom:3px}
+.slot-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
 .time-lbl{font-size:11px;color:var(--text3);display:flex;align-items:center;padding-right:6px;user-select:none;font-variant-numeric:tabular-nums}
 .slot{height:26px;border-radius:4px;cursor:pointer;background:var(--green);border:1.5px solid var(--green-dark);transition:background .08s,border-color .08s,transform .06s;user-select:none;-webkit-user-select:none}
 .slot:hover{background:#D9F5ED;border-color:var(--green-mid);transform:scaleY(1.06)}
@@ -174,8 +174,8 @@ input[type=text]::placeholder{color:var(--text3)}
 .avatar{width:36px;height:36px;border-radius:50%;background:var(--green-light);color:var(--green-dark);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;border:1.5px solid #B2E5D8}
 
 /* ── Heatmap ── */
-.overlap-grid{min-width:360px}
-.overlap-row{display:grid;grid-template-columns:46px repeat(5,1fr);gap:3px;margin-bottom:3px}
+.overlap-grid{min-width:490px}
+.overlap-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
 .ocell{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;transition:background .12s}
 
 /* ── Tech cards ── */
@@ -266,7 +266,7 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-avatar{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
 .dp-avatar.dp-lead{box-shadow:0 0 0 2px var(--surface),0 0 0 3.5px var(--green)}
 .dp-board-wrap{overflow-x:auto}
-.dp-board{display:grid;grid-template-columns:repeat(5,minmax(190px,1fr));gap:10px;min-width:960px}
+.dp-board{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:10px;min-width:1050px}
 .dp-day-col{min-width:0;border-radius:var(--radius);padding:2px;transition:background .1s}
 .dp-day-col.dp-dragover{background:var(--green-light)}
 .dp-day-head{text-align:center;padding-bottom:8px}
@@ -472,7 +472,7 @@ input[type=text]::placeholder{color:var(--text3)}
 </div>
 
 <script>
-const DAYS=['Mon','Tue','Wed','Thu','Fri'];
+const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const START=6,END=21,N=(END-START)*2;
 const G='#16A37F',GB='#0D6E56';
 
@@ -614,8 +614,8 @@ function fmtMonth(year,month){return new Date(year,month,1).toLocaleDateString('
 function weekMetaFromKey(key){
   const dateStr=key.replace('wk:','');
   const mon=new Date(dateStr+'T00:00:00');
-  const fri=new Date(mon);fri.setDate(mon.getDate()+4);
-  return{key,label:fmt(mon)+' – '+fmt(fri),monDate:mon};
+  const sun=new Date(mon);sun.setDate(mon.getDate()+6);
+  return{key,label:fmt(mon)+' – '+fmt(sun),monDate:mon};
 }
 
 // Current selected week meta
@@ -692,24 +692,24 @@ function renderYearCal(){
   const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
   if(titleEl) titleEl.textContent=MONTH_NAMES[mo]+' '+yr;
 
-  // Build day-of-week header (Sun Mon Tue ... Sat)
+  // Build day-of-week header (Mon Tue ... Sun — matches Monday-start weeks below)
   if(dowContainer){
     dowContainer.innerHTML='';
-    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{
+    ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].forEach(d=>{
       const s=document.createElement('span');s.textContent=d;dowContainer.appendChild(s);
     });
   }
 
-  let selMon=null,selFri=null;
+  let selMon=null,selSun=null;
   if(selectedWeekKey){
     selMon=new Date(selectedWeekKey.replace('wk:','')+'T00:00:00');
-    selFri=new Date(selMon);selFri.setDate(selMon.getDate()+4);
+    selSun=new Date(selMon);selSun.setDate(selMon.getDate()+6);
   }
 
   gridContainer.innerHTML='';
 
-  // First day of month (0=Sun … 6=Sat)
-  const firstDow=new Date(yr,mo,1).getDay();
+  // First day of month, re-indexed so Monday=0 … Sunday=6 to match the header above
+  const firstDow=(new Date(yr,mo,1).getDay()+6)%7;
   const daysInMonth=new Date(yr,mo+1,0).getDate();
 
   // Leading blank cells
@@ -722,34 +722,28 @@ function renderYearCal(){
   // Day cells
   for(let d=1;d<=daysInMonth;d++){
     const dt=new Date(yr,mo,d);
-    const dow=dt.getDay(); // 0=Sun,6=Sat
-    const isWeekend=(dow===0||dow===6);
     const isToday=dt.getTime()===today.getTime();
 
     const cell=document.createElement('div');
-    let cls='mc-cell';
+    let cls='mc-cell wk-day';
     if(isToday) cls+=' is-today';
     // Holiday check
     const hName = getHoliday(dt);
     if(hName) cls+=' is-holiday';
 
-    if(!isWeekend){
-      cls+=' wk-day';
-      // Week selection highlight
-      if(selMon){
-        const inSel=dt>=selMon&&dt<=selFri;
-        if(inSel){
-          if(dt.getTime()===selMon.getTime()) cls+=' sel-start';
-          else if(dt.getTime()===selFri.getTime()) cls+=' sel-end';
-          else cls+=' sel-week';
-        }
+    // Week selection highlight (full Mon–Sun week)
+    if(selMon){
+      const inSel=dt>=selMon&&dt<=selSun;
+      if(inSel){
+        if(dt.getTime()===selMon.getTime()) cls+=' sel-start';
+        else if(dt.getTime()===selSun.getTime()) cls+=' sel-end';
+        else cls+=' sel-week';
       }
-      const wMon=getMondayOf(dt);
-      const wKey=weekKey(wMon);
-      cell.onclick=(()=>{const k=wKey;return()=>{selectWeek(k);closeYearCal();};})();
-      cell.title=fmt(wMon)+' – '+fmt(new Date(wMon.getTime()+4*86400000))+(hName?' · 🏛 '+hName:'');
     }
-    if(hName && isWeekend) cell.title=hName;
+    const wMon=getMondayOf(dt);
+    const wKey=weekKey(wMon);
+    cell.onclick=(()=>{const k=wKey;return()=>{selectWeek(k);closeYearCal();};})();
+    cell.title=fmt(wMon)+' – '+fmt(new Date(wMon.getTime()+6*86400000))+(hName?' · 🏛 '+hName:'');
     cell.className=cls;
     cell.textContent=d;
     gridContainer.appendChild(cell);
@@ -854,7 +848,7 @@ function switchTab(id){
 let techSlots=DAYS.map(()=>new Set());
 let currentTech='';
 
-function todayDayIdx(){const d=new Date().getDay();return d===0?-1:d-1}
+function todayDayIdx(){const d=new Date().getDay();return d===0?6:d-1}
 
 function loadSlots(){
   const name=document.getElementById('tech-name').value.trim();
@@ -1334,7 +1328,7 @@ const JCITDispatch=(function(){
   }
   function availabilityFor(name,dateStr){
     const dayIdx=dayIndexOfDate(dateStr);
-    if(dayIdx<0||dayIdx>4) return null;
+    if(dayIdx<0||dayIdx>6) return null;
     const slots=getSlots(name);
     if(!slots) return{status:'unknown',text:'No availability submitted'};
     const unavail=slots[dayIdx]||new Set();
@@ -1458,7 +1452,7 @@ const JCITDispatch=(function(){
   }
   function assignModal(id){
     const j=jobById(id); if(!j) return '';
-    const dayLabel=(function(){ const di=dayIndexOfDate(j.date); return di>=0&&di<=4?DAYS[di]:''; })();
+    const dayLabel=(function(){ const di=dayIndexOfDate(j.date); return di>=0&&di<=6?DAYS[di]:''; })();
     const availColor={available:'var(--green-dark)',unavailable:'var(--red)',partial:'var(--text2)',unknown:'var(--text3)'};
     const rows=activeWorkers().map(w=>{
       const isTech=(j.technicians||[]).indexOf(w.name)>=0, isLead=(j.lead||[]).indexOf(w.name)>=0, a=avatarFor(w.name);
@@ -1686,11 +1680,14 @@ async function pushToCalendar(){
   const authHeader = { 'Authorization': 'Bearer ' + token };
 
   // 1. Fetch all events in the week on the shared mailbox and delete ones we created
-  // Use explicit UTC (Z suffix) and extend through Sunday to cover Friday 9pm PST → Saturday UTC
+  // Use explicit UTC (Z suffix) and extend a full extra day past the week to cover
+  // Sunday 9pm PST landing on Monday UTC (mirrors the same Fri→Sat UTC rollover
+  // this app already had to account for, just one day further out now that
+  // Sunday is a working day too).
   const monDate = new Date(week.monDate);
   monDate.setUTCHours(0, 0, 0, 0);
   const sunDate = new Date(monDate);
-  sunDate.setUTCDate(monDate.getUTCDate() + 7);
+  sunDate.setUTCDate(monDate.getUTCDate() + 8);
   const monISO = monDate.toISOString();
   const sunISO = sunDate.toISOString();
 
@@ -1736,11 +1733,11 @@ async function pushToCalendar(){
   const events = [];
   const pad = n => String(n).padStart(2,'0');
 
-  // Always iterate exactly 5 days (Mon–Fri), filling missing days with empty Sets
+  // Always iterate exactly 7 days (Mon–Sun), filling missing days with empty Sets
   // to guard against stale localStorage data that was saved with fewer days.
-  const slots5 = Array.from({length: 5}, (_, i) => techSlots[i] || new Set());
+  const slots7 = Array.from({length: 7}, (_, i) => techSlots[i] || new Set());
 
-  slots5.forEach((daySlots, dayIdx) => {
+  slots7.forEach((daySlots, dayIdx) => {
     // Use monDate (already UTC-normalised to midnight) + offset for reliable date strings
     const dayDate = new Date(monDate.getTime() + dayIdx * 86400000);
     const dateStr = dayDate.toISOString().split('T')[0];
