@@ -1254,13 +1254,23 @@ const JCITDispatch=(function(){
     };
   }
   function load(){
-    try{const raw=localStorage.getItem(LS_KEY);if(raw)return JSON.parse(raw)}catch(e){}
-    if(!localStorage.getItem(SEED_FLAG_KEY)){
+    let existing=null;
+    try{const raw=localStorage.getItem(LS_KEY);if(raw)existing=JSON.parse(raw)}catch(e){}
+    const alreadySeeded=!!localStorage.getItem(SEED_FLAG_KEY);
+    // Seed once, even if this browser already has a roster-only record with no
+    // jobs yet (e.g. from just opening the board before any job was created).
+    if(!alreadySeeded&&(!existing||!existing.jobs||!existing.jobs.length)){
       try{localStorage.setItem(SEED_FLAG_KEY,'1')}catch(e){}
       const demo=seedDemoData();
+      if(existing&&existing.workers){
+        existing.workers.forEach(w=>{
+          if(!demo.workers.some(dw=>dw.name.toLowerCase()===w.name.toLowerCase())) demo.workers.push(w);
+        });
+      }
       try{localStorage.setItem(LS_KEY,JSON.stringify(demo))}catch(e){}
       return demo;
     }
+    if(existing) return existing;
     return{workers:[],jobs:[]};
   }
   function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}}
