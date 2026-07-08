@@ -790,7 +790,7 @@ function onWeekChanged(){
   // If grid is open, reload slots for new week
   if(currentTech&&document.getElementById('slot-card').style.display!=='none'){
     const saved=getSlots(currentTech);
-    techSlots=saved||DAYS.map(()=>new Set());
+    techSlots=normalizeSlots(saved);
     renderGrid();
     showMsg('save-msg','Switched to week of '+week.label,'ok');
   }
@@ -816,6 +816,11 @@ function getSlots(n){
 function setSlots(n,ss){
   localStorage.setItem(sKey(n),JSON.stringify(ss.map(s=>[...s])));
   const ns=getNames();if(!ns.includes(n.trim())){ns.push(n.trim());saveNames(ns)}
+}
+// Pads out slot arrays saved before Sat/Sun were added (5 days) to the current
+// DAYS.length (7), defaulting any missing days to fully available.
+function normalizeSlots(saved){
+  return DAYS.map((_,i)=>(saved&&saved[i])?saved[i]:new Set());
 }
 function deleteAll(){
   getNames().forEach(n=>localStorage.removeItem(sKey(n)));
@@ -857,7 +862,7 @@ function loadSlots(){
   errEl.style.display='none';
   currentTech=name;
   const saved=getSlots(name);
-  techSlots=saved||DAYS.map(()=>new Set());
+  techSlots=normalizeSlots(saved);
   document.getElementById('grid-title').textContent='Hi '+name.split(' ')[0]+'! Tap any slots you\'re unavailable';
   document.getElementById('slot-card').style.display='block';
   document.getElementById('slot-card').scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -1054,7 +1059,7 @@ function renderManager(){
     return;
   }
 
-  const techData=names.map(n=>({name:n,slotSets:getSlots(n)||DAYS.map(()=>new Set())}));
+  const techData=names.map(n=>({name:n,slotSets:normalizeSlots(getSlots(n))}));
   const total=techData.length;
   subLbl.textContent=`Week of ${week.label} · ${total} tech${total!==1?'s':''} submitted`;
 
