@@ -911,6 +911,7 @@ function renderGrid(){
 // ── Drag-to-paint ─────────────────────────────────────────────────────────────
 let dragActive=false;
 let dragPaintMode=null; // true=painting on, false=painting off
+let dragListenersAttached=false; // #slot-grid's own node is reused across renders — attach once only
 
 function slotFromEl(el){
   if(!el||!el.classList.contains('slot')) return null;
@@ -927,6 +928,8 @@ function paintSlot(el){
 }
 
 function attachDragListeners(){
+  if(dragListenersAttached) return; // renderGrid() calls this on every render; the grid
+  dragListenersAttached=true;       // node itself persists, so only bind once ever.
   const grid=document.getElementById('slot-grid');
 
   // Mouse
