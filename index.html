@@ -326,6 +326,10 @@ input[type=text]::placeholder{color:var(--text3)}
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/></svg>
       Manager view
     </button>
+    <button class="tab" id="tab-crewcal" onclick="switchTab('crewcal')">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M3 9h18M9 4v5M15 4v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Crew calendar
+    </button>
   </div>
 
   <!-- TECH VIEW -->
@@ -382,6 +386,117 @@ input[type=text]::placeholder{color:var(--text3)}
       <p id="mgr-sub-label">Loading…</p>
     </div>
     <div id="mgr-content"></div>
+  </div>
+
+  <!-- ── CREW CALENDAR VIEW (merged crew dispatch app, namespaced under #view-crewcal) ── -->
+  <style>
+    #view-crewcal{
+      --cc-bg:#F7F8FA;--cc-surface:#FFFFFF;--cc-surface2:#F0F2F5;
+      --cc-border:#E4E7EC;--cc-border2:#D0D5DD;
+      --cc-text:#0F1724;--cc-text2:#4B5565;--cc-text3:#8A93A2;
+      --cc-green:#16A37F;--cc-green-dark:#0D6E56;--cc-green-light:#E6F7F3;--cc-green-border:#0F6E56;
+      --cc-blue:#185FA5;--cc-blue-bg:#E6F1FB;
+      --cc-amber-bg:#FAEEDA;--cc-amber-fg:#854F0B;
+      --cc-red:#F04438;--cc-red-bg:#FCEBEB;--cc-red-fg:#791F1F;
+    }
+    #view-crewcal .cc-main{padding-top:4px}
+    #view-crewcal .cc-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+    #view-crewcal .cc-tabs{display:flex;gap:4px;background:var(--cc-surface2);border-radius:10px;padding:4px}
+    #view-crewcal .cc-tab{padding:6px 16px;border-radius:7px;border:none;background:transparent;color:var(--cc-text3);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}
+    #view-crewcal .cc-tab.cc-on{background:var(--cc-surface);color:var(--cc-text);box-shadow:0 1px 2px rgba(15,23,36,.08)}
+    #view-crewcal .cc-actions{display:flex;gap:8px}
+    #view-crewcal .cc-btn{padding:8px 14px;border-radius:8px;border:1px solid var(--cc-border2);background:var(--cc-surface);color:var(--cc-text2);font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;white-space:nowrap}
+    #view-crewcal .cc-btn:hover{border-color:var(--cc-text3)}
+    #view-crewcal .cc-btn-primary{background:var(--cc-green);border-color:var(--cc-green-border);color:#fff}
+    #view-crewcal .cc-btn-danger{color:var(--cc-red);border-color:#FECACA}
+    #view-crewcal .cc-btn-sm{padding:4px 10px;font-size:12px}
+    #view-crewcal .cc-weekbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+    #view-crewcal .cc-weeknav{display:flex;align-items:center;gap:8px}
+    #view-crewcal .cc-weeklabel{font-size:15px;font-weight:600;min-width:170px;text-align:center}
+    #view-crewcal .cc-strip{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:12px;padding:12px 14px;margin-bottom:16px}
+    #view-crewcal .cc-strip-label{font-size:11px;color:var(--cc-text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+    #view-crewcal .cc-chips{display:flex;gap:8px;flex-wrap:wrap}
+    #view-crewcal .cc-chip{display:inline-flex;align-items:center;gap:6px;background:var(--cc-surface2);border:1px solid var(--cc-border);border-radius:20px;padding:3px 12px 3px 3px;font-size:12px}
+    #view-crewcal .cc-chip .cc-cnt{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:20px;padding:0 6px;font-size:10px;color:var(--cc-text3)}
+    #view-crewcal .cc-chip.cc-zero{background:var(--cc-red-bg);border-color:#FECACA}
+    #view-crewcal .cc-avatar{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+    #view-crewcal .cc-avatar.cc-lead{box-shadow:0 0 0 2px var(--cc-surface),0 0 0 3.5px var(--cc-green)}
+    #view-crewcal .cc-board-wrap{overflow-x:auto}
+    #view-crewcal .cc-board{display:grid;grid-template-columns:repeat(5,minmax(180px,1fr));gap:10px;min-width:900px}
+    #view-crewcal .cc-day-col{min-width:0}
+    #view-crewcal .cc-day-head{text-align:center;padding-bottom:8px}
+    #view-crewcal .cc-day-dow{font-size:11px;color:var(--cc-text3);text-transform:uppercase}
+    #view-crewcal .cc-day-num{font-size:16px;font-weight:600}
+    #view-crewcal .cc-day-num.cc-today{color:var(--cc-green)}
+    #view-crewcal .cc-job{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer}
+    #view-crewcal .cc-job:hover{border-color:var(--cc-text3)}
+    #view-crewcal .cc-job-project{font-size:12.5px;font-weight:600;line-height:1.35;margin-bottom:4px}
+    #view-crewcal .cc-job-meta{font-size:11px;color:var(--cc-text2);margin-bottom:6px}
+    #view-crewcal .cc-job-addr{font-size:11px;color:var(--cc-text3);margin-bottom:8px}
+    #view-crewcal .cc-job-crew{display:flex;gap:3px;margin-bottom:8px;flex-wrap:wrap}
+    #view-crewcal .cc-slot-empty{width:22px;height:22px;border-radius:50%;border:1px dashed var(--cc-border2);color:var(--cc-text3);display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+    #view-crewcal .cc-badge-client{font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--cc-blue-bg);color:var(--cc-blue);display:inline-block;margin-right:4px}
+    #view-crewcal .cc-pill{font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;display:inline-block;white-space:nowrap}
+    #view-crewcal .cc-pill.cc-st-scheduled{background:var(--cc-surface2);color:var(--cc-text2)}
+    #view-crewcal .cc-pill.cc-st-progress{background:var(--cc-blue-bg);color:var(--cc-blue)}
+    #view-crewcal .cc-pill.cc-st-complete{background:var(--cc-green-light);color:var(--cc-green-dark)}
+    #view-crewcal .cc-pill.cc-st-cancelled{background:var(--cc-red-bg);color:var(--cc-red-fg)}
+    #view-crewcal .cc-pill.cc-st-postponed{background:var(--cc-amber-bg);color:var(--cc-amber-fg)}
+    #view-crewcal .cc-badge-need{font-size:10px;font-weight:600;color:var(--cc-amber-fg);background:var(--cc-amber-bg);padding:2px 6px;border-radius:20px}
+    #view-crewcal .cc-add-job{width:100%;padding:8px;border:1px dashed var(--cc-border2);border-radius:10px;background:transparent;color:var(--cc-text3);font-size:12px;cursor:pointer;font-family:inherit}
+    #view-crewcal .cc-add-job:hover{border-color:var(--cc-green);color:var(--cc-green)}
+    #view-crewcal .cc-empty{text-align:center;color:var(--cc-text3);font-size:14px;padding:40px 0}
+    #view-crewcal .cc-wk-day{margin-bottom:14px}
+    #view-crewcal .cc-wk-day-hd{font-size:12px;font-weight:600;color:var(--cc-text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+    #view-crewcal .cc-wk-job{background:var(--cc-surface);border:1px solid var(--cc-border);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+    #view-crewcal .cc-wk-job-project{font-size:14px;font-weight:600}
+    #view-crewcal .cc-wk-job-line{font-size:12px;color:var(--cc-text2);margin-top:3px}
+    #view-crewcal .cc-muted{color:var(--cc-text3)}
+    .cc-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
+    .cc-overlay *{box-sizing:border-box}
+    .cc-modal{background:#fff;border-radius:14px;width:100%;max-width:520px;box-shadow:0 8px 40px rgba(15,23,36,.18);font-family:'Inter',system-ui,sans-serif}
+    .cc-modal-hd{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #E4E7EC}
+    .cc-modal-title{font-size:16px;font-weight:600;color:#0F1724}
+    .cc-modal-bd{padding:20px}
+    .cc-modal-ft{padding:14px 20px;border-top:1px solid #E4E7EC;display:flex;justify-content:space-between;gap:8px}
+    .cc-close{background:transparent;border:none;font-size:18px;color:#8A93A2;cursor:pointer;line-height:1}
+    .cc-modal label.cc-fld{display:block;font-size:12px;font-weight:500;color:#4B5565;margin-bottom:5px;margin-top:14px}
+    .cc-modal label.cc-fld:first-child{margin-top:0}
+    .cc-modal input,.cc-modal select,.cc-modal textarea{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid #D0D5DD;background:#fff;color:#0F1724;font-size:14px;font-family:inherit;outline:none}
+    .cc-modal input:focus,.cc-modal select:focus,.cc-modal textarea:focus{border-color:#16A37F}
+    .cc-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .cc-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .cc-chk{display:flex;align-items:center;gap:8px;margin-top:14px}
+    .cc-chk input{width:auto}
+    .cc-btn{padding:8px 14px;border-radius:8px;border:1px solid #D0D5DD;background:#fff;color:#4B5565;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;white-space:nowrap}
+    .cc-btn-primary{background:#16A37F;border-color:#0F6E56;color:#fff}
+    .cc-btn-danger{color:#F04438;border-color:#FECACA}
+    .cc-btn-sm{padding:4px 10px;font-size:12px}
+    .cc-assign-list{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto}
+    .cc-assign-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid #E4E7EC;border-radius:8px}
+    .cc-assign-row.cc-on{border-color:#16A37F;background:#E6F7F3}
+    .cc-avatar{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;flex-shrink:0}
+    .cc-assign-name{flex:1;font-size:13px;cursor:pointer;color:#0F1724}
+    .cc-lead-btn{background:transparent;border:1px solid #D0D5DD;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;color:#8A93A2;font-family:inherit}
+    .cc-lead-btn.cc-on{background:#16A37F;border-color:#0F6E56;color:#fff}
+    .cc-tech-btn{background:transparent;border:1px solid #D0D5DD;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;color:#4B5565;font-family:inherit}
+    .cc-tech-btn.cc-on{background:#E6F1FB;border-color:#185FA5;color:#185FA5}
+    .cc-muted{color:#8A93A2}
+    @media(max-width:900px){#view-crewcal .cc-board{grid-template-columns:1fr;min-width:0}}
+  </style>
+  <div class="view" id="view-crewcal">
+    <div class="cc-toolbar">
+      <div class="cc-tabs">
+        <button class="cc-tab cc-on" data-ccact="ccview" data-ccview="board">Crew board</button>
+        <button class="cc-tab" data-ccact="ccview" data-ccview="worker">My schedule</button>
+      </div>
+      <div class="cc-actions">
+        <button class="cc-btn cc-btn-sm" data-ccact="roster">Team</button>
+        <button class="cc-btn cc-btn-sm" data-ccact="data">Data</button>
+      </div>
+    </div>
+    <div id="cc-app" class="cc-main"></div>
+    <div id="cc-modal-root"></div>
   </div>
 </div>
 
@@ -756,7 +871,9 @@ function switchTab(id){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
   document.getElementById('tab-'+id).classList.add('active');
+  var wb=document.getElementById('week-bar'); if(wb) wb.style.display=(id==='crewcal'?'none':'');
   if(id==='manager')renderManager();
+  if(id==='crewcal' && window.CrewCal) window.CrewCal.show();
 }
 
 // ── Tech view ─────────────────────────────────────────────────────────────────
@@ -896,21 +1013,30 @@ function updateBadge(){
 
 function clearAllSlots(){techSlots=DAYS.map(()=>new Set());renderGrid();}
 
-function saveSlots(){
+async function saveSlots(){
   if(!currentTech)return;
   const btn=document.getElementById('save-btn');
   btn.disabled=true;
   btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
-  setTimeout(()=>{
-    try{
-      setSlots(currentTech,techSlots);
-      showMsg('save-msg','✓ Saved for week of '+getSelectedWeek().label,'ok');
-    }catch(e){
-      showMsg('save-msg','Could not save — check browser settings.','err');
-    }
+  try{
+    setSlots(currentTech,techSlots);
+  }catch(e){
+    showMsg('save-msg','Could not save — check browser settings.','err');
     btn.disabled=false;
     btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
-  },400);
+    return;
+  }
+  // Push to shared mailbox calendar
+  try{
+    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Syncing calendar…';
+    const count = await pushToCalendar();
+    showMsg('save-msg','✓ Saved & synced '+count+' slot'+(count!==1?'s':'')+' to shared calendar','ok');
+  }catch(e){
+    console.error('Calendar sync error:',e);
+    showMsg('save-msg','✓ Saved locally — calendar sync failed: '+e.message,'err');
+  }
+  btn.disabled=false;
+  btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
 }
 
 function showMsg(id,text,type){
@@ -1091,11 +1217,19 @@ const msalConfig = {
   cache: { cacheLocation: 'sessionStorage' }
 };
 var msalInstance = new msal.PublicClientApplication(msalConfig);
+var msalAccount = null;
+
+const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
+const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
+const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
+const CAL_CATEGORY_UNAVAIL = 'JetCityIT-Unavailable';
 
 msalInstance.initialize().then(() => {
   var accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
-    var name = accounts[0].name || accounts[0].username.split('@')[0];
+    msalAccount = accounts[0];
+    var name = msalAccount.name || msalAccount.username.split('@')[0];
     finishLogin(name);
   }
 }).catch(function(e){ console.error('MSAL init error:', e); });
@@ -1107,8 +1241,9 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
-    const resp = await msalInstance.loginPopup({ scopes: ['User.Read'] });
-    const name = resp.account.name || resp.account.username.split('@')[0];
+    const resp = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    msalAccount = resp.account;
+    const name = msalAccount.name || msalAccount.username.split('@')[0];
     finishLogin(name);
   } catch(e) {
     errEl.textContent = e.message || 'Sign-in failed. Please try again.';
@@ -1130,6 +1265,128 @@ function finishLogin(name){
     hdr.appendChild(badge);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
+}
+
+// ── Graph API helpers ─────────────────────────────────────────────────────────
+async function getGraphToken(){
+  if(!msalAccount) throw new Error('Not signed in');
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: msalAccount });
+    return r.accessToken;
+  } catch(e) {
+    const r = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES, account: msalAccount });
+    return r.accessToken;
+  }
+}
+
+async function pushToCalendar(){
+  const week = getSelectedWeek();
+  const token = await getGraphToken();
+  const authHeader = { 'Authorization': 'Bearer ' + token };
+
+  // 1. Fetch all events in the week on the shared mailbox and delete ones we created
+  // Use explicit UTC (Z suffix) and extend through Sunday to cover Friday 9pm PST → Saturday UTC
+  const monDate = new Date(week.monDate);
+  monDate.setUTCHours(0, 0, 0, 0);
+  const sunDate = new Date(monDate);
+  sunDate.setUTCDate(monDate.getUTCDate() + 7);
+  const monISO = monDate.toISOString();
+  const sunISO = sunDate.toISOString();
+
+  const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monISO}&endDateTime=${sunISO}&$select=id,subject,categories&$top=200`;
+  const viewResp = await fetch(viewUrl, { headers: authHeader });
+  if(!viewResp.ok){
+    const err = await viewResp.json().catch(()=>({}));
+    throw new Error(`Calendar read failed (${viewResp.status}): ${err.error?.message || viewResp.statusText}`);
+  }
+  const viewData = await viewResp.json();
+
+  if(viewData.value){
+    const toDelete = viewData.value.filter(ev =>
+      (ev.subject || '').includes('[JCIT]') &&
+      (ev.subject || '').includes(currentTech)
+    );
+    for(const ev of toDelete){
+      await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
+        method: 'DELETE', headers: authHeader
+      });
+    }
+  }
+
+  // 2. Attempt to set up green/red categories on the shared mailbox (fails silently if no permission)
+  try {
+    const catResp = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, { headers: authHeader });
+    if(catResp.ok){
+      const catData = await catResp.json();
+      const existing = new Set((catData.value || []).map(c => c.displayName));
+      const catHeaders = { ...authHeader, 'Content-Type': 'application/json' };
+      const toMake = [];
+      if(!existing.has(CAL_CATEGORY_AVAIL))   toMake.push({ displayName: CAL_CATEGORY_AVAIL,   color: 'preset4' });
+      if(!existing.has(CAL_CATEGORY_UNAVAIL)) toMake.push({ displayName: CAL_CATEGORY_UNAVAIL, color: 'preset0' });
+      await Promise.all(toMake.map(cat =>
+        fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, {
+          method: 'POST', headers: catHeaders, body: JSON.stringify(cat)
+        })
+      ));
+    }
+  } catch(e){ console.warn('Category color setup skipped:', e.message); }
+
+  // 3. Build calendar events for both available and unavailable blocks
+  const events = [];
+  const pad = n => String(n).padStart(2,'0');
+
+  // Always iterate exactly 5 days (Mon–Fri), filling missing days with empty Sets
+  // to guard against stale localStorage data that was saved with fewer days.
+  const slots5 = Array.from({length: 5}, (_, i) => techSlots[i] || new Set());
+
+  slots5.forEach((daySlots, dayIdx) => {
+    // Use monDate (already UTC-normalised to midnight) + offset for reliable date strings
+    const dayDate = new Date(monDate.getTime() + dayIdx * 86400000);
+    const dateStr = dayDate.toISOString().split('T')[0];
+
+    const addBlocks = (isAvail) => {
+      let runStart = null;
+      for(let s = 0; s <= N; s++){
+        const inBlock = isAvail
+          ? (s < N && !daySlots.has(START * 2 + s))
+          : (s < N &&  daySlots.has(START * 2 + s));
+        if(inBlock && runStart === null){ runStart = s; }
+        else if(!inBlock && runStart !== null){
+          const absStart = START * 2 + runStart;
+          const absEnd   = START * 2 + s;
+          const sh = Math.floor(absStart / 2), sm = (absStart % 2) * 30;
+          const eh = Math.floor(absEnd   / 2), em = (absEnd   % 2) * 30;
+          events.push({
+            subject: `[JCIT] ${currentTech} — ${isAvail ? 'Available' : 'Unavailable'}`,
+            categories: [isAvail ? CAL_CATEGORY_AVAIL : CAL_CATEGORY_UNAVAIL],
+            start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
+            end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
+            showAs: 'busy',
+            isReminderOn: false
+          });
+          runStart = null;
+        }
+      }
+    };
+
+    addBlocks(true);
+    addBlocks(false);
+  });
+
+  // 4. Post all events to the shared mailbox sequentially to avoid throttling
+  for(const ev of events){
+    const r = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
+      method: 'POST',
+      headers: { ...authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify(ev)
+    });
+    if(!r.ok){
+      const err = await r.json().catch(()=>({}));
+      throw new Error(`Event create failed (${r.status}): ${err.error?.message || r.statusText}`);
+    }
+  }
+
+  return events.length;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -1770,6 +2027,231 @@ function calGoToday(){
 
 })();
 
+</script>
+
+<!-- ── Crew Calendar engine (namespaced, isolated from the availability app) ── -->
+<script>
+(function(){
+  "use strict";
+  var LS_KEY="jetcity.crewcal.v2";
+  // Sample roster only — real staff are loaded locally via the Data import.
+  var ROSTER=[
+    {name:"Alex Rivera",email:"alex@example.com"},{name:"Maya Patel",email:"maya@example.com"},
+    {name:"Sam Torres",email:"sam@example.com"},{name:"Jordan Lee",email:"jordan@example.com"},
+    {name:"Chris Morgan",email:"chris@example.com"},{name:"Dana Wu",email:"dana@example.com"},
+    {name:"Priya Kaur",email:"priya@example.com"},{name:"Theo Nguyen",email:"theo@example.com"}
+  ];
+  var CLIENTS=["Acme Corp","Bellevue Clinic","DataCo","Harbor Law","Northwind","Riverside School","Internal","N/A"];
+  var STATUSES=["In Progress","Complete","Cancelled","Postponed"];
+  var STATUS_META={"":{cls:"cc-st-scheduled",label:"Scheduled"},"In Progress":{cls:"cc-st-progress",label:"In progress"},"Complete":{cls:"cc-st-complete",label:"Complete"},"Cancelled":{cls:"cc-st-cancelled",label:"Cancelled"},"Postponed":{cls:"cc-st-postponed",label:"Postponed"}};
+  var AVATARS=[{bg:"#E1F5EE",fg:"#0F6E56"},{bg:"#E6F1FB",fg:"#0C447C"},{bg:"#EEEDFE",fg:"#3C3489"},{bg:"#FBEAF0",fg:"#72243E"},{bg:"#FAECE7",fg:"#993C1D"},{bg:"#FAEEDA",fg:"#854F0B"}];
+  var DOW=["Mon","Tue","Wed","Thu","Fri"];
+
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+  function seed(){
+    function J(o){ o.lead=o.lead||[]; o.technicians=o.technicians||[]; o.status=o.status||""; o.crewSize=o.crewSize||null; return o; }
+    // Sample jobs only — no real client/site data. Load real data locally via Data import.
+    var jobs=[
+      J({date:"2026-01-05",project:"Network install",address:"100 Main St, Seattle",startTime:"8:00AM",duration:"4.0",lead:["Alex Rivera"],technicians:["Maya Patel"],client:"Acme Corp",crewSize:2}),
+      J({date:"2026-01-05",project:"Helpdesk support",address:"200 Market St, Bellevue",startTime:"1:00PM",duration:"4.0",lead:["Sam Torres"],client:"Bellevue Clinic"}),
+      J({date:"2026-01-06",project:"Structured cabling",address:"88 River Rd, Renton",startTime:"9:00AM",duration:"6.0",lead:["Alex Rivera"],technicians:["Jordan Lee"],client:"Riverside School",crewSize:3}),
+      J({date:"2026-01-07",project:"Server migration",address:"2100 Westlake Ave, Seattle",startTime:"8:00AM",duration:"10.0",lead:["Chris Morgan"],technicians:["Sam Torres"],client:"DataCo",crewSize:2}),
+      J({date:"2026-01-08",project:"New hire onboarding setup",address:"701 Pike St, Seattle",startTime:"10:00AM",duration:"4.0",client:"Harbor Law",crewSize:2}),
+      J({date:"2026-01-09",project:"Follow-up + punch list",address:"100 Main St, Seattle",startTime:"9:00AM",duration:"2.0",lead:["Maya Patel"],client:"Acme Corp"})
+    ];
+    jobs.forEach(function(j){ j.id=uid(); });
+    return { workers: ROSTER.map(function(r){return {name:r.name,email:r.email,active:true};}), jobs: jobs };
+  }
+  function load(){ try{ var raw=localStorage.getItem(LS_KEY); if(raw) return JSON.parse(raw); }catch(e){} return null; }
+  function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){} }
+
+  var state=load()||seed(); save();
+  var ui={ view:"board", weekMonday:"2026-01-05", workerName:(state.workers.filter(function(w){return w.active;})[0]||{}).name||null, modal:null };
+  var inited=false;
+
+  function getMonday(dt){ var d=new Date(dt); var day=d.getDay(); d.setHours(0,0,0,0); d.setDate(d.getDate()-(day===0?6:day-1)); return d; }
+  function toISO(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function fromISO(s){ var p=s.split("-"); return new Date(+p[0],+p[1]-1,+p[2]); }
+  function weekDates(){ var mon=fromISO(ui.weekMonday); return DOW.map(function(_,i){ var x=new Date(mon); x.setDate(mon.getDate()+i); return x; }); }
+  function shiftWeek(n){ var mon=fromISO(ui.weekMonday); mon.setDate(mon.getDate()+n*7); ui.weekMonday=toISO(mon); }
+  function fmtMon(d){ return d.toLocaleDateString("en-US",{month:"short",day:"numeric"}); }
+  function fmtMonYr(d){ return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); }
+  function isTodayISO(iso){ return iso===toISO(new Date()); }
+  function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function initials(name){ return name.split(/\s+/).map(function(w){return w[0];}).join("").toUpperCase().slice(0,2); }
+  function avatarFor(name){ var h=0; String(name).split("").forEach(function(c){h+=c.charCodeAt(0);}); return AVATARS[h%AVATARS.length]; }
+  function avatarHtml(name,isLead){ var a=avatarFor(name); return '<span class="cc-avatar'+(isLead?" cc-lead":"")+'" title="'+esc(name)+(isLead?" (lead)":"")+'" style="background:'+a.bg+';color:'+a.fg+'">'+esc(initials(name))+'</span>'; }
+  function crewOf(job){ var seen={},out=[]; (job.lead||[]).forEach(function(n){ if(!seen[n]){seen[n]=1;out.push({name:n,lead:true});} }); (job.technicians||[]).forEach(function(n){ if(!seen[n]){seen[n]=1;out.push({name:n,lead:false});} }); return out; }
+  function jobsForDate(iso){ return state.jobs.filter(function(j){return j.date===iso;}).sort(function(a,b){return String(a.startTime||"").localeCompare(String(b.startTime||""));}); }
+  function jobById(id){ for(var i=0;i<state.jobs.length;i++) if(state.jobs[i].id===id) return state.jobs[i]; return null; }
+  function workerByName(n){ for(var i=0;i<state.workers.length;i++) if(state.workers[i].name===n) return state.workers[i]; return null; }
+
+  function renderBoard(){
+    var dates=weekDates(); var weekIso=dates.map(toISO);
+    var strip=state.workers.filter(function(w){return w.active;}).map(function(w){
+      var cnt=state.jobs.filter(function(j){ return weekIso.indexOf(j.date)>=0 && crewOf(j).some(function(c){return c.name===w.name;}); }).length;
+      var a=avatarFor(w.name);
+      return '<span class="cc-chip'+(cnt===0?" cc-zero":"")+'"><span class="cc-avatar" style="background:'+a.bg+';color:'+a.fg+'">'+esc(initials(w.name))+'</span>'+esc(w.name)+' <span class="cc-cnt">'+cnt+'</span></span>';
+    }).join("");
+    var cols=dates.map(function(d,i){
+      var iso=toISO(d);
+      var jobsHtml=jobsForDate(iso).map(function(j){
+        var crew=crewOf(j); var crewHtml=crew.map(function(c){return avatarHtml(c.name,c.lead);}).join("");
+        if(j.crewSize){ for(var k=crew.length;k<j.crewSize;k++) crewHtml+='<span class="cc-slot-empty">+</span>'; }
+        var sm=STATUS_META[j.status||""]||STATUS_META[""];
+        var meta=esc(j.startTime||"")+(j.duration?' · '+esc(j.duration)+' hrs':'');
+        return '<div class="cc-job" data-ccact="edit" data-id="'+j.id+'">'
+          + '<div class="cc-job-project">'+esc(j.project)+'</div>'
+          + (meta?'<div class="cc-job-meta">'+meta+'</div>':'')
+          + (j.address?'<div class="cc-job-addr">'+esc(j.address)+'</div>':'')
+          + '<div class="cc-job-crew">'+(crewHtml||'<span class="cc-slot-empty">+</span>')+'</div>'
+          + '<div>'+(j.client?'<span class="cc-badge-client">'+esc(j.client)+'</span>':'')
+          + '<span class="cc-pill '+sm.cls+'">'+sm.label+'</span>'
+          + (j.badgeNeeded?' <span class="cc-badge-need">Badge</span>':'')+'</div></div>';
+      }).join("");
+      return '<div class="cc-day-col"><div class="cc-day-head"><div class="cc-day-dow">'+DOW[i]+'</div><div class="cc-day-num'+(isTodayISO(iso)?" cc-today":"")+'">'+d.getDate()+'</div></div>'+jobsHtml+'<button class="cc-add-job" data-ccact="new" data-date="'+iso+'">+ Add job</button></div>';
+    }).join("");
+    return '<div class="cc-weekbar"><div class="cc-weeknav"><button class="cc-btn cc-btn-sm" data-ccact="prev">‹</button><span class="cc-weeklabel">'+fmtMonYr(dates[0])+' – '+fmtMon(dates[4])+'</span><button class="cc-btn cc-btn-sm" data-ccact="next">›</button><button class="cc-btn cc-btn-sm" data-ccact="today">Today</button></div><button class="cc-btn cc-btn-primary cc-btn-sm" data-ccact="new" data-date="'+weekIso[0]+'">+ New job</button></div>'
+      + '<div class="cc-strip"><div class="cc-strip-label">Crew · jobs assigned this week</div><div class="cc-chips">'+(strip||'<span class="cc-muted">No active team members.</span>')+'</div></div>'
+      + '<div class="cc-board-wrap"><div class="cc-board">'+cols+'</div></div>';
+  }
+
+  function renderWorker(){
+    var active=state.workers.filter(function(w){return w.active;});
+    if(!active.length) return '<div class="cc-empty">No team members yet.</div>';
+    if(!ui.workerName||!workerByName(ui.workerName)) ui.workerName=active[0].name;
+    var opts=active.map(function(w){ return '<option value="'+esc(w.name)+'"'+(w.name===ui.workerName?" selected":"")+'>'+esc(w.name)+'</option>'; }).join("");
+    var dates=weekDates();
+    var body=dates.map(function(d,i){
+      var iso=toISO(d);
+      var mine=jobsForDate(iso).filter(function(j){ return crewOf(j).some(function(c){return c.name===ui.workerName;}); });
+      if(!mine.length) return '';
+      var jobs=mine.map(function(j){
+        var isLead=(j.lead||[]).indexOf(ui.workerName)>=0;
+        var mates=crewOf(j).filter(function(c){return c.name!==ui.workerName;}).map(function(c){return c.name+(c.lead?" (lead)":"");});
+        var mapUrl="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(j.address||j.project);
+        return '<div class="cc-wk-job"><div class="cc-wk-job-project">'+esc(j.project)+(isLead?' <span class="cc-badge-need" style="background:#E6F7F3;color:#0D6E56">You lead</span>':'')+'</div>'
+          + '<div class="cc-wk-job-line">🕒 '+esc(j.startTime||"TBD")+(j.duration?' · '+esc(j.duration)+' hrs':'')+'</div>'
+          + (j.address?'<div class="cc-wk-job-line">📍 <a href="'+esc(mapUrl)+'" target="_blank" rel="noopener">'+esc(j.address)+'</a></div>':'')
+          + (j.client?'<div class="cc-wk-job-line">🏢 '+esc(j.client)+'</div>':'')
+          + (mates.length?'<div class="cc-wk-job-line">👥 With '+esc(mates.join(", "))+'</div>':'<div class="cc-wk-job-line cc-muted">Solo</div>')
+          + (j.poc?'<div class="cc-wk-job-line">☎ '+esc(j.poc)+'</div>':'')
+          + (j.parking?'<div class="cc-wk-job-line cc-muted">P '+esc(j.parking)+'</div>':'')
+          + (j.notes?'<div class="cc-wk-job-line cc-muted">'+esc(j.notes)+'</div>':'')
+          + (j.badgeNeeded?'<div class="cc-wk-job-line"><span class="cc-badge-need">Badge needed</span></div>':'')+'</div>';
+      }).join("");
+      return '<div class="cc-wk-day"><div class="cc-wk-day-hd">'+DOW[i]+' · '+fmtMon(d)+'</div>'+jobs+'</div>';
+    }).join("");
+    return '<div class="cc-weekbar"><div class="cc-weeknav"><button class="cc-btn cc-btn-sm" data-ccact="prev">‹</button><span class="cc-weeklabel">'+fmtMonYr(dates[0])+' – '+fmtMon(dates[4])+'</span><button class="cc-btn cc-btn-sm" data-ccact="next">›</button><button class="cc-btn cc-btn-sm" data-ccact="today">Today</button></div><select id="cc-worker-select" style="width:auto;min-width:190px;padding:8px 11px;border-radius:8px;border:1.5px solid #D0D5DD;font-family:inherit;font-size:14px">'+opts+'</select></div>'
+      + (body||'<div class="cc-empty">No jobs assigned this week.</div>');
+  }
+
+  function render(){
+    var tabs=document.querySelectorAll('#view-crewcal .cc-tab');
+    for(var i=0;i<tabs.length;i++) tabs[i].classList.toggle('cc-on', tabs[i].getAttribute('data-ccview')===ui.view);
+    var app=document.getElementById('cc-app'); if(app) app.innerHTML = ui.view==='board'?renderBoard():renderWorker();
+    renderModal();
+  }
+
+  function renderModal(){
+    var root=document.getElementById('cc-modal-root'); if(!root) return;
+    if(!ui.modal){ root.innerHTML=""; return; }
+    var m=ui.modal;
+    if(m.type==="job") root.innerHTML=jobModal(m);
+    else if(m.type==="assign") root.innerHTML=assignModal(m);
+    else if(m.type==="roster") root.innerHTML=rosterModal();
+    else if(m.type==="data") root.innerHTML=dataModal();
+  }
+  function clientOptions(sel){ return '<option value="">—</option>'+CLIENTS.map(function(c){ return '<option'+(c===sel?" selected":"")+'>'+esc(c)+'</option>'; }).join(""); }
+  function statusOptions(sel){ return '<option value="">Scheduled</option>'+STATUSES.map(function(s){ return '<option'+(s===sel?" selected":"")+'>'+esc(s)+'</option>'; }).join(""); }
+
+  function jobModal(m){
+    var j=m.job; var isNew=!j.id;
+    return overlay((isNew?"New job":"Edit job"),
+      '<label class="cc-fld">Project</label><input id="ccf-project" value="'+esc(j.project||"")+'" placeholder="Network install"/>'
+      + '<div class="cc-row2"><div><label class="cc-fld">Client</label><select id="ccf-client">'+clientOptions(j.client||"")+'</select></div><div><label class="cc-fld">Status</label><select id="ccf-status">'+statusOptions(j.status||"")+'</select></div></div>'
+      + '<label class="cc-fld">Address</label><input id="ccf-address" value="'+esc(j.address||"")+'" placeholder="100 Main St, Seattle"/>'
+      + '<div class="cc-row3"><div><label class="cc-fld">Date</label><input id="ccf-date" type="date" value="'+esc(j.date||"")+'"/></div><div><label class="cc-fld">Start Time</label><input id="ccf-start" value="'+esc(j.startTime||"")+'" placeholder="9:00AM"/></div><div><label class="cc-fld">Duration (hrs)</label><input id="ccf-dur" value="'+esc(j.duration||"")+'" placeholder="4.0"/></div></div>'
+      + '<div class="cc-row2"><div><label class="cc-fld">Crew size (optional)</label><input id="ccf-crew" type="number" min="1" value="'+(j.crewSize||"")+'"/></div><div><label class="cc-fld">POC</label><input id="ccf-poc" value="'+esc(j.poc||"")+'" placeholder="Contact name + phone"/></div></div>'
+      + '<label class="cc-fld">Parking / access info</label><input id="ccf-parking" value="'+esc(j.parking||"")+'"/>'
+      + '<label class="cc-fld">Work order notes</label><textarea id="ccf-notes" rows="2">'+esc(j.notes||"")+'</textarea>'
+      + '<div class="cc-chk"><input type="checkbox" id="ccf-badge" '+(j.badgeNeeded?"checked":"")+'/><label for="ccf-badge" style="margin:0;font-size:13px;color:#4B5565">Badge needed</label></div>'
+      + (isNew?'':'<div style="margin-top:16px"><button class="cc-btn cc-btn-sm" data-ccact="assign-open" data-id="'+j.id+'">Assign crew ('+crewOf(j).length+')</button></div>'),
+      (isNew?'<span></span>':'<button class="cc-btn cc-btn-danger" data-ccact="delete" data-id="'+j.id+'">Delete</button>')
+        + '<div style="display:flex;gap:8px"><button class="cc-btn" data-ccact="close">Cancel</button><button class="cc-btn cc-btn-primary" data-ccact="save">'+(isNew?"Create job":"Save")+'</button></div>');
+  }
+  function assignModal(m){
+    var j=jobById(m.id); if(!j) return "";
+    var rows=state.workers.filter(function(w){return w.active;}).map(function(w){
+      var isTech=(j.technicians||[]).indexOf(w.name)>=0, isLead=(j.lead||[]).indexOf(w.name)>=0, a=avatarFor(w.name);
+      return '<div class="cc-assign-row'+(isTech||isLead?" cc-on":"")+'"><span class="cc-avatar" style="background:'+a.bg+';color:'+a.fg+'">'+esc(initials(w.name))+'</span>'
+        + '<span class="cc-assign-name" data-ccact="toggle-tech" data-job="'+j.id+'" data-name="'+esc(w.name)+'">'+esc(w.name)+'</span>'
+        + '<button class="cc-lead-btn'+(isLead?" cc-on":"")+'" data-ccact="toggle-lead" data-job="'+j.id+'" data-name="'+esc(w.name)+'">★ Lead</button>'
+        + '<button class="cc-tech-btn'+(isTech?" cc-on":"")+'" data-ccact="toggle-tech" data-job="'+j.id+'" data-name="'+esc(w.name)+'">'+(isTech?"On crew":"Add")+'</button></div>';
+    }).join("");
+    return overlay("Assign crew · "+esc(j.project),
+      '<div class="cc-muted" style="font-size:12px;margin-bottom:12px">Tap a name to add to the crew. ★ marks the JCIT Lead.</div><div class="cc-assign-list">'+rows+'</div>',
+      '<span></span><button class="cc-btn cc-btn-primary" data-ccact="assign-done" data-id="'+j.id+'">Done</button>');
+  }
+  function rosterModal(){
+    var rows=state.workers.map(function(w){
+      return '<div class="cc-assign-row"><span class="cc-assign-name" style="cursor:default">'+esc(w.name)+(w.email?' <span class="cc-muted" style="font-size:11px">'+esc(w.email)+'</span>':'')+(w.active?'':' <span class="cc-muted">(inactive)</span>')+'</span>'
+        + '<button class="cc-btn cc-btn-sm" data-ccact="w-toggle" data-name="'+esc(w.name)+'">'+(w.active?"Deactivate":"Activate")+'</button>'
+        + '<button class="cc-btn cc-btn-sm cc-btn-danger" data-ccact="w-del" data-name="'+esc(w.name)+'">Remove</button></div>';
+    }).join("");
+    return overlay("Team",
+      '<div style="display:flex;gap:8px;margin-bottom:14px"><input id="cc-w-name" placeholder="New technician name"/><button class="cc-btn cc-btn-primary" data-ccact="w-add">Add</button></div><div class="cc-assign-list">'+(rows||'<div class="cc-muted" style="font-size:13px">No team members yet.</div>')+'</div>',
+      '<span></span><button class="cc-btn" data-ccact="close">Close</button>');
+  }
+  function dataModal(){
+    var json=JSON.stringify(state,null,2);
+    return overlay("Data · import / export",
+      '<div class="cc-muted" style="font-size:12px;margin-bottom:10px">Local prototype storage (saved in this browser). Export to back up, or paste a JSON export converted from the JCIT 2026 Crew Calendar and load it. Loading replaces all crew-calendar data.</div><textarea id="cc-data-json" rows="10" style="font-family:monospace;font-size:12px">'+esc(json)+'</textarea>',
+      '<button class="cc-btn" data-ccact="data-export">Download .json</button><div style="display:flex;gap:8px"><button class="cc-btn" data-ccact="close">Cancel</button><button class="cc-btn cc-btn-primary" data-ccact="data-load">Load JSON</button></div>');
+  }
+  function overlay(title,body,footer){
+    return '<div class="cc-overlay" data-ccact="overlay"><div class="cc-modal"><div class="cc-modal-hd"><span class="cc-modal-title">'+esc(title)+'</span><button class="cc-close" data-ccact="close">✕</button></div><div class="cc-modal-bd">'+body+'</div><div class="cc-modal-ft">'+footer+'</div></div></div>';
+  }
+  function readJobForm(){
+    function v(id){ var el=document.getElementById(id); return el?el.value:""; }
+    var crew=parseInt(v("ccf-crew"),10);
+    return { project:v("ccf-project").trim(), client:v("ccf-client"), status:v("ccf-status"), address:v("ccf-address").trim(), date:v("ccf-date"), startTime:v("ccf-start").trim(), duration:v("ccf-dur").trim(), crewSize:(crew>0?crew:null), poc:v("ccf-poc").trim(), parking:v("ccf-parking").trim(), notes:v("ccf-notes").trim(), badgeNeeded: !!document.getElementById("ccf-badge") && document.getElementById("ccf-badge").checked };
+  }
+
+  function onClick(e){
+    var el=e.target.closest("[data-ccact]"); if(!el) return;
+    var act=el.getAttribute("data-ccact");
+    if(act==="ccview"){ ui.view=el.getAttribute("data-ccview"); render(); return; }
+    if(act==="prev"){ shiftWeek(-1); render(); return; }
+    if(act==="next"){ shiftWeek(1); render(); return; }
+    if(act==="today"){ ui.weekMonday=toISO(getMonday(new Date())); render(); return; }
+    if(act==="new"){ ui.modal={type:"job",job:{date:el.getAttribute("data-date")||ui.weekMonday,lead:[],technicians:[],status:""}}; renderModal(); return; }
+    if(act==="edit"){ var j=jobById(el.getAttribute("data-id")); if(j){ ui.modal={type:"job",job:j}; renderModal(); } return; }
+    if(act==="save"){ var data=readJobForm(); if(!data.project){ alert("Project is required."); return; } if(!data.date){ alert("Date is required."); return; } var cur=ui.modal.job; if(cur.id){ Object.assign(cur,data); } else { state.jobs.push(Object.assign({id:uid(),lead:[],technicians:[]},data)); } save(); ui.modal=null; render(); return; }
+    if(act==="delete"){ if(!confirm("Delete this job?")) return; var did=el.getAttribute("data-id"); state.jobs=state.jobs.filter(function(j){return j.id!==did;}); save(); ui.modal=null; render(); return; }
+    if(act==="assign-open"){ ui.modal={type:"assign",id:el.getAttribute("data-id")}; renderModal(); return; }
+    if(act==="toggle-tech"){ var jt=jobById(el.getAttribute("data-job")),nm=el.getAttribute("data-name"); if(jt){ jt.technicians=jt.technicians||[]; var a=jt.technicians.indexOf(nm); if(a>=0) jt.technicians.splice(a,1); else jt.technicians.push(nm); save(); renderModal(); } return; }
+    if(act==="toggle-lead"){ var jl=jobById(el.getAttribute("data-job")),nl=el.getAttribute("data-name"); if(jl){ jl.lead=jl.lead||[]; var b=jl.lead.indexOf(nl); if(b>=0) jl.lead.splice(b,1); else jl.lead.push(nl); save(); renderModal(); } return; }
+    if(act==="assign-done"){ ui.modal=null; render(); return; }
+    if(act==="roster"){ ui.modal={type:"roster"}; renderModal(); return; }
+    if(act==="w-add"){ var nmEl=document.getElementById("cc-w-name"),val=nmEl?nmEl.value.trim():""; if(val){ if(!workerByName(val)) state.workers.push({name:val,email:"",active:true}); save(); renderModal(); } return; }
+    if(act==="w-toggle"){ var wt=workerByName(el.getAttribute("data-name")); if(wt){ wt.active=!wt.active; save(); renderModal(); render(); } return; }
+    if(act==="w-del"){ var wn=el.getAttribute("data-name"); if(!confirm("Remove "+wn+"? They will be unassigned from all jobs.")) return; state.workers=state.workers.filter(function(w){return w.name!==wn;}); state.jobs.forEach(function(j){ if(j.technicians){ var x=j.technicians.indexOf(wn); if(x>=0) j.technicians.splice(x,1); } if(j.lead){ var y=j.lead.indexOf(wn); if(y>=0) j.lead.splice(y,1); } }); save(); renderModal(); render(); return; }
+    if(act==="data"){ ui.modal={type:"data"}; renderModal(); return; }
+    if(act==="data-export"){ var blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"}); var dl=document.createElement("a"); dl.href=URL.createObjectURL(blob); dl.download="jcit-crew-calendar-"+toISO(new Date())+".json"; dl.click(); URL.revokeObjectURL(dl.href); return; }
+    if(act==="data-load"){ var ta=document.getElementById("cc-data-json"); try{ var parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error("JSON must have workers[] and jobs[]"); state=parsed; save(); ui.modal=null; ui.workerName=(state.workers.filter(function(w){return w.active;})[0]||{}).name||null; render(); }catch(err){ alert("Could not load JSON: "+err.message); } return; }
+    if(act==="close"||act==="overlay"){ if(act==="overlay" && e.target!==el) return; ui.modal=null; renderModal(); return; }
+  }
+  function onChange(e){ if(e.target && e.target.id==="cc-worker-select"){ ui.workerName=e.target.value; render(); } }
+
+  function init(){
+    var v=document.getElementById("view-crewcal");
+    if(!v) return;
+    v.addEventListener("click", onClick);
+    v.addEventListener("change", onChange);
+  }
+  window.CrewCal = { show:function(){ if(!inited){ init(); inited=true; } render(); } };
+})();
 </script>
 </body>
 </html>
