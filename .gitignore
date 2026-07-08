@@ -18,3 +18,9 @@ Thumbs.db
 # Node (if added later)
 node_modules/
 npm-debug.log*
+
+# Local-only files containing REAL JetCityIT data — never commit to the public repo
+jetcity-combined.local.html
+dispatch-calendar.html
+dispatch-calendar-artifact.html
+*.local.html
