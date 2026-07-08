@@ -1320,6 +1320,41 @@ const JCITDispatch=(function(){
     return DAYS.map((_,i)=>{const x=new Date(mon);x.setDate(mon.getDate()+i);return x});
   }
 
+  // ── Availability lookup (reuses the same submitted-slots data as "My availability") ──
+  function fmtTime(abs){
+    const h=Math.floor(abs/2),m=(abs%2)*30;
+    const period=h<12?'am':'pm';
+    const h12=h%12===0?12:h%12;
+    return h12+(m===0?'':':'+String(m).padStart(2,'0'))+period;
+  }
+  function dayIndexOfDate(dateStr){
+    const week=getSelectedWeek();
+    const d=new Date(dateStr+'T00:00:00');
+    return Math.round((d-week.monDate)/86400000);
+  }
+  function availabilityFor(name,dateStr){
+    const dayIdx=dayIndexOfDate(dateStr);
+    if(dayIdx<0||dayIdx>4) return null;
+    const slots=getSlots(name);
+    if(!slots) return{status:'unknown',text:'No availability submitted'};
+    const unavail=slots[dayIdx]||new Set();
+    if(!unavail.size) return{status:'available',text:'Available all day ('+fmtTime(START*2)+'–'+fmtTime(END*2)+')'};
+    const ranges=[]; let rs=null;
+    for(let s=0;s<=N;s++){
+      const isAvail=s<N&&!unavail.has(START*2+s);
+      if(isAvail&&rs===null) rs=s;
+      else if(!isAvail&&rs!==null){ ranges.push([START*2+rs,START*2+s]); rs=null; }
+    }
+    if(!ranges.length) return{status:'unavailable',text:'Unavailable all day'};
+    return{status:'partial',text:'Available '+ranges.map(r=>fmtTime(r[0])+'–'+fmtTime(r[1])).join(', ')};
+  }
+  function weekAvailabilityTooltip(name){
+    return weekDates().map((d,i)=>{
+      const a=availabilityFor(name,toISO(d));
+      return DAYS[i]+': '+(a?a.text:'—');
+    }).join('\n');
+  }
+
   // ── Board (day columns of job cards) ──────────────────────────────────────
   function boardHtml(editable){
     syncRoster();
@@ -1350,9 +1385,10 @@ const JCITDispatch=(function(){
     const chips=workers.map(w=>{
       const cnt=state.jobs.filter(j=>weekIso.indexOf(j.date)>=0&&crewOf(j).some(c=>c.name===w.name)).length;
       const a=avatarFor(w.name);
-      return `<span class="dp-chip" draggable="true" data-dpname="${esc(w.name)}"><span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>${esc(w.name)} <span class="dp-cnt">${cnt}</span></span>`;
+      const tip='Assigned to '+cnt+' job'+(cnt!==1?'s':'')+' this week\n\n'+weekAvailabilityTooltip(w.name);
+      return `<span class="dp-chip" draggable="true" data-dpname="${esc(w.name)}" title="${esc(tip)}"><span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>${esc(w.name)} <span class="dp-cnt">${cnt}</span></span>`;
     }).join('');
-    return `<div class="dp-roster-strip"><div class="dp-roster-label">Crew this week · drag a name onto a job to assign</div><div class="dp-chips">${chips}</div></div>`;
+    return `<div class="dp-roster-strip"><div class="dp-roster-label">Crew this week · drag a name onto a job to assign · hover a name for their availability</div><div class="dp-chips">${chips}</div></div>`;
   }
 
   function jobCardHtml(j,editable){
@@ -1422,15 +1458,23 @@ const JCITDispatch=(function(){
   }
   function assignModal(id){
     const j=jobById(id); if(!j) return '';
+    const dayLabel=(function(){ const di=dayIndexOfDate(j.date); return di>=0&&di<=4?DAYS[di]:''; })();
+    const availColor={available:'var(--green-dark)',unavailable:'var(--red)',partial:'var(--text2)',unknown:'var(--text3)'};
     const rows=activeWorkers().map(w=>{
       const isTech=(j.technicians||[]).indexOf(w.name)>=0, isLead=(j.lead||[]).indexOf(w.name)>=0, a=avatarFor(w.name);
-      return `<div class="dp-assign-row${isTech||isLead?' dp-on':''}"><span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>
-        <span class="dp-assign-name" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}">${esc(w.name)}</span>
+      const avail=availabilityFor(w.name,j.date);
+      const availHtml=avail?`<div style="font-size:11px;color:${availColor[avail.status]};margin-top:2px">${esc(avail.text)}</div>`:'';
+      return `<div class="dp-assign-row${isTech||isLead?' dp-on':''}" style="align-items:flex-start">
+        <span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>
+        <div style="flex:1;min-width:0">
+          <span class="dp-assign-name" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}" style="display:block">${esc(w.name)}</span>
+          ${availHtml}
+        </div>
         <button class="dp-lead-btn${isLead?' dp-on':''}" data-dpact="toggle-lead" data-job="${j.id}" data-name="${esc(w.name)}">★ Lead</button>
         <button class="dp-tech-btn${isTech?' dp-on':''}" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}">${isTech?'On crew':'Add'}</button></div>`;
     }).join('');
-    return overlay('Assign crew · '+esc(j.project),
-      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add to the crew, or drag names onto the job card on the board. ★ marks the lead.</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
+    return overlay('Assign crew · '+esc(j.project)+(dayLabel?' · '+dayLabel:''),
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add to the crew, or drag names onto the job card on the board. ★ marks the lead. Availability shown is for this job's date, from what each person submitted under "My availability".</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
       `<span></span><button class="btn btn-primary btn-sm" data-dpact="assign-done">Done</button>`);
   }
   function rosterModal(){
