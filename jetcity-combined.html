@@ -1013,30 +1013,21 @@ function updateBadge(){
 
 function clearAllSlots(){techSlots=DAYS.map(()=>new Set());renderGrid();}
 
-async function saveSlots(){
+function saveSlots(){
   if(!currentTech)return;
   const btn=document.getElementById('save-btn');
   btn.disabled=true;
   btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
-  try{
-    setSlots(currentTech,techSlots);
-  }catch(e){
-    showMsg('save-msg','Could not save — check browser settings.','err');
+  setTimeout(()=>{
+    try{
+      setSlots(currentTech,techSlots);
+      showMsg('save-msg','✓ Saved for week of '+getSelectedWeek().label,'ok');
+    }catch(e){
+      showMsg('save-msg','Could not save — check browser settings.','err');
+    }
     btn.disabled=false;
     btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
-    return;
-  }
-  // Push to shared mailbox calendar
-  try{
-    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Syncing calendar…';
-    const count = await pushToCalendar();
-    showMsg('save-msg','✓ Saved & synced '+count+' slot'+(count!==1?'s':'')+' to shared calendar','ok');
-  }catch(e){
-    console.error('Calendar sync error:',e);
-    showMsg('save-msg','✓ Saved locally — calendar sync failed: '+e.message,'err');
-  }
-  btn.disabled=false;
-  btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
+  },400);
 }
 
 function showMsg(id,text,type){
@@ -1217,19 +1208,11 @@ const msalConfig = {
   cache: { cacheLocation: 'sessionStorage' }
 };
 var msalInstance = new msal.PublicClientApplication(msalConfig);
-var msalAccount = null;
-
-const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
-const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
-const CAL_CATEGORY_UNAVAIL = 'JetCityIT-Unavailable';
 
 msalInstance.initialize().then(() => {
   var accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
-    msalAccount = accounts[0];
-    var name = msalAccount.name || msalAccount.username.split('@')[0];
+    var name = accounts[0].name || accounts[0].username.split('@')[0];
     finishLogin(name);
   }
 }).catch(function(e){ console.error('MSAL init error:', e); });
@@ -1241,9 +1224,8 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
-    const resp = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
-    msalAccount = resp.account;
-    const name = msalAccount.name || msalAccount.username.split('@')[0];
+    const resp = await msalInstance.loginPopup({ scopes: ['User.Read'] });
+    const name = resp.account.name || resp.account.username.split('@')[0];
     finishLogin(name);
   } catch(e) {
     errEl.textContent = e.message || 'Sign-in failed. Please try again.';
@@ -1265,128 +1247,6 @@ function finishLogin(name){
     hdr.appendChild(badge);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
-}
-
-// ── Graph API helpers ─────────────────────────────────────────────────────────
-async function getGraphToken(){
-  if(!msalAccount) throw new Error('Not signed in');
-  try {
-    const r = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: msalAccount });
-    return r.accessToken;
-  } catch(e) {
-    const r = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES, account: msalAccount });
-    return r.accessToken;
-  }
-}
-
-async function pushToCalendar(){
-  const week = getSelectedWeek();
-  const token = await getGraphToken();
-  const authHeader = { 'Authorization': 'Bearer ' + token };
-
-  // 1. Fetch all events in the week on the shared mailbox and delete ones we created
-  // Use explicit UTC (Z suffix) and extend through Sunday to cover Friday 9pm PST → Saturday UTC
-  const monDate = new Date(week.monDate);
-  monDate.setUTCHours(0, 0, 0, 0);
-  const sunDate = new Date(monDate);
-  sunDate.setUTCDate(monDate.getUTCDate() + 7);
-  const monISO = monDate.toISOString();
-  const sunISO = sunDate.toISOString();
-
-  const viewUrl = `${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendarView?startDateTime=${monISO}&endDateTime=${sunISO}&$select=id,subject,categories&$top=200`;
-  const viewResp = await fetch(viewUrl, { headers: authHeader });
-  if(!viewResp.ok){
-    const err = await viewResp.json().catch(()=>({}));
-    throw new Error(`Calendar read failed (${viewResp.status}): ${err.error?.message || viewResp.statusText}`);
-  }
-  const viewData = await viewResp.json();
-
-  if(viewData.value){
-    const toDelete = viewData.value.filter(ev =>
-      (ev.subject || '').includes('[JCIT]') &&
-      (ev.subject || '').includes(currentTech)
-    );
-    for(const ev of toDelete){
-      await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/events/${ev.id}`, {
-        method: 'DELETE', headers: authHeader
-      });
-    }
-  }
-
-  // 2. Attempt to set up green/red categories on the shared mailbox (fails silently if no permission)
-  try {
-    const catResp = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, { headers: authHeader });
-    if(catResp.ok){
-      const catData = await catResp.json();
-      const existing = new Set((catData.value || []).map(c => c.displayName));
-      const catHeaders = { ...authHeader, 'Content-Type': 'application/json' };
-      const toMake = [];
-      if(!existing.has(CAL_CATEGORY_AVAIL))   toMake.push({ displayName: CAL_CATEGORY_AVAIL,   color: 'preset4' });
-      if(!existing.has(CAL_CATEGORY_UNAVAIL)) toMake.push({ displayName: CAL_CATEGORY_UNAVAIL, color: 'preset0' });
-      await Promise.all(toMake.map(cat =>
-        fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/outlook/masterCategories`, {
-          method: 'POST', headers: catHeaders, body: JSON.stringify(cat)
-        })
-      ));
-    }
-  } catch(e){ console.warn('Category color setup skipped:', e.message); }
-
-  // 3. Build calendar events for both available and unavailable blocks
-  const events = [];
-  const pad = n => String(n).padStart(2,'0');
-
-  // Always iterate exactly 5 days (Mon–Fri), filling missing days with empty Sets
-  // to guard against stale localStorage data that was saved with fewer days.
-  const slots5 = Array.from({length: 5}, (_, i) => techSlots[i] || new Set());
-
-  slots5.forEach((daySlots, dayIdx) => {
-    // Use monDate (already UTC-normalised to midnight) + offset for reliable date strings
-    const dayDate = new Date(monDate.getTime() + dayIdx * 86400000);
-    const dateStr = dayDate.toISOString().split('T')[0];
-
-    const addBlocks = (isAvail) => {
-      let runStart = null;
-      for(let s = 0; s <= N; s++){
-        const inBlock = isAvail
-          ? (s < N && !daySlots.has(START * 2 + s))
-          : (s < N &&  daySlots.has(START * 2 + s));
-        if(inBlock && runStart === null){ runStart = s; }
-        else if(!inBlock && runStart !== null){
-          const absStart = START * 2 + runStart;
-          const absEnd   = START * 2 + s;
-          const sh = Math.floor(absStart / 2), sm = (absStart % 2) * 30;
-          const eh = Math.floor(absEnd   / 2), em = (absEnd   % 2) * 30;
-          events.push({
-            subject: `[JCIT] ${currentTech} — ${isAvail ? 'Available' : 'Unavailable'}`,
-            categories: [isAvail ? CAL_CATEGORY_AVAIL : CAL_CATEGORY_UNAVAIL],
-            start: { dateTime: `${dateStr}T${pad(sh)}:${pad(sm)}:00`, timeZone: 'Pacific Standard Time' },
-            end:   { dateTime: `${dateStr}T${pad(eh)}:${pad(em)}:00`, timeZone: 'Pacific Standard Time' },
-            showAs: 'busy',
-            isReminderOn: false
-          });
-          runStart = null;
-        }
-      }
-    };
-
-    addBlocks(true);
-    addBlocks(false);
-  });
-
-  // 4. Post all events to the shared mailbox sequentially to avoid throttling
-  for(const ev of events){
-    const r = await fetch(`${GRAPH_BASE}/users/${SHARED_MAILBOX}/calendar/events`, {
-      method: 'POST',
-      headers: { ...authHeader, 'Content-Type': 'application/json' },
-      body: JSON.stringify(ev)
-    });
-    if(!r.ok){
-      const err = await r.json().catch(()=>({}));
-      throw new Error(`Event create failed (${r.status}): ${err.error?.message || r.statusText}`);
-    }
-  }
-
-  return events.length;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
