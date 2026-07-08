@@ -1207,6 +1207,7 @@ function confirmClear(){
 // Manager view (drag-and-drop crew-to-job assignment).
 const JCITDispatch=(function(){
   const LS_KEY='jetcityit.dispatch.v1';
+  const SEED_FLAG_KEY='jetcityit.dispatch.seeded.v1';
   const STATUS_META={
     '':{cls:'dp-st-scheduled',label:'Scheduled'},
     'In Progress':{cls:'dp-st-progress',label:'In progress'},
@@ -1224,7 +1225,44 @@ const JCITDispatch=(function(){
   let modal=null;
   let dragName=null;
 
-  function load(){try{const raw=localStorage.getItem(LS_KEY);if(raw)return JSON.parse(raw)}catch(e){}return{workers:[],jobs:[]}}
+  // Demo data shown once, the very first time a browser opens this app with no
+  // dispatch data saved yet — so a manager can pull up "Dispatch" or "Crew
+  // calendar" cold and immediately show a real example. Placeholder names and
+  // fake job details only; replace with real jobs as they come in.
+  function seedDemoData(){
+    const mon=getMondayOf(new Date());
+    const iso=offset=>{const d=new Date(mon);d.setDate(mon.getDate()+offset);return toISO(d)};
+    return{
+      workers:[
+        {name:'Eric Yevenko',active:true},
+        {name:'Maya Patel',active:true},
+        {name:'Sam Torres',active:true},
+        {name:'Jordan Lee',active:true},
+        {name:'Chris Morgan',active:true},
+        {name:'Dana Wu',active:true}
+      ],
+      jobs:[
+        {id:'demo1',date:iso(0),project:'Network install',address:'100 Main St, Seattle',startTime:'8:00AM',duration:'4.0',client:'Acme Corp',status:'',lead:['Eric Yevenko'],technicians:['Maya Patel'],crewSize:2},
+        {id:'demo2',date:iso(0),project:'Helpdesk support',address:'200 Market St, Bellevue',startTime:'1:00PM',duration:'3.0',client:'Bellevue Clinic',status:'In Progress',lead:['Sam Torres'],technicians:[]},
+        {id:'demo3',date:iso(1),project:'Structured cabling',address:'88 River Rd, Renton',startTime:'9:00AM',duration:'6.0',client:'Riverside School',status:'',lead:['Eric Yevenko'],technicians:['Jordan Lee'],crewSize:3},
+        {id:'demo4',date:iso(2),project:'Server migration',address:'2100 Westlake Ave, Seattle',startTime:'8:00AM',duration:'10.0',client:'DataCo',status:'In Progress',lead:['Chris Morgan'],technicians:['Sam Torres']},
+        {id:'demo5',date:iso(2),project:'New hire onboarding setup',address:'701 Pike St, Seattle',startTime:'10:00AM',duration:'4.0',client:'Harbor Law',status:'',lead:[],technicians:[],crewSize:2},
+        {id:'demo6',date:iso(3),project:'Follow-up + punch list',address:'100 Main St, Seattle',startTime:'9:00AM',duration:'2.0',client:'Acme Corp',status:'',lead:['Eric Yevenko'],technicians:[]},
+        {id:'demo7',date:iso(3),project:'Wifi troubleshooting',address:'55 Elliott Ave, Seattle',startTime:'1:00PM',duration:'2.5',client:'Northwind',status:'',lead:['Dana Wu'],technicians:[]},
+        {id:'demo8',date:iso(4),project:'Quarterly maintenance',address:'Jet City IT Office',startTime:'9:00AM',duration:'3.0',client:'Internal',status:'Complete',lead:['Maya Patel'],technicians:['Jordan Lee']}
+      ]
+    };
+  }
+  function load(){
+    try{const raw=localStorage.getItem(LS_KEY);if(raw)return JSON.parse(raw)}catch(e){}
+    if(!localStorage.getItem(SEED_FLAG_KEY)){
+      try{localStorage.setItem(SEED_FLAG_KEY,'1')}catch(e){}
+      const demo=seedDemoData();
+      try{localStorage.setItem(LS_KEY,JSON.stringify(demo))}catch(e){}
+      return demo;
+    }
+    return{workers:[],jobs:[]};
+  }
   function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}}
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
