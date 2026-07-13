@@ -19,6 +19,9 @@ Thumbs.db
 node_modules/
 npm-debug.log*
 
+# Azure Functions local secrets (real Cosmos DB connection string)
+api/local.settings.json
+
 # Local-only files containing REAL JetCityIT data — never commit to the public repo
 jetcity-combined.local.html
 dispatch-calendar.html

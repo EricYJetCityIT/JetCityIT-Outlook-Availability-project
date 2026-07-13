@@ -1644,6 +1644,9 @@ var msalInstance = new msal.PublicClientApplication(msalConfig);
 var msalAccount = null;
 
 const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
+// Scope for the app's own /api Functions (Cosmos DB-backed availability + dispatch).
+// Not yet called anywhere — Phase 4 swaps the localStorage calls for fetch()s using this.
+const API_SCOPES = ['api://b367d366-39f5-4fdc-a5e9-9d634ca37b5e/access_as_user'];
 const SHARED_MAILBOX = 'crewavailability@jetcityit.com';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
@@ -1700,6 +1703,17 @@ async function getGraphToken(){
     return r.accessToken;
   } catch(e) {
     const r = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES, account: msalAccount });
+    return r.accessToken;
+  }
+}
+
+async function getApiToken(){
+  if(!msalAccount) throw new Error('Not signed in');
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: API_SCOPES, account: msalAccount });
+    return r.accessToken;
+  } catch(e) {
+    const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
     return r.accessToken;
   }
 }

@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "COSMOS_CONNECTION_STRING": "<copy from jetcityit-cosmos account's Keys blade in the Azure Portal>",
+    "COSMOS_DATABASE": "jetcityit",
+    "AAD_TENANT_ID": "a2b534e7-8d8b-4c5f-ae4b-5076fd677ff4",
+    "AAD_CLIENT_ID": "b367d366-39f5-4fdc-a5e9-9d634ca37b5e"
+  }
+}
