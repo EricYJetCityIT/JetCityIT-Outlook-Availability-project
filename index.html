@@ -804,11 +804,12 @@ function selectWeek(key){
   onWeekChanged();
 }
 
-function onWeekChanged(){
+async function onWeekChanged(){
   const week=getSelectedWeek();
   updateBarWeekLabel();
   // Update tech view description
   document.getElementById('tech-week-desc').textContent='Week of '+week.label+' · All times are available by default — tap to mark when you\'re unavailable.';
+  await ensureAvailabilityLoaded(selectedWeekKey);
   // If grid is open, reload slots for new week
   if(currentTech&&document.getElementById('slot-card').style.display!=='none'){
     const saved=getSlots(currentTech);
@@ -826,27 +827,70 @@ function onWeekChanged(){
   }
 }
 
-// ── Storage ───────────────────────────────────────────────────────────────────
-function sKey(n){return'av:'+selectedWeekKey+':'+n.trim().toLowerCase().replace(/\s+/g,'-')}
-function iKey(){return'index:'+selectedWeekKey}
-function getNames(){try{return JSON.parse(localStorage.getItem(iKey())||'[]')}catch{return[]}}
-function saveNames(ns){localStorage.setItem(iKey(),JSON.stringify(ns))}
-function getSlots(n){
-  try{const r=localStorage.getItem(sKey(n));if(!r)return null;return JSON.parse(r).map(a=>new Set(a))}
-  catch{return null}
+// ── Storage (Cosmos DB via /api/availability) ──────────────────────────────────
+// In-memory cache for the currently-selected week, populated by
+// ensureAvailabilityLoaded() and read synchronously by getNames()/getSlots()
+// so existing render code doesn't need to become async-aware of every read.
+let availCache={weekKey:null,names:[],slotsByName:{}};
+let availLoading=null; // {weekKey, promise} — in-flight load, if any
+
+function availSlugKey(n){return n.trim().toLowerCase()}
+
+// On failure (e.g. called before MSAL sign-in finishes at page load), leaves
+// availCache untouched so the next call for the same weekKey retries instead
+// of permanently caching an empty result.
+function ensureAvailabilityLoaded(weekKey){
+  if(availCache.weekKey===weekKey) return Promise.resolve();
+  if(availLoading&&availLoading.weekKey===weekKey) return availLoading.promise;
+  const promise=(async()=>{
+    try{
+      const token=await getApiToken();
+      const res=await fetch('/api/availability/'+encodeURIComponent(weekKey),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      if(res.ok){
+        const data=await res.json();
+        const next={weekKey,names:data.names||[],slotsByName:{}};
+        (data.entries||[]).forEach(e=>{next.slotsByName[availSlugKey(e.name)]=e.slots});
+        availCache=next;
+      }
+    }catch(e){console.error('Failed to load availability:',e)}
+    availLoading=null;
+  })();
+  availLoading={weekKey,promise};
+  return promise;
 }
-function setSlots(n,ss){
-  localStorage.setItem(sKey(n),JSON.stringify(ss.map(s=>[...s])));
-  const ns=getNames();if(!ns.includes(n.trim())){ns.push(n.trim());saveNames(ns)}
+
+function getNames(){return availCache.weekKey===selectedWeekKey?availCache.names.slice():[]}
+function getSlots(n){
+  if(availCache.weekKey!==selectedWeekKey)return null;
+  const raw=availCache.slotsByName[availSlugKey(n)];
+  return raw?raw.map(a=>new Set(a)):null;
+}
+async function setSlots(n,ss){
+  const weekKey=selectedWeekKey;
+  const raw=ss.map(s=>[...s]);
+  if(availCache.weekKey===weekKey){
+    const k=availSlugKey(n);
+    if(!(k in availCache.slotsByName)) availCache.names.push(n.trim());
+    availCache.slotsByName[k]=raw;
+  }
+  const token=await getApiToken();
+  const res=await fetch('/api/availability/'+encodeURIComponent(weekKey)+'/'+encodeURIComponent(n.trim()),{
+    method:'PUT',
+    headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
+    body:JSON.stringify({slots:raw})
+  });
+  if(!res.ok) throw new Error('Failed to save availability');
 }
 // Pads out slot arrays saved before Sat/Sun were added (5 days) to the current
 // DAYS.length (7), defaulting any missing days to fully available.
 function normalizeSlots(saved){
   return DAYS.map((_,i)=>(saved&&saved[i])?saved[i]:new Set());
 }
-function deleteAll(){
-  getNames().forEach(n=>localStorage.removeItem(sKey(n)));
-  localStorage.removeItem(iKey());
+async function deleteAll(){
+  const weekKey=selectedWeekKey;
+  availCache={weekKey,names:[],slotsByName:{}};
+  const token=await getApiToken();
+  await fetch('/api/availability/'+encodeURIComponent(weekKey),{method:'DELETE',headers:{'X-Jetcity-Authorization':'Bearer '+token}});
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -877,12 +921,13 @@ let currentTech='';
 
 function todayDayIdx(){const d=new Date().getDay();return d===0?6:d-1}
 
-function loadSlots(){
+async function loadSlots(){
   const name=document.getElementById('tech-name').value.trim();
   const errEl=document.getElementById('name-err');
   if(!name){errEl.textContent='Please enter your name to continue.';errEl.style.display='flex';return;}
   errEl.style.display='none';
   currentTech=name;
+  await ensureAvailabilityLoaded(selectedWeekKey);
   const saved=getSlots(name);
   techSlots=normalizeSlots(saved);
   document.getElementById('grid-title').textContent='Hi '+name.split(' ')[0]+'! Tap any slots you\'re unavailable';
@@ -1017,9 +1062,9 @@ async function saveSlots(){
   btn.disabled=true;
   btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
   try{
-    setSlots(currentTech,techSlots);
+    await setSlots(currentTech,techSlots);
   }catch(e){
-    showMsg('save-msg','Could not save — check browser settings.','err');
+    showMsg('save-msg','Could not save — check your connection.','err');
     btn.disabled=false;
     btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
     return;
@@ -1066,7 +1111,8 @@ function mgrSubTabsHtml(){
     </div>`;
 }
 
-function renderManager(){
+async function renderManager(){
+  await ensureAvailabilityLoaded(selectedWeekKey);
   const names=getNames();
   const el=document.getElementById('mgr-content');
   const subLbl=document.getElementById('mgr-sub-label');
@@ -1074,6 +1120,7 @@ function renderManager(){
 
   if(mgrMode==='dispatch'){
     subLbl.textContent='Week of '+week.label+' · drag crew onto a job to assign them';
+    await JCITDispatch.ensureLoaded();
     el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(true)}`;
     return;
   }
@@ -1221,8 +1268,8 @@ function buildIndividual(techData){
   return html+'</div>';
 }
 
-function confirmClear(){
-  if(confirm('Clear all submissions for week of '+getSelectedWeek().label+'?')){deleteAll();renderManager();}
+async function confirmClear(){
+  if(confirm('Clear all submissions for week of '+getSelectedWeek().label+'?')){await deleteAll();renderManager();}
 }
 
 // ── Crew calendar / Dispatch board ──────────────────────────────────────────
@@ -1230,8 +1277,6 @@ function confirmClear(){
 // (visible to all signed-in crew) and the editable "Dispatch" sub-tab inside
 // Manager view (drag-and-drop crew-to-job assignment).
 const JCITDispatch=(function(){
-  const LS_KEY='jetcityit.dispatch.v1';
-  const SEED_FLAG_KEY='jetcityit.dispatch.seeded.v1';
   const STATUS_META={
     '':{cls:'dp-st-scheduled',label:'Scheduled'},
     'In Progress':{cls:'dp-st-progress',label:'In progress'},
@@ -1245,9 +1290,11 @@ const JCITDispatch=(function(){
     {bg:'#FBEAF0',fg:'#72243E'},{bg:'#FAECE7',fg:'#993C1D'},{bg:'#FAEEDA',fg:'#854F0B'}
   ];
 
-  let state=load();
+  let state={workers:[],jobs:[]};
   let modal=null;
   let dragName=null;
+  let dispatchLoaded=false;
+  let dispatchLoadPromise=null;
 
   // Demo data shown once, the very first time a browser opens this app with no
   // dispatch data saved yet — so a manager can pull up "Dispatch" or "Crew
@@ -1277,27 +1324,49 @@ const JCITDispatch=(function(){
       ]
     };
   }
-  function load(){
-    let existing=null;
-    try{const raw=localStorage.getItem(LS_KEY);if(raw)existing=JSON.parse(raw)}catch(e){}
-    const alreadySeeded=!!localStorage.getItem(SEED_FLAG_KEY);
-    // Seed once, even if this browser already has a roster-only record with no
-    // jobs yet (e.g. from just opening the board before any job was created).
-    if(!alreadySeeded&&(!existing||!existing.jobs||!existing.jobs.length)){
-      try{localStorage.setItem(SEED_FLAG_KEY,'1')}catch(e){}
-      const demo=seedDemoData();
-      if(existing&&existing.workers){
-        existing.workers.forEach(w=>{
-          if(!demo.workers.some(dw=>dw.name.toLowerCase()===w.name.toLowerCase())) demo.workers.push(w);
-        });
-      }
-      try{localStorage.setItem(LS_KEY,JSON.stringify(demo))}catch(e){}
-      return demo;
-    }
-    if(existing) return existing;
-    return{workers:[],jobs:[]};
+  // Fetches the shared dispatch state from Cosmos DB once per session. Seeds
+  // demo data only if the backend is truly empty (no prior manager has ever
+  // saved a real job or roster there yet).
+  // On failure (e.g. called before MSAL sign-in finishes at page load), leaves
+  // dispatchLoaded false so the next call retries instead of permanently
+  // treating a failed fetch as "backend is empty, seed demo data".
+  function ensureLoaded(){
+    if(dispatchLoaded) return Promise.resolve();
+    if(dispatchLoadPromise) return dispatchLoadPromise;
+    dispatchLoadPromise=(async()=>{
+      try{
+        const token=await getApiToken();
+        const res=await fetch('/api/dispatch',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+        if(res.ok){
+          const data=await res.json();
+          state.workers=data.workers||[];
+          state.jobs=data.jobs||[];
+          if(!state.workers.length&&!state.jobs.length){
+            const demo=seedDemoData();
+            state.workers=demo.workers;
+            state.jobs=demo.jobs;
+            save();
+          }
+          syncRoster();
+          dispatchLoaded=true;
+        }
+      }catch(e){console.error('Failed to load dispatch data:',e)}
+      dispatchLoadPromise=null;
+    })();
+    return dispatchLoadPromise;
   }
-  function save(){try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}}
+  function save(){
+    (async()=>{
+      try{
+        const token=await getApiToken();
+        await fetch('/api/dispatch',{
+          method:'PUT',
+          headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
+          body:JSON.stringify({workers:state.workers,jobs:state.jobs})
+        });
+      }catch(e){console.error('Failed to save dispatch data:',e)}
+    })();
+  }
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -1315,27 +1384,13 @@ const JCITDispatch=(function(){
   function workerByName(n){return state.workers.find(w=>w.name===n)||null}
   function activeWorkers(){return state.workers.filter(w=>w.active)}
 
-  // Bootstrap the crew roster from techs who've submitted availability, plus
-  // whoever is currently signed in, so managers don't have to hand-type names.
+  // Make sure the signed-in manager/tech shows up in the shared roster without
+  // having to hand-type their own name.
   function syncRoster(){
-    let changed=false;
-    try{
-      for(let i=0;i<localStorage.length;i++){
-        const k=localStorage.key(i);
-        if(!k||k.indexOf('index:')!==0) continue;
-        let names=[]; try{names=JSON.parse(localStorage.getItem(k)||'[]')}catch(e){continue}
-        names.forEach(n=>{
-          const nm=String(n).trim(); if(!nm) return;
-          if(!state.workers.some(w=>w.name.toLowerCase()===nm.toLowerCase())){
-            state.workers.push({name:nm,active:true}); changed=true;
-          }
-        });
-      }
-    }catch(e){}
     if(currentUserName && !state.workers.some(w=>w.name.toLowerCase()===currentUserName.toLowerCase())){
-      state.workers.push({name:currentUserName,active:true}); changed=true;
+      state.workers.push({name:currentUserName,active:true});
+      save();
     }
-    if(changed) save();
   }
 
   function weekDates(){
@@ -1617,13 +1672,15 @@ const JCITDispatch=(function(){
   }
   init();
 
-  return { boardHtml, myScheduleHtml };
+  return { boardHtml, myScheduleHtml, ensureLoaded };
 })();
 
-function renderCrewView(){
+async function renderCrewView(){
   const week=getSelectedWeek();
   const lbl=document.getElementById('crew-week-label'); if(lbl) lbl.textContent=week.label;
   const el=document.getElementById('crew-content');
+  await ensureAvailabilityLoaded(selectedWeekKey);
+  await JCITDispatch.ensureLoaded();
   if(crewMode==='board'){
     el.innerHTML=JCITDispatch.boardHtml(false);
   } else {

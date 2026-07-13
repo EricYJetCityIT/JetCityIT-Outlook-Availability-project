@@ -12,9 +12,10 @@ function docId(weekKey, name) {
   return `${weekKey}__${slugify(name)}`;
 }
 
-// Mirrors getNames()/getSlots(n) for a whole week at once (manager/crew calendar view).
+// Mirrors getNames()/getSlots(n) for a whole week at once (manager/crew calendar view),
+// and mirrors deleteAll() via DELETE (manager's "clear all submissions for this week").
 app.http('availabilityWeek', {
-  methods: ['GET'],
+  methods: ['GET', 'DELETE'],
   authLevel: 'anonymous',
   route: 'availability/{weekKey}',
   handler: async (request, context) => {
@@ -22,6 +23,18 @@ app.http('availabilityWeek', {
       await requireUser(request);
       const { weekKey } = request.params;
       const container = getContainer(CONTAINER_ID);
+
+      if (request.method === 'DELETE') {
+        const { resources } = await container.items
+          .query({
+            query: 'SELECT c.id FROM c WHERE c.weekKey = @weekKey',
+            parameters: [{ name: '@weekKey', value: weekKey }],
+          })
+          .fetchAll();
+        await Promise.all(resources.map((r) => container.item(r.id, weekKey).delete()));
+        return { jsonBody: { ok: true } };
+      }
+
       const { resources } = await container.items
         .query({
           query: 'SELECT c.name, c.slots FROM c WHERE c.weekKey = @weekKey',
