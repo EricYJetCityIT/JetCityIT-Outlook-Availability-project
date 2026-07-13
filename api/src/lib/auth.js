@@ -3,7 +3,10 @@ const jwksClient = require('jwks-rsa');
 
 const TENANT_ID = process.env.AAD_TENANT_ID;
 const CLIENT_ID = process.env.AAD_CLIENT_ID;
-const ISSUER = `https://login.microsoftonline.com/${TENANT_ID}/v2.0`;
+// MSAL's acquireTokenSilent issues v1.0 tokens for this app's own
+// "Expose an API" scope (unlike the v2.0 tokens Graph scopes get), so the
+// issuer is the older sts.windows.net form, not login.microsoftonline.com/v2.0.
+const ISSUER = `https://sts.windows.net/${TENANT_ID}/`;
 const AUDIENCE = `api://${CLIENT_ID}`;
 const ALLOWED_DOMAIN = '@jetcityit.com';
 const REQUIRED_SCOPE = 'access_as_user';
