@@ -42,8 +42,13 @@ class AuthError extends Error {
 // Validates the bearer token on an incoming request and enforces the same
 // @jetcityit.com restriction already shown in the frontend's login overlay
 // (the API must not trust the client to have applied it).
+//
+// Reads the token from a custom header, not "Authorization" — Azure Static
+// Web Apps' managed-Functions integration reserves that header for its own
+// internal SWA-to-Function service token and overwrites whatever the client
+// sends, so a client-supplied Authorization header never reaches this code.
 async function requireUser(request) {
-  const header = request.headers.get('authorization') || '';
+  const header = request.headers.get('x-jetcity-authorization') || '';
   const match = header.match(/^Bearer (.+)$/i);
   if (!match) throw new AuthError(401, 'Missing bearer token');
 
