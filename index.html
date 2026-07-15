@@ -1136,10 +1136,12 @@ async function renderManager(){
   subLbl.textContent=`Week of ${week.label} · ${total} tech${total!==1?'s':''} submitted`;
 
   // overlapCount = number of techs AVAILABLE at each slot (i.e. did NOT mark it unavailable)
+  // overlapNames = which techs those are, so the heatmap can show initials when only one is free
   const overlapCount=DAYS.map(()=>new Array(N).fill(0));
-  techData.forEach(({slotSets})=>{
+  const overlapNames=DAYS.map(()=>Array.from({length:N},()=>[]));
+  techData.forEach(({name,slotSets})=>{
     slotSets.forEach((s,di)=>{
-      for(let i=0;i<N;i++){if(!s.has(START*2+i))overlapCount[di][i]++;}
+      for(let i=0;i<N;i++){if(!s.has(START*2+i)){overlapCount[di][i]++;overlapNames[di][i].push(name);}}
     });
   });
 
@@ -1164,13 +1166,13 @@ async function renderManager(){
     </div>
   </div>`;
 
-  html+=mgrMode==='overlap'?buildHeatmap(overlapCount,total):buildIndividual(techData);
+  html+=mgrMode==='overlap'?buildHeatmap(overlapCount,overlapNames,total):buildIndividual(techData);
   el.innerHTML=html;
 }
 
 function setMgrMode(m){mgrMode=m;renderManager();}
 
-function buildHeatmap(overlapCount,total){
+function buildHeatmap(overlapCount,overlapNames,total){
   const todayMon=getMondayOf(new Date());
   const isCurrentWeek=weekKey(todayMon)===selectedWeekKey;
   const today=isCurrentWeek?todayDayIdx():-1;
@@ -1198,8 +1200,10 @@ function buildHeatmap(overlapCount,total){
       else if(pct<=.33){bg='#C8EFE4';fc='#0D6E56';}
       else if(pct<=.66){bg='#52C9A8';fc='#fff';}
       else{bg='#16A37F';fc='#fff';}
-      if(count>0)txt=count;
-      html+=`<div class="ocell" style="background:${bg};color:${fc}">${txt}</div>`;
+      let title='';
+      if(count===1){const n=overlapNames[di][s][0];txt=initials(n);title=` title="${esc(n)}"`;}
+      else if(count>0)txt=count;
+      html+=`<div class="ocell" style="background:${bg};color:${fc}"${title}>${txt}</div>`;
     });
     html+='</div>';
   }
