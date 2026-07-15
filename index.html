@@ -176,7 +176,7 @@ input[type=text]::placeholder{color:var(--text3)}
 /* ── Heatmap ── */
 .overlap-grid{min-width:490px}
 .overlap-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
-.ocell{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;transition:background .12s}
+.ocell{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;transition:background .12s;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
 
 /* ── Tech cards ── */
 .tech-list{display:flex;flex-direction:column;gap:12px}
@@ -1211,8 +1211,11 @@ function buildHeatmap(overlapCount,overlapNames,total){
       else if(pct<=.66){bg='#52C9A8';fc='#fff';}
       else{bg='#16A37F';fc='#fff';}
       let title='';
-      if(count===1){const n=overlapNames[di][s][0];txt=initials(n);title=` title="${esc(n)}"`;}
-      else if(count>0)txt=count;
+      if(count>0){
+        const names=overlapNames[di][s];
+        txt=names.map(n=>initials(n)).join(', ');
+        title=` title="${esc(names.join(', '))}"`;
+      }
       html+=`<div class="ocell" style="background:${bg};color:${fc}"${title}>${txt}</div>`;
     });
     html+='</div>';
