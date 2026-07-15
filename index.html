@@ -460,9 +460,19 @@ input[type=text]::placeholder{color:var(--text3)}
 
   <!-- MANAGER VIEW -->
   <div class="view" id="view-manager">
-    <div class="section-head">
-      <h1>Team availability</h1>
-      <p id="mgr-sub-label">Loading…</p>
+    <div class="section-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <h1>Team availability</h1>
+        <p id="mgr-sub-label">Loading…</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-top:4px">
+        <button class="nav-btn" onclick="shiftSelectedWeek(-1)" title="Previous week" aria-label="Previous week">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="nav-btn" onclick="shiftSelectedWeek(1)" title="Next week" aria-label="Next week">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
     </div>
     <div id="mgr-content"></div>
   </div>
