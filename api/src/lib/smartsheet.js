@@ -92,6 +92,13 @@ function transformSheetToDispatch(sheet) {
     const date = cellText(cellFor(row, COLUMNS.date));
     if (!project || !date) return;
 
+    const address = cellText(cellFor(row, COLUMNS.address));
+    const startTime = cellText(cellFor(row, COLUMNS.startTime));
+    // Rows with neither an address nor a start time aren't real jobs — the
+    // sheet has at least one non-job banner row (e.g. a confidentiality
+    // notice) that only fills in Project/Date/POC to look non-blank.
+    if (!address && !startTime) return;
+
     const status = cellText(cellFor(row, COLUMNS.status));
     const crewSizeRaw = cellText(cellFor(row, COLUMNS.crewSize));
     const crewSize = crewSizeRaw ? parseInt(crewSizeRaw, 10) : null;
@@ -100,8 +107,8 @@ function transformSheetToDispatch(sheet) {
       id: 'ss-' + row.id,
       date,
       project,
-      address: cellText(cellFor(row, COLUMNS.address)),
-      startTime: cellText(cellFor(row, COLUMNS.startTime)),
+      address,
+      startTime,
       duration: cellText(cellFor(row, COLUMNS.duration)),
       client: cellMultiValues(cellFor(row, COLUMNS.client)).join(', '),
       status: STATUS_VALUES.has(status) ? status : '',
