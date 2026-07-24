@@ -21,14 +21,16 @@ async function readSyncState(container) {
 // Smartsheet is the sole source of truth now — this always fully replaces
 // workers/jobs with what's currently in the sheet, it does not merge.
 // Skips the (expensive) transform+write entirely when the sheet's
-// modifiedAt hasn't changed since the last check.
-async function runSync(context) {
+// modifiedAt hasn't changed since the last check (unless force is set —
+// used to bypass that cache after a transform-logic change, since the
+// cache only tracks whether the *sheet* changed, not the code).
+async function runSync(context, force) {
   const container = getContainer(CONTAINER_ID);
   const syncState = await readSyncState(container);
   const sheet = await fetchSheet();
   const now = new Date().toISOString();
 
-  if (syncState && syncState.lastSheetModifiedAt === sheet.modifiedAt) {
+  if (!force && syncState && syncState.lastSheetModifiedAt === sheet.modifiedAt) {
     context.log('Smartsheet unchanged since last sync, skipping.');
     await container.items.upsert({ ...syncState, id: SYNC_DOC_ID, lastCheckedAt: now });
     return { synced: false, jobCount: syncState.jobCount, workerCount: syncState.workerCount };
@@ -77,7 +79,8 @@ app.http('smartsheetSync', {
     }
 
     try {
-      const result = await runSync(context);
+      const force = new URL(request.url).searchParams.get('force') === 'true';
+      const result = await runSync(context, force);
       return { jsonBody: result };
     } catch (e) {
       context.error('Smartsheet sync failed:', e);
