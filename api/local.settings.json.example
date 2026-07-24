@@ -8,6 +8,7 @@
     "AAD_TENANT_ID": "a2b534e7-8d8b-4c5f-ae4b-5076fd677ff4",
     "AAD_CLIENT_ID": "b367d366-39f5-4fdc-a5e9-9d634ca37b5e",
     "SMARTSHEET_API_TOKEN": "<generate from Smartsheet: Account > Apps & Integrations > API Access>",
-    "SMARTSHEET_SHEET_ID": "3896324323757956"
+    "SMARTSHEET_SHEET_ID": "3896324323757956",
+    "SYNC_SECRET": "<shared secret the GitHub Actions cron workflow sends as X-Sync-Secret; must match the GitHub repo secret of the same name>"
   }
 }

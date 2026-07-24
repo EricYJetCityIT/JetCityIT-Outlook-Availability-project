@@ -1,0 +1,20 @@
+name: Smartsheet dispatch sync
+
+# Azure Static Web Apps' managed Functions only support HTTP triggers, so
+# the actual sync (api/src/functions/smartsheetSync.js) is an HTTP endpoint
+# instead of a Timer trigger, and this workflow is what calls it on a
+# schedule. SYNC_SECRET must match the SYNC_SECRET app setting on the
+# jetcityit-app Static Web App — set both by hand, never in code.
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call smartsheet-sync endpoint
+        run: |
+          curl -sf -X POST "https://crew-calendar.jetcityit.com/api/smartsheet-sync" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"

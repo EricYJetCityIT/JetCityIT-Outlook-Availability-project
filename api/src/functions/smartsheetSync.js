@@ -31,7 +31,7 @@ async function runSync(context) {
   if (syncState && syncState.lastSheetModifiedAt === sheet.modifiedAt) {
     context.log('Smartsheet unchanged since last sync, skipping.');
     await container.items.upsert({ ...syncState, id: SYNC_DOC_ID, lastCheckedAt: now });
-    return;
+    return { synced: false, jobCount: syncState.jobCount, workerCount: syncState.workerCount };
   }
 
   const { workers, jobs } = transformSheetToDispatch(sheet);
@@ -55,15 +55,33 @@ async function runSync(context) {
   });
 
   context.log(`Smartsheet synced: ${jobs.length} jobs, ${workers.length} workers.`);
+  return { synced: true, jobCount: jobs.length, workerCount: workers.length };
 }
 
-app.timer('smartsheetSync', {
-  schedule: '0 */10 * * * *',
-  handler: async (myTimer, context) => {
+// Azure Static Web Apps' *managed* Functions integration only supports
+// HTTP-triggered functions — Timer triggers are silently never invoked
+// there (a real, documented limitation, not a config mistake). So this
+// runs as a plain HTTP endpoint instead, called on a schedule by a GitHub
+// Actions cron workflow (.github/workflows/smartsheet-sync-schedule.yml).
+// Guarded by a shared secret rather than user auth, since the caller is a
+// GitHub Actions job, not a signed-in @jetcityit.com user.
+app.http('smartsheetSync', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'smartsheet-sync',
+  handler: async (request, context) => {
+    const expected = process.env.SYNC_SECRET;
+    const provided = request.headers.get('x-sync-secret') || '';
+    if (!expected || provided !== expected) {
+      return { status: 401, jsonBody: { error: 'Invalid or missing sync secret' } };
+    }
+
     try {
-      await runSync(context);
+      const result = await runSync(context);
+      return { jsonBody: result };
     } catch (e) {
       context.error('Smartsheet sync failed:', e);
+      return { status: 500, jsonBody: { error: 'Sync failed' } };
     }
   },
 });
