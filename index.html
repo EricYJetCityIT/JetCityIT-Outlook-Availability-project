@@ -1129,9 +1129,9 @@ async function renderManager(){
   const week=getSelectedWeek();
 
   if(mgrMode==='dispatch'){
-    subLbl.textContent='Week of '+week.label+' · drag crew onto a job to assign them';
+    subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
-    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(true)}`;
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(false)}`;
     return;
   }
 
@@ -1308,45 +1308,18 @@ const JCITDispatch=(function(){
   ];
 
   let state={workers:[],jobs:[]};
+  let syncMeta={updatedAt:null,source:null};
   let modal=null;
   let dragName=null;
   let dispatchLoaded=false;
   let dispatchLoadPromise=null;
 
-  // Demo data shown once, the very first time a browser opens this app with no
-  // dispatch data saved yet — so a manager can pull up "Dispatch" or "Crew
-  // calendar" cold and immediately show a real example. Placeholder names and
-  // fake job details only; replace with real jobs as they come in.
-  function seedDemoData(){
-    const mon=getMondayOf(new Date());
-    const iso=offset=>{const d=new Date(mon);d.setDate(mon.getDate()+offset);return toISO(d)};
-    return{
-      workers:[
-        {name:'Eric Yevenko',active:true},
-        {name:'Maya Patel',active:true},
-        {name:'Sam Torres',active:true},
-        {name:'Jordan Lee',active:true},
-        {name:'Chris Morgan',active:true},
-        {name:'Dana Wu',active:true}
-      ],
-      jobs:[
-        {id:'demo1',date:iso(0),project:'Network install',address:'100 Main St, Seattle',startTime:'8:00AM',duration:'4.0',client:'Acme Corp',status:'',lead:['Eric Yevenko'],technicians:['Maya Patel'],crewSize:2},
-        {id:'demo2',date:iso(0),project:'Helpdesk support',address:'200 Market St, Bellevue',startTime:'1:00PM',duration:'3.0',client:'Bellevue Clinic',status:'In Progress',lead:['Sam Torres'],technicians:[]},
-        {id:'demo3',date:iso(1),project:'Structured cabling',address:'88 River Rd, Renton',startTime:'9:00AM',duration:'6.0',client:'Riverside School',status:'',lead:['Eric Yevenko'],technicians:['Jordan Lee'],crewSize:3},
-        {id:'demo4',date:iso(2),project:'Server migration',address:'2100 Westlake Ave, Seattle',startTime:'8:00AM',duration:'10.0',client:'DataCo',status:'In Progress',lead:['Chris Morgan'],technicians:['Sam Torres']},
-        {id:'demo5',date:iso(2),project:'New hire onboarding setup',address:'701 Pike St, Seattle',startTime:'10:00AM',duration:'4.0',client:'Harbor Law',status:'',lead:[],technicians:[],crewSize:2},
-        {id:'demo6',date:iso(3),project:'Follow-up + punch list',address:'100 Main St, Seattle',startTime:'9:00AM',duration:'2.0',client:'Acme Corp',status:'',lead:['Eric Yevenko'],technicians:[]},
-        {id:'demo7',date:iso(3),project:'Wifi troubleshooting',address:'55 Elliott Ave, Seattle',startTime:'1:00PM',duration:'2.5',client:'Northwind',status:'',lead:['Dana Wu'],technicians:[]},
-        {id:'demo8',date:iso(4),project:'Quarterly maintenance',address:'Jet City IT Office',startTime:'9:00AM',duration:'3.0',client:'Internal',status:'Complete',lead:['Maya Patel'],technicians:['Jordan Lee']}
-      ]
-    };
-  }
-  // Fetches the shared dispatch state from Cosmos DB once per session. Seeds
-  // demo data only if the backend is truly empty (no prior manager has ever
-  // saved a real job or roster there yet).
+  // Fetches the shared dispatch state from Cosmos DB once per session. That
+  // data is now maintained entirely by the server-side Smartsheet sync
+  // (smartsheetSync.js), not seeded or written from here.
   // On failure (e.g. called before MSAL sign-in finishes at page load), leaves
   // dispatchLoaded false so the next call retries instead of permanently
-  // treating a failed fetch as "backend is empty, seed demo data".
+  // treating a failed fetch as "backend is empty".
   function ensureLoaded(){
     if(dispatchLoaded) return Promise.resolve();
     if(dispatchLoadPromise) return dispatchLoadPromise;
@@ -1358,13 +1331,7 @@ const JCITDispatch=(function(){
           const data=await res.json();
           state.workers=data.workers||[];
           state.jobs=data.jobs||[];
-          if(!state.workers.length&&!state.jobs.length){
-            const demo=seedDemoData();
-            state.workers=demo.workers;
-            state.jobs=demo.jobs;
-            save();
-          }
-          syncRoster();
+          syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
           dispatchLoaded=true;
         }
       }catch(e){console.error('Failed to load dispatch data:',e)}
@@ -1400,15 +1367,6 @@ const JCITDispatch=(function(){
   function jobById(id){return state.jobs.find(j=>j.id===id)||null}
   function workerByName(n){return state.workers.find(w=>w.name===n)||null}
   function activeWorkers(){return state.workers.filter(w=>w.active)}
-
-  // Make sure the signed-in manager/tech shows up in the shared roster without
-  // having to hand-type their own name.
-  function syncRoster(){
-    if(currentUserName && !state.workers.some(w=>w.name.toLowerCase()===currentUserName.toLowerCase())){
-      state.workers.push({name:currentUserName,active:true});
-      save();
-    }
-  }
 
   function weekDates(){
     const week=getSelectedWeek();
@@ -1452,8 +1410,12 @@ const JCITDispatch=(function(){
   }
 
   // ── Board (day columns of job cards) ──────────────────────────────────────
+  function syncStatusHtml(){
+    if(!syncMeta.updatedAt) return 'Synced automatically from the JCIT 2026 Crew Calendar in Smartsheet.';
+    const dt=new Date(syncMeta.updatedAt);
+    return 'Synced automatically from Smartsheet · last updated '+dt.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  }
   function boardHtml(editable){
-    syncRoster();
     const dates=weekDates(); const weekIso=dates.map(toISO);
     const rosterStrip=editable?rosterStripHtml(weekIso):'';
     const cols=dates.map((d,i)=>{
@@ -1471,7 +1433,7 @@ const JCITDispatch=(function(){
         <button class="btn btn-ghost btn-sm" data-dpact="data">Data</button>
       </div>
       <button class="btn btn-primary btn-sm" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>
-    </div>`:'';
+    </div>`:`<div class="dp-toolbar"><div style="font-size:12px;color:var(--text3)">${syncStatusHtml()}</div></div>`;
     return `${toolbar}${rosterStrip}<div class="dp-board-wrap"><div class="dp-board">${cols}</div></div>`;
   }
 
@@ -1504,7 +1466,6 @@ const JCITDispatch=(function(){
 
   // ── Personal schedule (always read-only) ────────────────────────────────────
   function myScheduleHtml(name){
-    syncRoster();
     const workers=activeWorkers();
     if(!workers.length) return '<div class="empty"><div class="empty-icon">📅</div><p>No crew members yet.</p></div>';
     if(!name||!workerByName(name)) name=workers[0].name;
