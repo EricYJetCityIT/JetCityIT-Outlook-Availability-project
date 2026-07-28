@@ -53,6 +53,22 @@ function cellText(cell) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Smartsheet doesn't reject free text typed into a contact-type cell — it
+// just stores it as an ad-hoc {name: "<whatever was typed>"} contact object
+// with no email, indistinguishable in shape from a real directory pick.
+// Real names in this roster are consistently short ("First L" or "First
+// Last"); a scheduling note or placeholder like "Optional - Open Event" is
+// much longer/wordier or sentence-like, so reject on that basis instead of
+// trusting any non-empty v.name.
+function isPlausibleName(s) {
+  if (!s) return false;
+  const trimmed = s.trim();
+  if (!trimmed || trimmed.length > 30) return false;
+  if (/[.]/.test(trimmed)) return false;
+  if (trimmed.split(/\s+/).length > 3) return false;
+  return true;
+}
+
 // The "JCIT Lead"/"Technicians" columns are meant to only ever hold real
 // people picked from the directory, but in practice a few rows have stray
 // free text typed into them instead (e.g. a scheduling note, or a
@@ -60,8 +76,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // bare email with no name attached to that particular cell entry (even
 // though the same email has a real name elsewhere via contactOptions).
 // This resolves emails to their real name via emailToName and drops
-// anything that isn't a real contact (a bare object value or matched
-// email) rather than accepting arbitrary strings as if they were names.
+// anything that isn't a real contact (a bare object value, an implausible
+// name, or an unresolvable email) rather than accepting arbitrary strings.
 function techNamesFromCell(cell, emailToName) {
   const names = [];
   const addResolved = (raw) => {
@@ -74,13 +90,13 @@ function techNamesFromCell(cell, emailToName) {
         if (EMAIL_RE.test(v)) addResolved(v);
         return; // a bare non-email string here is free-text noise, not a name
       }
-      if (v.name) { names.push(v.name); return; }
+      if (v.name && isPlausibleName(v.name)) { names.push(v.name); return; }
       if (v.email) { addResolved(v.email); return; }
     });
   } else if (cell && cell.displayValue) {
     cell.displayValue.split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => {
       if (EMAIL_RE.test(s)) addResolved(s);
-      else names.push(s); // no objectValue to check against — best effort
+      else if (isPlausibleName(s)) names.push(s); // no objectValue to check against — best effort
     });
   }
   return names;
