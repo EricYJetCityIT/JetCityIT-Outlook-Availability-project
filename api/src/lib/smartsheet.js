@@ -51,6 +51,41 @@ function cellText(cell) {
   return '';
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// The "JCIT Lead"/"Technicians" columns are meant to only ever hold real
+// people picked from the directory, but in practice a few rows have stray
+// free text typed into them instead (e.g. a scheduling note, or a
+// placeholder like "Optional - Open Event") and a few resolve to only a
+// bare email with no name attached to that particular cell entry (even
+// though the same email has a real name elsewhere via contactOptions).
+// This resolves emails to their real name via emailToName and drops
+// anything that isn't a real contact (a bare object value or matched
+// email) rather than accepting arbitrary strings as if they were names.
+function techNamesFromCell(cell, emailToName) {
+  const names = [];
+  const addResolved = (raw) => {
+    const key = String(raw).toLowerCase();
+    if (emailToName.has(key)) names.push(emailToName.get(key));
+  };
+  if (cell && cell.objectValue && Array.isArray(cell.objectValue.values)) {
+    cell.objectValue.values.forEach((v) => {
+      if (typeof v === 'string') {
+        if (EMAIL_RE.test(v)) addResolved(v);
+        return; // a bare non-email string here is free-text noise, not a name
+      }
+      if (v.name) { names.push(v.name); return; }
+      if (v.email) { addResolved(v.email); return; }
+    });
+  } else if (cell && cell.displayValue) {
+    cell.displayValue.split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => {
+      if (EMAIL_RE.test(s)) addResolved(s);
+      else names.push(s); // no objectValue to check against — best effort
+    });
+  }
+  return names;
+}
+
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
@@ -89,6 +124,10 @@ function transformSheetToDispatch(sheet) {
 
   const cellFor = (row, column) => row.cells.find((c) => c.columnId === column.id);
 
+  const emailToName = new Map();
+  (COLUMNS.lead.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
+  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
+
   const workerNames = new Set();
   (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
   (COLUMNS.technicians.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
@@ -109,8 +148,8 @@ function transformSheetToDispatch(sheet) {
     const status = cellText(cellFor(row, COLUMNS.status));
     const crewSizeRaw = cellText(cellFor(row, COLUMNS.crewSize));
     const crewSize = crewSizeRaw ? parseInt(crewSizeRaw, 10) : null;
-    const lead = cellMultiValues(cellFor(row, COLUMNS.lead));
-    const technicians = cellMultiValues(cellFor(row, COLUMNS.technicians));
+    const lead = techNamesFromCell(cellFor(row, COLUMNS.lead), emailToName);
+    const technicians = techNamesFromCell(cellFor(row, COLUMNS.technicians), emailToName);
     lead.forEach((n) => workerNames.add(n));
     technicians.forEach((n) => workerNames.add(n));
 
