@@ -54,10 +54,13 @@ function cellText(cell) {
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
-// rows and skipped. The worker roster comes from the union of the "JCIT
-// Lead" and "Technicians" columns' contact options, not from scanning row
-// data — that list is the sheet's own authoritative "who can be assigned"
-// roster and stays correct automatically as people are added/removed there.
+// rows and skipped. The worker roster is the union of every name actually
+// assigned as a lead/technician on a real job, plus the "JCIT Lead" and
+// "Technicians" columns' contact options as a supplement. contactOptions
+// alone isn't reliable — it's Smartsheet's contextual "suggested contacts"
+// list for the calling account, not a fixed complete picklist, and it was
+// found to silently omit real technicians who don't happen to be in that
+// account's suggestion list.
 function transformSheetToDispatch(sheet) {
   const colByTitle = {};
   sheet.columns.forEach((c) => {
@@ -86,6 +89,10 @@ function transformSheetToDispatch(sheet) {
 
   const cellFor = (row, column) => row.cells.find((c) => c.columnId === column.id);
 
+  const workerNames = new Set();
+  (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
+  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
+
   const jobs = [];
   sheet.rows.forEach((row) => {
     const project = cellText(cellFor(row, COLUMNS.project));
@@ -102,6 +109,10 @@ function transformSheetToDispatch(sheet) {
     const status = cellText(cellFor(row, COLUMNS.status));
     const crewSizeRaw = cellText(cellFor(row, COLUMNS.crewSize));
     const crewSize = crewSizeRaw ? parseInt(crewSizeRaw, 10) : null;
+    const lead = cellMultiValues(cellFor(row, COLUMNS.lead));
+    const technicians = cellMultiValues(cellFor(row, COLUMNS.technicians));
+    lead.forEach((n) => workerNames.add(n));
+    technicians.forEach((n) => workerNames.add(n));
 
     jobs.push({
       id: 'ss-' + row.id,
@@ -112,17 +123,14 @@ function transformSheetToDispatch(sheet) {
       duration: cellText(cellFor(row, COLUMNS.duration)),
       client: cellMultiValues(cellFor(row, COLUMNS.client)).join(', '),
       status: STATUS_VALUES.has(status) ? status : '',
-      lead: cellMultiValues(cellFor(row, COLUMNS.lead)),
-      technicians: cellMultiValues(cellFor(row, COLUMNS.technicians)),
+      lead,
+      technicians,
       crewSize: crewSize && crewSize > 0 ? crewSize : null,
       poc: cellMultiValues(cellFor(row, COLUMNS.poc)).join('; '),
       notes: cellText(cellFor(row, COLUMNS.notes)),
     });
   });
 
-  const workerNames = new Set();
-  (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
-  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
   const workers = Array.from(workerNames)
     .sort()
     .map((name) => ({ name, active: true }));
