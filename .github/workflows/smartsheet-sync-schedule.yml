@@ -16,5 +16,6 @@ jobs:
     steps:
       - name: Call smartsheet-sync endpoint
         run: |
-          curl -sf -X POST "https://crew-calendar.jetcityit.com/api/smartsheet-sync" \
+          curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST "https://crew-calendar.jetcityit.com/api/smartsheet-sync" \
             -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"
