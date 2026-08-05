@@ -144,20 +144,32 @@ function resolveColumns(sheet) {
 // the job (address, time, notes, etc.) stays Smartsheet-managed. Contacts
 // with no resolvable email are silently dropped (can't write a name-only
 // contact back reliably); this is a deliberate limitation, not a bug.
+//
+// Two gotchas found by testing against the real sheet, both fixed here:
+// 1. Sending a CONTACT with only `email` (no `name`) let Smartsheet
+//    substitute that email's own directory display name instead of the
+//    abbreviated name ("Jason M") this sheet actually uses — so the name
+//    is always sent explicitly alongside the email, never omitted.
+// 2. Sending `objectValue: {values: []}` to clear a cell was rejected by
+//    Smartsheet — clearing a cell requires `value: null` instead.
 async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames, technicianNames, nameToEmail) {
   const toContacts = (names) =>
     names
-      .map((n) => nameToEmail.get(n))
-      .filter(Boolean)
-      .map((email) => ({ objectType: 'CONTACT', email }));
+      .map((n) => ({ name: n, email: nameToEmail.get(n) }))
+      .filter((c) => c.email)
+      .map((c) => ({ objectType: 'CONTACT', email: c.email, name: c.name }));
+
+  const toCell = (columnId, names) => {
+    const contacts = toContacts(names);
+    return contacts.length
+      ? { columnId, objectValue: { objectType: 'MULTI_CONTACT', values: contacts } }
+      : { columnId, value: null };
+  };
 
   const body = [
     {
       id: rowId,
-      cells: [
-        { columnId: leadColumnId, objectValue: { objectType: 'MULTI_CONTACT', values: toContacts(leadNames) } },
-        { columnId: technicianColumnId, objectValue: { objectType: 'MULTI_CONTACT', values: toContacts(technicianNames) } },
-      ],
+      cells: [toCell(leadColumnId, leadNames), toCell(technicianColumnId, technicianNames)],
     },
   ];
 
