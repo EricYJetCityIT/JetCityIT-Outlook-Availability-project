@@ -102,17 +102,11 @@ function techNamesFromCell(cell, emailToName) {
   return names;
 }
 
-// Maps the sheet's columns/rows onto the app's {workers, jobs} schema
-// (see JCITDispatch in index.html for the exact shape this must match).
-// Rows without a Project name or Date are treated as blank/placeholder
-// rows and skipped. The worker roster is the union of every name actually
-// assigned as a lead/technician on a real job, plus the "JCIT Lead" and
-// "Technicians" columns' contact options as a supplement. contactOptions
-// alone isn't reliable — it's Smartsheet's contextual "suggested contacts"
-// list for the calling account, not a fixed complete picklist, and it was
-// found to silently omit real technicians who don't happen to be in that
-// account's suggestion list.
-function transformSheetToDispatch(sheet) {
+// Resolves the sheet's columns by title (throwing if the layout changed)
+// and builds an email->name lookup from the "JCIT Lead"/"Technicians"
+// columns' contact options. Shared by both reading (transformSheetToDispatch)
+// and writing (updateJobCrew) so the two stay consistent.
+function resolveColumns(sheet) {
   const colByTitle = {};
   sheet.columns.forEach((c) => {
     colByTitle[c.title] = c;
@@ -138,11 +132,60 @@ function transformSheetToDispatch(sheet) {
     status: requireColumn('Status'),
   };
 
-  const cellFor = (row, column) => row.cells.find((c) => c.columnId === column.id);
-
   const emailToName = new Map();
   (COLUMNS.lead.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
   (COLUMNS.technicians.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
+
+  return { COLUMNS, emailToName };
+}
+
+// Pushes a crew assignment change for one job back into its Smartsheet row.
+// Only touches the "JCIT Lead"/"Technicians" cells — everything else about
+// the job (address, time, notes, etc.) stays Smartsheet-managed. Contacts
+// with no resolvable email are silently dropped (can't write a name-only
+// contact back reliably); this is a deliberate limitation, not a bug.
+async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames, technicianNames, nameToEmail) {
+  const toContacts = (names) =>
+    names
+      .map((n) => nameToEmail.get(n))
+      .filter(Boolean)
+      .map((email) => ({ objectType: 'CONTACT', email }));
+
+  const body = [
+    {
+      id: rowId,
+      cells: [
+        { columnId: leadColumnId, objectValue: { objectType: 'MULTI_CONTACT', values: toContacts(leadNames) } },
+        { columnId: technicianColumnId, objectValue: { objectType: 'MULTI_CONTACT', values: toContacts(technicianNames) } },
+      ],
+    },
+  ];
+
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet row update error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// Maps the sheet's columns/rows onto the app's {workers, jobs} schema
+// (see JCITDispatch in index.html for the exact shape this must match).
+// Rows without a Project name or Date are treated as blank/placeholder
+// rows and skipped. The worker roster is the union of every name actually
+// assigned as a lead/technician on a real job, plus the "JCIT Lead" and
+// "Technicians" columns' contact options as a supplement. contactOptions
+// alone isn't reliable — it's Smartsheet's contextual "suggested contacts"
+// list for the calling account, not a fixed complete picklist, and it was
+// found to silently omit real technicians who don't happen to be in that
+// account's suggestion list.
+function transformSheetToDispatch(sheet) {
+  const { COLUMNS, emailToName } = resolveColumns(sheet);
+  const cellFor = (row, column) => row.cells.find((c) => c.columnId === column.id);
 
   const workerNames = new Set();
   (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
@@ -193,4 +236,4 @@ function transformSheetToDispatch(sheet) {
   return { workers, jobs };
 }
 
-module.exports = { fetchSheet, transformSheetToDispatch };
+module.exports = { fetchSheet, transformSheetToDispatch, resolveColumns, updateJobCrew };

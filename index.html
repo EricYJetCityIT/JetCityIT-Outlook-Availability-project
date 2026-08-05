@@ -1351,6 +1351,23 @@ const JCITDispatch=(function(){
       }catch(e){console.error('Failed to save dispatch data:',e)}
     })();
   }
+  // The one write path back into Smartsheet — assigning/removing a lead or
+  // technician on an existing job. Everything else about a job stays
+  // Smartsheet-only, so this hits its own narrow endpoint instead of the
+  // (rejected) full-state /api/dispatch PUT.
+  function saveCrew(jobId){
+    const j=jobById(jobId); if(!j) return;
+    (async()=>{
+      try{
+        const token=await getApiToken();
+        await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/crew',{
+          method:'PUT',
+          headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
+          body:JSON.stringify({lead:j.lead||[],technicians:j.technicians||[]})
+        });
+      }catch(e){console.error('Failed to save crew assignment:',e)}
+    })();
+  }
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -1559,7 +1576,7 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${esc(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}`,
-      `<span></span><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -1601,8 +1618,8 @@ const JCITDispatch=(function(){
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='assign-open'){ modal={type:'assign',id:el.getAttribute('data-id')}; renderModalRoot(); return; }
-    if(act==='toggle-tech'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.technicians=j.technicians||[]; const i=j.technicians.indexOf(nm); if(i>=0) j.technicians.splice(i,1); else j.technicians.push(nm); save(); renderModalRoot(); } return; }
-    if(act==='toggle-lead'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.lead=j.lead||[]; const i=j.lead.indexOf(nm); if(i>=0) j.lead.splice(i,1); else j.lead.push(nm); save(); renderModalRoot(); } return; }
+    if(act==='toggle-tech'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.technicians=j.technicians||[]; const i=j.technicians.indexOf(nm); if(i>=0) j.technicians.splice(i,1); else j.technicians.push(nm); saveCrew(j.id); renderModalRoot(); refreshActiveView(); } return; }
+    if(act==='toggle-lead'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.lead=j.lead||[]; const i=j.lead.indexOf(nm); if(i>=0) j.lead.splice(i,1); else j.lead.push(nm); saveCrew(j.id); renderModalRoot(); refreshActiveView(); } return; }
     if(act==='assign-done'){ modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='roster'){ modal={type:'roster'}; renderModalRoot(); return; }
     if(act==='w-add'){ const nmEl=document.getElementById('dp-w-name'),val=nmEl?nmEl.value.trim():''; if(val){ if(!workerByName(val)) state.workers.push({name:val,active:true}); save(); renderModalRoot(); } return; }
