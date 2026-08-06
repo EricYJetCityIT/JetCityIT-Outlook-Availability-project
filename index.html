@@ -406,7 +406,7 @@ input[type=text]::placeholder{color:var(--text3)}
     <div class="section-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
       <div>
         <h1>Submit your availability</h1>
-        <p id="tech-week-desc">Click the slots you're free — then save.</p>
+        <p id="tech-week-desc">Click the slots you're free — saves automatically, or click Save anytime.</p>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;margin-top:4px">
         <button class="nav-btn" onclick="shiftSelectedWeek(-1)" title="Previous week" aria-label="Previous week">
@@ -795,6 +795,7 @@ function goToToday(){
 
 // Step the selected week back/forward by one week — an alternative to the calendar dropdown.
 function shiftSelectedWeek(dir){
+  flushPendingSave();
   const cur=getSelectedWeek().monDate;
   const next=new Date(cur);
   next.setDate(cur.getDate()+dir*7);
@@ -806,6 +807,7 @@ function shiftSelectedWeek(dir){
 }
 
 function selectWeek(key){
+  flushPendingSave();
   selectedWeekKey=key;
   const meta=weekMetaFromKey(key);
   pickerYear=meta.monDate.getFullYear();
@@ -818,7 +820,7 @@ async function onWeekChanged(){
   const week=getSelectedWeek();
   updateBarWeekLabel();
   // Update tech view description
-  document.getElementById('tech-week-desc').textContent='Week of '+week.label+' · All times are available by default — tap to mark when you\'re unavailable.';
+  document.getElementById('tech-week-desc').textContent='Week of '+week.label+' · All times are available by default — tap to mark when you\'re unavailable. Saves automatically.';
   await ensureAvailabilityLoaded(selectedWeekKey);
   // If grid is open, reload slots for new week
   if(currentTech&&document.getElementById('slot-card').style.display!=='none'){
@@ -908,6 +910,7 @@ const MANAGER_PIN = 'JetCityIT1975';
 let managerUnlocked = false;
 
 function switchTab(id){
+  flushPendingSave();
   if(id === 'manager' && !managerUnlocked){
     const entered = prompt('🔒 Manager view is protected.\n\nEnter PIN to continue:');
     if(entered === null) return; // cancelled
@@ -928,6 +931,27 @@ function switchTab(id){
 // ── Tech view ─────────────────────────────────────────────────────────────────
 let techSlots=DAYS.map(()=>new Set());
 let currentTech='';
+let autoSaveTimer=null;
+let saveInFlight=false;
+let saveQueued=false;
+
+// Debounces auto-save so a rapid run of clicks/drags collapses into one save
+// ~1.2s after the user pauses, instead of hitting the API on every toggle.
+function scheduleAutoSave(){
+  if(!currentTech)return;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer=setTimeout(()=>runSave(true),1200);
+}
+
+// Called before switching week/tab so a pending auto-save isn't silently
+// discarded by the view reloading fresh data out from under it.
+function flushPendingSave(){
+  if(autoSaveTimer){
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer=null;
+    runSave(true);
+  }
+}
 
 function todayDayIdx(){const d=new Date().getDay();return d===0?6:d-1}
 
@@ -1002,6 +1026,7 @@ function paintSlot(el){
   else techSlots[s.day].delete(s.slot);
   el.classList.toggle('on', dragPaintMode===true);
   updateBadge();
+  scheduleAutoSave();
 }
 
 function attachDragListeners(){
@@ -1064,32 +1089,52 @@ function updateBadge(){
   else el.style.display='none';
 }
 
-function clearAllSlots(){techSlots=DAYS.map(()=>new Set());renderGrid();}
+function clearAllSlots(){techSlots=DAYS.map(()=>new Set());renderGrid();scheduleAutoSave();}
 
+// Manual "Save" button — the backup path. Bypasses the debounce and saves right away.
 async function saveSlots(){
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer=null;
+  await runSave(false);
+}
+
+// Shared save path for both the manual Save button (isAuto=false) and the
+// auto-save debounce timer (isAuto=true). Only one save runs at a time; if
+// another save is requested while one's in flight, it's queued to run right
+// after so the latest changes are never dropped.
+async function runSave(isAuto){
   if(!currentTech)return;
+  if(saveInFlight){saveQueued=true;return;}
+  saveInFlight=true;
   const btn=document.getElementById('save-btn');
-  btn.disabled=true;
-  btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
-  try{
-    await setSlots(currentTech,techSlots);
-  }catch(e){
-    showMsg('save-msg','Could not save — check your connection.','err');
-    btn.disabled=false;
-    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
-    return;
+  if(!isAuto){
+    btn.disabled=true;
+    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Saving…';
   }
-  // Push to shared mailbox calendar
   try{
-    btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Syncing calendar…';
-    const count = await pushToCalendar();
-    showMsg('save-msg','✓ Saved & synced '+count+' slot'+(count!==1?'s':'')+' to shared calendar','ok');
-  }catch(e){
-    console.error('Calendar sync error:',e);
-    showMsg('save-msg','✓ Saved locally — calendar sync failed: '+e.message,'err');
+    try{
+      await setSlots(currentTech,techSlots);
+    }catch(e){
+      showMsg('save-msg',isAuto?'Auto-save failed — click Save to retry.':'Could not save — check your connection.','err');
+      return;
+    }
+    // Push to shared mailbox calendar
+    try{
+      if(!isAuto)btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24" style="animation:spin .8s linear infinite"><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg> Syncing calendar…';
+      const count = await pushToCalendar();
+      showMsg('save-msg',(isAuto?'✓ Auto-saved':'✓ Saved')+' & synced '+count+' slot'+(count!==1?'s':'')+' to shared calendar','ok');
+    }catch(e){
+      console.error('Calendar sync error:',e);
+      showMsg('save-msg',(isAuto?'✓ Auto-saved locally':'✓ Saved locally')+' — calendar sync failed: '+e.message,'err');
+    }
+  }finally{
+    if(!isAuto){
+      btn.disabled=false;
+      btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
+    }
+    saveInFlight=false;
+    if(saveQueued){saveQueued=false;scheduleAutoSave();}
   }
-  btn.disabled=false;
-  btn.innerHTML='<svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Save';
 }
 
 function showMsg(id,text,type){
