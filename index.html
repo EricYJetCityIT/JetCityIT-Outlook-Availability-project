@@ -1761,14 +1761,20 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
 const CAL_CATEGORY_UNAVAIL = 'JetCityIT-Unavailable';
 
-msalInstance.initialize().then(() => {
-  var accounts = msalInstance.getAllAccounts();
-  if(accounts.length > 0){
-    msalAccount = accounts[0];
-    var name = msalAccount.name || msalAccount.username.split('@')[0];
-    finishLogin(name);
-  }
-}).catch(function(e){ console.error('MSAL init error:', e); });
+msalInstance.initialize()
+  .then(function(){ return msalInstance.handleRedirectPromise(); })   // completes redirect sign-in on return from Microsoft
+  .then(function(response){
+    if(response && response.account){
+      msalAccount = response.account;                                 // just signed in via redirect
+    } else {
+      var accounts = msalInstance.getAllAccounts();
+      if(accounts.length > 0) msalAccount = accounts[0];              // already signed in from a previous visit
+    }
+    if(msalAccount){
+      var name = msalAccount.name || msalAccount.username.split('@')[0];
+      finishLogin(name);
+    }
+  }).catch(function(e){ console.error('MSAL init error:', e); });
 
 async function msSignIn(){
   const btn = document.getElementById('ms-login-btn');
@@ -1777,10 +1783,10 @@ async function msSignIn(){
   btn.textContent = 'Signing in…';
   errEl.style.display = 'none';
   try {
-    const resp = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
-    msalAccount = resp.account;
-    const name = msalAccount.name || msalAccount.username.split('@')[0];
-    finishLogin(name);
+    // Redirect (not popup) sign-in: avoids the popup/service-worker collisions that
+    // broke login, and works reliably on mobile. Pre-consent both Graph and the app
+    // API up front so later token calls stay silent. Completes via handleRedirectPromise().
+    await msalInstance.loginRedirect({ scopes: GRAPH_SCOPES.concat(API_SCOPES) });
   } catch(e) {
     errEl.textContent = e.message || 'Sign-in failed. Please try again.';
     errEl.style.display = 'block';
