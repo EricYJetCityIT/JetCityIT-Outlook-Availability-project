@@ -328,7 +328,7 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-tech-btn{background:transparent;border:1px solid var(--border2);border-radius:6px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;color:var(--text2);font-family:inherit}
 .dp-tech-btn.dp-on{background:#E6F1FB;border-color:#185FA5;color:#185FA5}
 </style>
-<script src="https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU" crossorigin="anonymous"></script>
+<script src="/vendor/msal-browser-2.38.3.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(e=>console.error('SW registration failed:',e))});
