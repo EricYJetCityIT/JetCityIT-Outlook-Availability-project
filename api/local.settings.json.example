@@ -9,6 +9,7 @@
     "AAD_CLIENT_ID": "b367d366-39f5-4fdc-a5e9-9d634ca37b5e",
     "SMARTSHEET_API_TOKEN": "<generate from Smartsheet: Account > Apps & Integrations > API Access>",
     "SMARTSHEET_SHEET_ID": "3896324323757956",
-    "SYNC_SECRET": "<shared secret the GitHub Actions cron workflow sends as X-Sync-Secret; must match the GitHub repo secret of the same name>"
+    "SYNC_SECRET": "<shared secret the GitHub Actions cron workflow sends as X-Sync-Secret; must match the GitHub repo secret of the same name>",
+    "EDITOR_UPNS": "<comma-separated emails allowed to CHANGE data (reassign crew, clear availability weeks), e.g. dylanm@jetcityit.com,eric@jetcityit.com. Everyone else is read-only. Optional if using the Entra 'DataEditor' app role instead.>"
   }
 }

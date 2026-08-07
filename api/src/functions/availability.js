@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
-const { requireUser, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireEditor, AuthError, authErrorResponse } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
+const { audit } = require('../lib/audit');
 
 const CONTAINER_ID = 'availability';
 
@@ -20,11 +21,12 @@ app.http('availabilityWeek', {
   route: 'availability/{weekKey}',
   handler: async (request, context) => {
     try {
-      await requireUser(request);
+      const user = await requireUser(request);
       const { weekKey } = request.params;
       const container = getContainer(CONTAINER_ID);
 
       if (request.method === 'DELETE') {
+        requireEditor(user); // clearing everyone's submissions for a week is editor-only
         const { resources } = await container.items
           .query({
             query: 'SELECT c.id FROM c WHERE c.weekKey = @weekKey',
@@ -32,6 +34,7 @@ app.http('availabilityWeek', {
           })
           .fetchAll();
         await Promise.all(resources.map((r) => container.item(r.id, weekKey).delete()));
+        audit(context, user, 'availability.deleteWeek', { weekKey, deleted: resources.length });
         return { jsonBody: { ok: true } };
       }
 
@@ -71,6 +74,13 @@ app.http('availabilityUser', {
         }
       }
 
+      // A tech may submit/edit only their OWN availability; editors may edit anyone's.
+      // (Matches on display-name slug since availability is keyed by name. A future
+      // migration should key by the immutable oid/upn to make this airtight.)
+      if (!user.isEditor && slugify(decodedName) !== slugify(user.name)) {
+        throw new AuthError(403, 'You can only change your own availability.');
+      }
+
       const body = await request.json();
       const doc = {
         id,
@@ -81,6 +91,7 @@ app.http('availabilityUser', {
         updatedAt: new Date().toISOString(),
       };
       await container.items.upsert(doc);
+      audit(context, user, 'availability.put', { weekKey, name: decodedName.trim() });
       return { jsonBody: { ok: true } };
     } catch (e) {
       return authErrorResponse(e, context);

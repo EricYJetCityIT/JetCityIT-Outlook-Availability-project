@@ -1,7 +1,8 @@
 const { app } = require('@azure/functions');
-const { requireUser, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
 const { fetchSheet, resolveColumns, updateJobCrew } = require('../lib/smartsheet');
 const { runSync } = require('./smartsheetSync');
+const { audit } = require('../lib/audit');
 
 // The one write path back into Smartsheet, deliberately narrow: only the
 // lead/technician assignment on an existing job. Everything else about a
@@ -14,7 +15,8 @@ app.http('jobCrew', {
   route: 'dispatch/jobs/{jobId}/crew',
   handler: async (request, context) => {
     try {
-      await requireUser(request);
+      const user = await requireUser(request);
+      requireEditor(user); // reassigning crew changes shared job data — editors only
 
       const rowId = request.params.jobId.replace(/^ss-/, '');
       const body = await request.json();
@@ -27,6 +29,8 @@ app.http('jobCrew', {
       emailToName.forEach((name, email) => nameToEmail.set(name, email));
 
       await updateJobCrew(rowId, COLUMNS.lead.id, COLUMNS.technicians.id, leadNames, technicianNames, nameToEmail);
+
+      audit(context, user, 'dispatch.jobCrew.update', { jobId: rowId, lead: leadNames.length, technicians: technicianNames.length });
 
       // Re-sync immediately so the site reflects the change right away
       // instead of waiting for the next scheduled poll.
