@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
+const { checkRateLimit } = require('./ratelimit');
 
 const TENANT_ID = process.env.AAD_TENANT_ID;
 const CLIENT_ID = process.env.AAD_CLIENT_ID;
@@ -36,9 +37,10 @@ function verifyToken(token) {
 }
 
 class AuthError extends Error {
-  constructor(status, message) {
+  constructor(status, message, meta) {
     super(message);
     this.status = status;
+    if (meta) Object.assign(this, meta); // e.g. { retryAfterSec, upn } for 429s
   }
 }
 
@@ -72,11 +74,30 @@ async function requireUser(request) {
     throw new AuthError(403, 'Account not permitted');
   }
 
+  // Per-user rate limit — caps how fast any one signed-in identity (or a leaked
+  // token) can pull data, blunting scraping / bulk harvesting of client PII.
+  const rl = checkRateLimit(upn);
+  if (!rl.allowed) {
+    throw new AuthError(429, 'Too many requests — please slow down.', { retryAfterSec: rl.retryAfterSec, upn });
+  }
+
   return { name: decoded.name || upn, upn };
 }
 
 function authErrorResponse(e, context) {
   if (e instanceof AuthError) {
+    if (e.status === 429) {
+      // Surface rate-limit trips in Application Insights so scraping/abuse is
+      // visible and alertable (actor only — no PII).
+      try {
+        context.log('RATE_LIMIT ' + JSON.stringify({ upn: e.upn || null, ts: new Date().toISOString() }));
+      } catch (_) { /* logging must never break the response */ }
+      return {
+        status: 429,
+        headers: { 'Retry-After': String(e.retryAfterSec || 60) },
+        jsonBody: { error: e.message },
+      };
+    }
     return { status: e.status, jsonBody: { error: e.message } };
   }
   context.error(e);
