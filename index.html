@@ -1752,6 +1752,22 @@ const msalConfig = {
 var msalInstance = new msal.PublicClientApplication(msalConfig);
 var msalAccount = null;
 
+// Self-heal a stuck "interaction_in_progress" flag from a sign-in that was
+// interrupted (popup closed or page torn down mid-flow). This app only uses
+// popups, so no interaction legitimately spans a page load — any lingering
+// interaction.status in storage at load time is stale and safe to clear.
+function clearStuckMsalInteraction(){
+  try {
+    [sessionStorage, localStorage].forEach(function(store){
+      for (var i = store.length - 1; i >= 0; i--) {
+        var k = store.key(i);
+        if (k && k.toLowerCase().indexOf('interaction.status') !== -1) store.removeItem(k);
+      }
+    });
+  } catch(e) { /* storage unavailable */ }
+}
+clearStuckMsalInteraction();
+
 const GRAPH_SCOPES = ['User.Read', 'Calendars.ReadWrite', 'Calendars.ReadWrite.Shared'];
 // Scope for the app's own /api Functions (Cosmos DB-backed availability + dispatch).
 // Not yet called anywhere — Phase 4 swaps the localStorage calls for fetch()s using this.
@@ -1761,16 +1777,21 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const CAL_CATEGORY_AVAIL   = 'JetCityIT-Available';
 const CAL_CATEGORY_UNAVAIL = 'JetCityIT-Unavailable';
 
-msalInstance.initialize().then(() => {
-  var accounts = msalInstance.getAllAccounts();
-  if(accounts.length > 0){
-    msalAccount = accounts[0];
-    var name = msalAccount.name || msalAccount.username.split('@')[0];
-    finishLogin(name);
-  }
-}).catch(function(e){ console.error('MSAL init error:', e); });
+msalInstance.initialize()
+  .then(function(){ return msalInstance.handleRedirectPromise().catch(function(e){ console.warn('MSAL handleRedirectPromise:', e); }); })
+  .then(function(){
+    var accounts = msalInstance.getAllAccounts();
+    if(accounts.length > 0){
+      msalAccount = accounts[0];
+      var name = msalAccount.name || msalAccount.username.split('@')[0];
+      finishLogin(name);
+    }
+  }).catch(function(e){ console.error('MSAL init error:', e); });
 
+let msSignInBusy = false;
 async function msSignIn(){
+  if (msSignInBusy) return;            // ignore repeat taps while a popup is already open
+  msSignInBusy = true;
   const btn = document.getElementById('ms-login-btn');
   const errEl = document.getElementById('ms-login-err');
   btn.disabled = true;
@@ -1782,10 +1803,17 @@ async function msSignIn(){
     const name = msalAccount.name || msalAccount.username.split('@')[0];
     finishLogin(name);
   } catch(e) {
-    errEl.textContent = e.message || 'Sign-in failed. Please try again.';
+    if (e && (e.errorCode === 'interaction_in_progress' || /interaction_in_progress/.test(e.message || ''))) {
+      clearStuckMsalInteraction();     // clear the stale flag so the next tap works
+      errEl.textContent = 'Please click "Sign in with Microsoft" again.';
+    } else {
+      errEl.textContent = e.message || 'Sign-in failed. Please try again.';
+    }
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg> Sign in with Microsoft';
+  } finally {
+    msSignInBusy = false;
   }
 }
 
