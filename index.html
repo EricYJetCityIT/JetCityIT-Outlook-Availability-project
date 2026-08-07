@@ -4,13 +4,6 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Team Availability</title>
-<link rel="manifest" href="/manifest.json"/>
-<meta name="theme-color" content="#16A37F"/>
-<link rel="apple-touch-icon" href="/icons/icon-180.png"/>
-<link rel="icon" href="/icons/icon-192.png"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
-<meta name="apple-mobile-web-app-title" content="Crew Calendar"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
@@ -329,11 +322,6 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-tech-btn.dp-on{background:#E6F1FB;border-color:#185FA5;color:#185FA5}
 </style>
 <script src="https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU" crossorigin="anonymous"></script>
-<script>
-if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(e=>console.error('SW registration failed:',e))});
-}
-</script>
 </head>
 <body>
 
