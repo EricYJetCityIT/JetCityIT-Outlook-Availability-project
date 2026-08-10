@@ -12,6 +12,21 @@ const AUDIENCE = `api://${CLIENT_ID}`;
 const ALLOWED_DOMAIN = '@jetcityit.com';
 const REQUIRED_SCOPE = 'access_as_user';
 
+// Authorization model: EVERYONE signed in with an @jetcityit.com account can
+// READ (techs need client phone numbers to call/text on site). Only "editors"
+// may CHANGE data (reassign crew, clear availability weeks). A user is an editor
+// if EITHER is true:
+//   1. Their token carries the Entra App Role "DataEditor" (roles claim) — preferred,
+//      managed in the Entra portal with no code change.
+//   2. Their email is listed in the EDITOR_UPNS app setting (comma-separated) —
+//      a quick-start / fallback that needs no app-registration change.
+const WRITE_ROLE = 'DataEditor';
+const EDITOR_UPNS = (process.env.EDITOR_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
   cache: true,
@@ -81,7 +96,17 @@ async function requireUser(request) {
     throw new AuthError(429, 'Too many requests — please slow down.', { retryAfterSec: rl.retryAfterSec, upn });
   }
 
-  return { name: decoded.name || upn, upn };
+  const roles = Array.isArray(decoded.roles) ? decoded.roles : [];
+  const isEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
+
+  return { name: decoded.name || upn, upn, roles, isEditor };
+}
+
+// Gate for write/change operations. Reads never call this; writes do.
+function requireEditor(user) {
+  if (!user || !user.isEditor) {
+    throw new AuthError(403, 'You do not have permission to change this data.');
+  }
 }
 
 function authErrorResponse(e, context) {
@@ -104,4 +129,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, AuthError, authErrorResponse };
