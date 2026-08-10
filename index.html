@@ -1613,9 +1613,15 @@ const JCITDispatch=(function(){
     const j=jobById(id); if(!j) return '';
     const dayLabel=(function(){ const di=dayIndexOfDate(j.date); return di>=0&&di<=6?DAYS[di]:''; })();
     const availColor={available:'var(--green-dark)',unavailable:'var(--red)',partial:'var(--text2)',unknown:'var(--text3)'};
-    const rows=activeWorkers().map(w=>{
+    // Sort so people actually available for this job's date float to the top:
+    // fully available → partially available → no submission → unavailable.
+    // (Array.sort is stable, so roster/alphabetical order is kept within a tier.)
+    const AVAIL_RANK={available:0,partial:1,unknown:2,unavailable:3};
+    const rows=activeWorkers()
+      .map(w=>({w,avail:availabilityFor(w.name,j.date)}))
+      .sort((x,y)=>(AVAIL_RANK[x.avail&&x.avail.status]??2)-(AVAIL_RANK[y.avail&&y.avail.status]??2))
+      .map(({w,avail})=>{
       const isTech=(j.technicians||[]).indexOf(w.name)>=0, isLead=(j.lead||[]).indexOf(w.name)>=0, a=avatarFor(w.name);
-      const avail=availabilityFor(w.name,j.date);
       const availHtml=avail?`<div style="font-size:11px;color:${availColor[avail.status]};margin-top:2px">${esc(avail.text)}</div>`:'';
       return `<div class="dp-assign-row${isTech||isLead?' dp-on':''}" style="align-items:flex-start">
         <span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>
@@ -1627,7 +1633,7 @@ const JCITDispatch=(function(){
         <button class="dp-tech-btn${isTech?' dp-on':''}" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}">${isTech?'On crew':'Add'}</button></div>`;
     }).join('');
     return overlay('Assign crew · '+esc(j.project)+(dayLabel?' · '+dayLabel:''),
-      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add to the crew, or drag names onto the job card on the board. ★ marks the lead. Availability shown is for this job's date, from what each person submitted under "My availability".</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add to the crew. ★ marks the lead. People available on this job's date are listed first, based on what each person submitted under "My availability".</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
       `<span></span><button class="btn btn-primary btn-sm" data-dpact="assign-done">Done</button>`);
   }
   function rosterModal(){
