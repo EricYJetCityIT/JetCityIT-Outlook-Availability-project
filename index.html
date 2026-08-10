@@ -309,6 +309,11 @@ input[type=text]::placeholder{color:var(--text3)}
 @media(max-width:900px),(pointer:coarse){.dp-tel{display:inline-block;padding:4px 2px;text-decoration:underline}}
 @media(max-width:900px){.dp-board{grid-template-columns:1fr;min-width:0}}
 
+/* Read-only users (not in EDITOR_UPNS / no DataEditor role): hide write-only
+   controls. Purely a UX aid — the API still enforces editor-only writes. */
+body.is-viewer [data-dpact="assign-open"],
+body.is-viewer .js-editor-only{display:none !important}
+
 /* ── Dispatch modals ── */
 .dp-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
 .dp-modal{background:var(--surface);border-radius:14px;width:100%;max-width:520px;box-shadow:0 8px 40px rgba(15,23,36,.18);font-family:inherit}
@@ -907,7 +912,14 @@ async function setSlots(n,ss){
     headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
     body:JSON.stringify({slots:raw})
   });
-  if(!res.ok) throw new Error('Failed to save availability');
+  if(!res.ok){
+    let msg='Failed to save availability';
+    if(res.status===403){
+      try{const b=await res.json();msg=b.error||'You do not have permission to save this.';}
+      catch(_){msg='You do not have permission to save this.';}
+    }
+    const err=new Error(msg);err.status=res.status;throw err;
+  }
 }
 // Pads out slot arrays saved before Sat/Sun were added (5 days) to the current
 // DAYS.length (7), defaulting any missing days to fully available.
@@ -1131,7 +1143,10 @@ async function runSave(isAuto){
     try{
       await setSlots(currentTech,techSlots);
     }catch(e){
-      showMsg('save-msg',isAuto?'Auto-save failed — click Save to retry.':'Could not save — check your connection.','err');
+      const msg=(e&&e.status===403)
+        ? e.message
+        : (isAuto?'Auto-save failed — click Save to retry.':'Could not save — check your connection.');
+      showMsg('save-msg',msg,'err');
       return;
     }
     // Push to shared mailbox calendar
@@ -1167,6 +1182,7 @@ let mgrMode='overlap';
 let crewMode='board';
 let crewSelectedWorker='';
 let currentUserName='';
+let currentUserIsEditor=false;
 function setCrewMode(m){
   crewMode=m;
   document.getElementById('crew-subtab-board').classList.toggle('active',m==='board');
@@ -1233,7 +1249,7 @@ async function renderManager(){
         <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M4 12a8 8 0 018-8 8 8 0 017.4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M20 4v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Refresh
       </button>
-      <button class="btn btn-danger btn-sm" onclick="confirmClear()">Clear all</button>
+      <button class="btn btn-danger btn-sm js-editor-only" onclick="confirmClear()">Clear all</button>
     </div>
   </div>`;
 
@@ -1526,7 +1542,7 @@ const JCITDispatch=(function(){
       const tip='Assigned to '+cnt+' job'+(cnt!==1?'s':'')+' this week\n\n'+weekAvailabilityTooltip(w.name);
       return `<span class="dp-chip" draggable="true" data-dpname="${esc(w.name)}" title="${esc(tip)}"><span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>${esc(w.name)} <span class="dp-cnt">${cnt}</span></span>`;
     }).join('');
-    return `<div class="dp-roster-strip"><div class="dp-roster-label">Crew this week · drag a name onto a job to assign · hover a name for their availability</div><div class="dp-chips">${chips}</div></div>`;
+    return `<div class="dp-roster-strip js-editor-only"><div class="dp-roster-label">Crew this week · drag a name onto a job to assign · hover a name for their availability</div><div class="dp-chips">${chips}</div></div>`;
   }
 
   function jobCardHtml(j,editable){
@@ -1814,6 +1830,22 @@ function finishLogin(name){
     hdr.appendChild(badge);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
+  loadMyRole();
+}
+
+// Ask the API whether this user may edit (Entra DataEditor role or EDITOR_UPNS).
+// Read-only users get the `is-viewer` body class so write-only controls hide.
+// UX aid only — the API is the real authority and rejects unauthorized writes.
+async function loadMyRole(){
+  try{
+    const token=await getApiToken();
+    const res=await fetch('/api/me',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(res.ok){
+      const me=await res.json();
+      currentUserIsEditor=!!me.isEditor;
+      document.body.classList.toggle('is-viewer', !currentUserIsEditor);
+    }
+  }catch(e){ console.error('Failed to load role:',e); }
 }
 
 // ── Graph API helpers ─────────────────────────────────────────────────────────
