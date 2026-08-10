@@ -303,6 +303,10 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-wk-job{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px}
 .dp-wk-job-project{font-size:14px;font-weight:600}
 .dp-wk-job-line{font-size:12px;color:var(--text2);margin-top:3px}
+.dp-tel{color:var(--green,#16A37F);text-decoration:none;font-weight:600;white-space:nowrap}
+.dp-tel:hover{text-decoration:underline}
+/* Bigger, comfortable tap target for phone numbers on touch/mobile */
+@media(max-width:900px),(pointer:coarse){.dp-tel{display:inline-block;padding:4px 2px;text-decoration:underline}}
 @media(max-width:900px){.dp-board{grid-template-columns:1fr;min-width:0}}
 
 /* ── Dispatch modals ── */
@@ -1428,6 +1432,8 @@ const JCITDispatch=(function(){
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+  // Escape, then turn any phone number in the text into a tap-to-call tel: link (opens the phone app on mobile).
+  function phoneLink(s){return esc(s).replace(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g,function(m){return '<a class="dp-tel" href="tel:'+m.replace(/[^\d+]/g,'')+'">'+m+'</a>'})}
   function initials(name){return name.split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2)}
   function avatarFor(name){let h=0;String(name).split('').forEach(c=>h+=c.charCodeAt(0));return AVATAR_PALETTE[h%AVATAR_PALETTE.length]}
   function avatarHtml(name,isLead){const a=avatarFor(name);return `<span class="dp-avatar${isLead?' dp-lead':''}" title="${esc(name)}${isLead?' (lead)':''}" style="background:${a.bg};color:${a.fg}">${esc(initials(name))}</span>`}
@@ -1559,7 +1565,7 @@ const JCITDispatch=(function(){
           ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
           ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
           ${mates.length?`<div class="dp-wk-job-line">👥 With ${esc(mates.join(', '))}</div>`:'<div class="dp-wk-job-line" style="color:var(--text3)">Solo</div>'}
-          ${j.poc?`<div class="dp-wk-job-line">☎ ${esc(j.poc)}</div>`:''}
+          ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
           ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
         </div>`;
       }).join('');
@@ -1631,7 +1637,7 @@ const JCITDispatch=(function(){
       ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
-      ${j.poc?`<div class="dp-wk-job-line">☎ ${esc(j.poc)}</div>`:''}
+      ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}`,
       `<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
