@@ -1451,26 +1451,55 @@ const JCITDispatch=(function(){
       }catch(e){console.error('Failed to save crew assignment:',e)}
     })();
   }
-  // Opens a Smartsheet attachment. The synced job only carries the
-  // attachment's id/name; the actual download link is short-lived, so it's
-  // fetched on demand from /api/attachment/{id}, which keeps the Smartsheet
-  // token server-side and returns a fresh temporary url. The blank tab is
-  // opened synchronously inside the click gesture so it isn't popup-blocked,
-  // then pointed at the url once it arrives.
-  async function openAttachment(id,name){
-    if(!id) return;
-    const win=window.open('','_blank');
+  // Opens a Smartsheet attachment in an in-app viewer modal. The file bytes are
+  // proxied through /api/attachment/{id}/content (same-origin, so the CSP allows
+  // it and the Smartsheet token stays server-side), turned into a blob, and
+  // shown inline — PDFs in an iframe, images in an <img>. Anything not
+  // previewable in-browser (Office docs, etc.) falls back to a download link.
+  async function viewAttachment(id,name,mime){
+    if(id==null||id==='') return;
+    const label=name||'Attachment';
+    const ov=document.createElement('div');
+    ov.className='dp-overlay';
+    ov.innerHTML='<div class="dp-modal" style="max-width:940px;width:94vw">'
+      +'<div class="dp-modal-hd"><span class="dp-modal-title"></span><button class="dp-close" data-av="close">✕</button></div>'
+      +'<div class="dp-modal-bd" data-av-body style="min-height:220px;display:flex;align-items:center;justify-content:center;color:var(--text3)">Loading…</div>'
+      +'<div class="dp-modal-ft"><a class="btn btn-sm" data-av-dl style="display:none" download>Download</a><button class="btn btn-sm" data-av="close">Close</button></div>'
+      +'</div>';
+    ov.querySelector('.dp-modal-title').textContent=label;
+    document.body.appendChild(ov);
+    let objUrl=null;
+    const cleanup=()=>{ if(objUrl) URL.revokeObjectURL(objUrl); ov.remove(); document.removeEventListener('keydown',onKey); };
+    const onKey=(ev)=>{ if(ev.key==='Escape') cleanup(); };
+    document.addEventListener('keydown',onKey);
+    ov.addEventListener('click',(ev)=>{ const c=ev.target.closest('[data-av]'); if((c&&c.getAttribute('data-av')==='close')||ev.target===ov) cleanup(); });
+    const body=ov.querySelector('[data-av-body]');
     try{
       const token=await getApiToken();
-      const res=await fetch('/api/attachment/'+encodeURIComponent(id),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      const res=await fetch('/api/attachment/'+encodeURIComponent(id)+'/content',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
       if(!res.ok) throw new Error('HTTP '+res.status);
-      const data=await res.json();
-      if(!data.url) throw new Error('No URL returned');
-      if(win){ win.location.href=data.url; } else { window.location.href=data.url; }
+      const blob=await res.blob();
+      objUrl=URL.createObjectURL(blob);
+      const dl=ov.querySelector('[data-av-dl]'); if(dl){ dl.href=objUrl; dl.setAttribute('download',label); dl.style.display=''; }
+      const type=String(mime||blob.type||'').toLowerCase();
+      if(type.indexOf('image/')===0){
+        body.style.display='block';
+        body.innerHTML='<img alt="" style="max-width:100%;max-height:78vh;display:block;margin:0 auto"/>';
+        body.querySelector('img').src=objUrl;
+      }else if(type==='application/pdf'){
+        body.style.display='block';
+        body.innerHTML='<iframe title="" style="width:100%;height:78vh;border:0"></iframe>';
+        body.querySelector('iframe').src=objUrl;
+      }else{
+        body.style.flexDirection='column';
+        body.innerHTML='<div style="text-align:center"><div style="font-size:34px">📄</div><p style="margin:8px 0 14px">This file type can’t be previewed here.</p></div>';
+        const a=document.createElement('a'); a.className='btn btn-primary btn-sm'; a.href=objUrl; a.setAttribute('download',label); a.textContent='Download '+label;
+        body.firstChild.appendChild(a);
+      }
     }catch(err){
-      if(win) win.close();
-      console.error('Failed to open attachment:',err);
-      alert('Could not open "'+(name||'attachment')+'". Please try again.');
+      console.error('Failed to load attachment:',err);
+      body.style.flexDirection='column';
+      body.innerHTML='<div style="color:var(--red);text-align:center">Could not load this attachment.<br>Please try again.</div>';
     }
   }
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
@@ -1750,7 +1779,7 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
-      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">📎 <span style="display:inline-flex;flex-wrap:wrap;gap:4px 12px">${j.attachments.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}">${esc(a.name)}</a>`).join('')}</span></div>`:''}`,
+      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">📎 <span style="display:inline-flex;flex-wrap:wrap;gap:4px 12px">${j.attachments.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}" data-att-mime="${esc(a.mimeType||'')}">${esc(a.name)}</a>`).join('')}</span></div>`:''}`,
       `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button></div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
@@ -1803,7 +1832,7 @@ const JCITDispatch=(function(){
     if(act==='data'){ modal={type:'data'}; renderModalRoot(); return; }
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
-    if(act==='attachment'){ e.preventDefault(); openAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name')); return; }
+    if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return; modal=null; renderModalRoot(); return; }
   }
   function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }
