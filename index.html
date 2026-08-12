@@ -1468,6 +1468,16 @@ const JCITDispatch=(function(){
   function jobsForDate(iso){return state.jobs.filter(j=>j.date===iso).sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')))}
   function jobById(id){return state.jobs.find(j=>j.id===id)||null}
   function workerByName(n){return state.workers.find(w=>w.name===n)||null}
+  // Map a name (e.g. the logged-in full name "Dylan McCormack") to the matching
+  // roster worker, which may be abbreviated ("Dylan M"). Exact match first, then
+  // an unambiguous first-name+last-initial match; '' if none/ambiguous.
+  function resolveRosterName(name){
+    if(!name) return '';
+    if(workerByName(name)) return name;
+    const target=normNameKey(name);
+    const matches=activeWorkers().filter(w=>normNameKey(w.name)===target);
+    return matches.length===1?matches[0].name:'';
+  }
   function activeWorkers(){return state.workers.filter(w=>w.active)}
 
   function weekDates(){
@@ -1598,7 +1608,7 @@ const JCITDispatch=(function(){
   function myScheduleHtml(name){
     const workers=activeWorkers();
     if(!workers.length) return '<div class="empty"><div class="empty-icon">📅</div><p>No crew members yet.</p></div>';
-    if(!name||!workerByName(name)) name=workers[0].name;
+    if(!workerByName(name)) name=resolveRosterName(name)||workers[0].name;
     const opts=workers.map(w=>`<option value="${esc(w.name)}"${w.name===name?' selected':''}>${esc(w.name)}</option>`).join('');
     const dates=weekDates();
     const body=dates.map((d,i)=>{
