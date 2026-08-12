@@ -1,6 +1,11 @@
 const { app } = require('@azure/functions');
+const mammoth = require('mammoth');
 const { requireUser, authErrorResponse } = require('../lib/auth');
 const { fetchAttachment } = require('../lib/smartsheet');
+
+function isDocx(att) {
+  return /wordprocessingml/i.test(att.mimeType || '') || /\.docx$/i.test(att.name || '');
+}
 
 // Streams an attachment's bytes back through our own origin so the browser can
 // display it inline (Smartsheet's own signed URLs are cross-origin and marked
@@ -39,6 +44,31 @@ app.http('attachmentContent', {
       }
 
       const buf = Buffer.from(await fileRes.arrayBuffer());
+
+      // ?as=html on a Word .docx → convert to HTML server-side (mammoth) so the
+      // viewer can show it inline. Browsers can't render .docx natively and we
+      // deliberately don't hand the file to any third-party viewer, so this
+      // keeps document contents inside our own environment. Formatting is a
+      // best-effort text/table/image rendering, not pixel-perfect; the raw file
+      // is always available via the plain /content download.
+      if (new URL(request.url).searchParams.get('as') === 'html' && isDocx(att)) {
+        try {
+          const result = await mammoth.convertToHtml({ buffer: buf });
+          return {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'private, no-store',
+              'X-Content-Type-Options': 'nosniff',
+            },
+            body: result.value || '<p><em>(This document has no readable content.)</em></p>',
+          };
+        } catch (e) {
+          context.error(`docx conversion failed for ${id}: ${e && e.message}`);
+          return { status: 415, jsonBody: { error: 'Could not convert this document for preview' } };
+        }
+      }
+
       const type = att.mimeType || fileRes.headers.get('content-type') || 'application/octet-stream';
       const safeName = String(att.name || 'file').replace(/["\r\n]/g, '');
 

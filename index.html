@@ -1481,6 +1481,12 @@ const JCITDispatch=(function(){
       const blob=await res.blob();
       objUrl=URL.createObjectURL(blob);
       const dl=ov.querySelector('[data-av-dl]'); if(dl){ dl.href=objUrl; dl.setAttribute('download',label); dl.style.display=''; }
+      const showDownloadFallback=()=>{
+        body.style.display='flex'; body.style.flexDirection='column';
+        body.innerHTML='<div style="text-align:center"><div style="font-size:34px">📄</div><p style="margin:8px 0 14px">This file type can’t be previewed here.</p></div>';
+        const a=document.createElement('a'); a.className='btn btn-primary btn-sm'; a.href=objUrl; a.setAttribute('download',label); a.textContent='Download '+label;
+        body.firstChild.appendChild(a);
+      };
       const type=String(mime||blob.type||'').toLowerCase();
       if(type.indexOf('image/')===0){
         body.style.display='block';
@@ -1490,11 +1496,27 @@ const JCITDispatch=(function(){
         body.style.display='block';
         body.innerHTML='<iframe title="" style="width:100%;height:78vh;border:0"></iframe>';
         body.querySelector('iframe').src=objUrl;
+      }else if(type.indexOf('wordprocessingml')>=0||/\.docx$/i.test(label)){
+        // Word .docx: the server converts it to HTML (mammoth) and we render it
+        // inline. The raw file stays available via the Download button (objUrl).
+        const hres=await fetch('/api/attachment/'+encodeURIComponent(id)+'/content?as=html',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+        if(!hres.ok){ showDownloadFallback(); }
+        else{
+          const docHtml=await hres.text();
+          body.style.display='block'; body.style.textAlign='left';
+          const wrap=document.createElement('div');
+          wrap.style.cssText='max-height:78vh;overflow:auto;padding:4px 6px 8px;line-height:1.55';
+          wrap.innerHTML=docHtml;
+          // Safety pass on the converted markup: drop any scripts/inline styles
+          // blocks and neutralize non-web links before it goes on the page.
+          wrap.querySelectorAll('script,style').forEach(n=>n.remove());
+          wrap.querySelectorAll('a').forEach(a=>{ const h=a.getAttribute('href')||''; if(!/^(https?:|mailto:)/i.test(h)){ a.removeAttribute('href'); } else { a.target='_blank'; a.rel='noopener'; } });
+          wrap.querySelectorAll('img').forEach(im=>{ im.style.maxWidth='100%'; im.style.height='auto'; });
+          wrap.querySelectorAll('table').forEach(t=>{ t.style.borderCollapse='collapse'; t.style.maxWidth='100%'; });
+          body.innerHTML=''; body.appendChild(wrap);
+        }
       }else{
-        body.style.flexDirection='column';
-        body.innerHTML='<div style="text-align:center"><div style="font-size:34px">📄</div><p style="margin:8px 0 14px">This file type can’t be previewed here.</p></div>';
-        const a=document.createElement('a'); a.className='btn btn-primary btn-sm'; a.href=objUrl; a.setAttribute('download',label); a.textContent='Download '+label;
-        body.firstChild.appendChild(a);
+        showDownloadFallback();
       }
     }catch(err){
       console.error('Failed to load attachment:',err);
