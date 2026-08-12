@@ -1698,6 +1698,9 @@ const JCITDispatch=(function(){
     const crew=crewOf(j);
     const crewLine=crew.length?crew.map(c=>esc(c.name)+(c.lead?' (lead)':'')).join(', '):'Unassigned';
     const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
+    // Opens the "Daily Project Report" Smartsheet form with the Project Name
+    // pre-filled from this job, so the guys can log what they did for the day.
+    const reportUrl='https://app.smartsheet.com/b/form/6ef33a83770a4907b87c360c5ba89b63?Project%20Name='+encodeURIComponent(j.project||'');
     return overlay(j.project,
       `<div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
       ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
@@ -1705,7 +1708,7 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}`,
-      `<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button></div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
