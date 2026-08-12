@@ -284,6 +284,12 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-job:hover{border-color:var(--border2)}
 .dp-job.dp-job-ro{cursor:default}
 .dp-job.dp-dragover{border-color:var(--green);box-shadow:0 0 0 3px var(--green-light)}
+/* Client color-coding of job cards (tinted bg + colored left accent). Unmatched jobs stay white. */
+.dp-job-amazon{background:#FFF3E0;border-left:4px solid #F59E0B}
+.dp-job-tmobile{background:#FCE4F1;border-left:4px solid #E20074}
+.dp-job-pse{background:#E7F6EC;border-left:4px solid #22A06B}
+.dp-job-fhcc{background:#E4F2FD;border-left:4px solid #2F9BE0}
+.dp-job-kp{background:#E6EBF8;border-left:4px solid #1E40AF}
 .dp-job-project{font-size:12.5px;font-weight:600;line-height:1.35;margin-bottom:4px}
 .dp-job-meta{font-size:11px;color:var(--text2);margin-bottom:6px}
 .dp-job-addr{font-size:11px;color:var(--text3);margin-bottom:8px}
@@ -1560,13 +1566,26 @@ const JCITDispatch=(function(){
     return `<div class="dp-roster-strip js-editor-only"><div class="dp-roster-label">Crew this week · drag a name onto a job to assign · hover a name for their availability</div><div class="dp-chips">${chips}</div></div>`;
   }
 
+  // Classify a job by client for color-coding the card. Matches the project +
+  // client text so e.g. "PSE Tacoma", "Amazon P-904103", "KP CHN", "FHCC ...",
+  // and "T-Mobile ..." each get their own tint; anything unmatched stays white.
+  function jobCategory(j){
+    const s=((j.project||'')+' '+(j.client||'')).toLowerCase();
+    if(/amazon/.test(s)) return 'amazon';
+    if(/t-?\s?mobile|tmobile/.test(s)) return 'tmobile';
+    if(/\bpse\b/.test(s)) return 'pse';
+    if(/\bfhcc\b/.test(s)) return 'fhcc';
+    if(/\bkp\b/.test(s)) return 'kp';
+    return '';
+  }
   function jobCardHtml(j,editable){
     const crew=crewOf(j);
     let crewHtml=crew.map(c=>avatarHtml(c.name,c.lead)).join('');
     if(j.crewSize){ for(let k=crew.length;k<j.crewSize;k++) crewHtml+='<span class="dp-slot-empty">+</span>'; }
     const sm=STATUS_META[j.status||'']||STATUS_META[''];
     const meta=esc(j.startTime||'')+(j.duration?' · '+esc(j.duration)+' hrs':'');
-    return `<div class="dp-job${editable?'':' dp-job-ro'}" data-dpact="${editable?'edit':'detail'}" data-id="${j.id}">
+    const cat=jobCategory(j);
+    return `<div class="dp-job${editable?'':' dp-job-ro'}${cat?' dp-job-'+cat:''}" data-dpact="${editable?'edit':'detail'}" data-id="${j.id}">
       <div class="dp-job-project">${esc(j.project)}</div>
       ${meta?`<div class="dp-job-meta">${meta}</div>`:''}
       ${j.address?`<div class="dp-job-addr">${esc(j.address)}</div>`:''}
