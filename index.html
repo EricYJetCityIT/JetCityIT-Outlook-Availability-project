@@ -1649,6 +1649,17 @@ const JCITDispatch=(function(){
     if(/\bkp\b/.test(s)) return 'kp';
     return '';
   }
+  // File-type glyph for an attachment, by mime type: images get 🖼️,
+  // everything else (PDFs, Office docs, etc.) gets a generic 📄.
+  function attIcon(mime){ return String(mime||'').toLowerCase().indexOf('image/')===0?'🖼️':'📄'; }
+  // Renders a job's attachments as clickable links (icon + name), shared by the
+  // detail popup and the personal-schedule cards. viewAttachment (delegated
+  // globally on data-dpact="attachment") opens them in the in-app viewer.
+  function attListHtml(atts){
+    return '📎 <span style="display:inline-flex;flex-wrap:wrap;gap:4px 12px">'
+      +atts.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}" data-att-mime="${esc(a.mimeType||'')}">${attIcon(a.mimeType)} ${esc(a.name)}</a>`).join('')
+      +'</span>';
+  }
   function jobCardHtml(j,editable){
     const crew=crewOf(j);
     let crewHtml=crew.map(c=>avatarHtml(c.name,c.lead)).join('');
@@ -1661,7 +1672,7 @@ const JCITDispatch=(function(){
       ${meta?`<div class="dp-job-meta">${meta}</div>`:''}
       ${j.address?`<div class="dp-job-addr">${esc(j.address)}</div>`:''}
       <div class="dp-job-crew">${crewHtml||'<span class="dp-slot-empty">+</span>'}</div>
-      <div>${j.client?`<span class="dp-badge-client">${esc(j.client)}</span>`:''}<span class="dp-pill ${sm.cls}">${sm.label}</span></div>
+      <div>${j.client?`<span class="dp-badge-client">${esc(j.client)}</span>`:''}<span class="dp-pill ${sm.cls}">${sm.label}</span>${(j.attachments&&j.attachments.length)?`<span style="margin-left:6px;font-size:11px;color:var(--text3);white-space:nowrap" title="${j.attachments.length} attachment${j.attachments.length>1?'s':''}">📎${j.attachments.length>1?' '+j.attachments.length:''}</span>`:''}</div>
     </div>`;
   }
 
@@ -1688,6 +1699,7 @@ const JCITDispatch=(function(){
           ${mates.length?`<div class="dp-wk-job-line">👥 With ${esc(mates.join(', '))}</div>`:'<div class="dp-wk-job-line" style="color:var(--text3)">Solo</div>'}
           ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
           ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
+          ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}
         </div>`;
       }).join('');
       return `<div class="dp-wk-day"><div class="dp-wk-day-hd">${DAYS[i]} · ${fmtMon(d)}</div>${jobs}</div>`;
@@ -1779,7 +1791,7 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
-      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">📎 <span style="display:inline-flex;flex-wrap:wrap;gap:4px 12px">${j.attachments.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}" data-att-mime="${esc(a.mimeType||'')}">${esc(a.name)}</a>`).join('')}</span></div>`:''}`,
+      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
       `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button></div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
