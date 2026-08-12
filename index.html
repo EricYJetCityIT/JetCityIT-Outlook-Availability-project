@@ -1465,7 +1465,17 @@ const JCITDispatch=(function(){
   function isTodayISO(iso){return iso===toISO(new Date())}
 
   function crewOf(job){const seen={},out=[];(job.lead||[]).forEach(n=>{if(!seen[n]){seen[n]=1;out.push({name:n,lead:true})}});(job.technicians||[]).forEach(n=>{if(!seen[n]){seen[n]=1;out.push({name:n,lead:false})}});return out}
-  function jobsForDate(iso){return state.jobs.filter(j=>j.date===iso).sort((a,b)=>String(a.startTime||'').localeCompare(String(b.startTime||'')))}
+  // Parse a start time like "8:00AM", "11:30AM", "1:00PM", "12:00PM" into
+  // minutes since midnight for numeric sorting. Values without a real time
+  // ("Anytime", "TBD", blank) sort to the bottom.
+  function startMinutes(t){
+    const m=String(t||'').match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if(!m) return 1e9;
+    let h=parseInt(m[1],10); const min=parseInt(m[2],10); const ap=(m[3]||'').toUpperCase();
+    if(ap){ h=h%12; if(ap==='PM') h+=12; }
+    return h*60+min;
+  }
+  function jobsForDate(iso){return state.jobs.filter(j=>j.date===iso).sort((a,b)=>startMinutes(a.startTime)-startMinutes(b.startTime))}
   function jobById(id){return state.jobs.find(j=>j.id===id)||null}
   function workerByName(n){return state.workers.find(w=>w.name===n)||null}
   // Map a name (e.g. the logged-in full name "Dylan McCormack") to the matching
