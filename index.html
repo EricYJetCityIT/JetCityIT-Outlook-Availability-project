@@ -1713,7 +1713,10 @@ const JCITDispatch=(function(){
     // type less. Smartsheet ignores any prefill value that doesn't match a field's
     // options, so an odd/blank start time or an unmatched lead just stays empty.
     const isoToMDY=function(s){s=String(s||'');return /^\d{4}-\d{2}-\d{2}/.test(s)?s.slice(5,7)+'/'+s.slice(8,10)+'/'+s.slice(0,4):'';};
-    const rptQuery=[['Project Name',j.project],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',j.poc]]
+    // POC is stored as "Name 425-555-1234 (new)"; the report just wants the name,
+    // so strip phone numbers and any parenthetical tag.
+    const pocName=function(s){return String(s||'').replace(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g,'').replace(/\([^)]*\)/g,'').replace(/\s{2,}/g,' ').replace(/\s*[;,]\s*$/,'').replace(/^\s*[;,]\s*/,'').trim();};
+    const rptQuery=[['Project Name',j.project],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',pocName(j.poc)]]
       .filter(function(p){return p[1];})
       .map(function(p){return encodeURIComponent(p[0])+'='+encodeURIComponent(p[1]);})
       .join('&');
