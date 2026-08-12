@@ -8,7 +8,12 @@ name: Smartsheet dispatch sync
 on:
   schedule:
     - cron: '*/10 * * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force a full resync even if the sheet has not changed (bypasses the modifiedAt cache)'
+        type: boolean
+        default: false
 
 jobs:
   sync:
@@ -16,6 +21,8 @@ jobs:
     steps:
       - name: Call smartsheet-sync endpoint
         run: |
+          URL="https://crew-calendar.jetcityit.com/api/smartsheet-sync"
+          if [ "${{ inputs.force }}" = "true" ]; then URL="$URL?force=true"; fi
           curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
-            -X POST "https://crew-calendar.jetcityit.com/api/smartsheet-sync" \
+            -X POST "$URL" \
             -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"
