@@ -1451,6 +1451,28 @@ const JCITDispatch=(function(){
       }catch(e){console.error('Failed to save crew assignment:',e)}
     })();
   }
+  // Opens a Smartsheet attachment. The synced job only carries the
+  // attachment's id/name; the actual download link is short-lived, so it's
+  // fetched on demand from /api/attachment/{id}, which keeps the Smartsheet
+  // token server-side and returns a fresh temporary url. The blank tab is
+  // opened synchronously inside the click gesture so it isn't popup-blocked,
+  // then pointed at the url once it arrives.
+  async function openAttachment(id,name){
+    if(!id) return;
+    const win=window.open('','_blank');
+    try{
+      const token=await getApiToken();
+      const res=await fetch('/api/attachment/'+encodeURIComponent(id),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data=await res.json();
+      if(!data.url) throw new Error('No URL returned');
+      if(win){ win.location.href=data.url; } else { window.location.href=data.url; }
+    }catch(err){
+      if(win) win.close();
+      console.error('Failed to open attachment:',err);
+      alert('Could not open "'+(name||'attachment')+'". Please try again.');
+    }
+  }
   function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
@@ -1727,7 +1749,8 @@ const JCITDispatch=(function(){
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
-      ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}`,
+      ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
+      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">📎 <span style="display:inline-flex;flex-wrap:wrap;gap:4px 12px">${j.attachments.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}">${esc(a.name)}</a>`).join('')}</span></div>`:''}`,
       `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button></div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
@@ -1780,6 +1803,7 @@ const JCITDispatch=(function(){
     if(act==='data'){ modal={type:'data'}; renderModalRoot(); return; }
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
+    if(act==='attachment'){ e.preventDefault(); openAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name')); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return; modal=null; renderModalRoot(); return; }
   }
   function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }

@@ -18,12 +18,29 @@ function getToken() {
 // so names and picklist entries can be read reliably instead of splitting
 // displayValue strings on commas.
 async function fetchSheet() {
-  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}?include=objectValue`, {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}?include=objectValue,attachments`, {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Smartsheet API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// Fetches a single attachment's metadata, which is the only place Smartsheet
+// exposes a download `url` — and only as a short-lived temporary link (the
+// sheet-level include=attachments returns id/name/mimeType but no url). The
+// /api/attachment endpoint calls this on demand so the browser gets a fresh
+// link each click and the API token never leaves the server.
+async function fetchAttachment(attachmentId) {
+  const res = await fetch(
+    `${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/attachments/${encodeURIComponent(attachmentId)}`,
+    { headers: { Authorization: `Bearer ${getToken()}` } }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet attachment error ${res.status}: ${text}`);
   }
   return res.json();
 }
@@ -216,6 +233,13 @@ function transformSheetToDispatch(sheet) {
     // notice) that only fills in Project/Date/POC to look non-blank.
     if (!address && !startTime) return;
 
+    // Row attachments (populated by include=attachments on fetchSheet). Only
+    // id/name/mimeType are kept — the actual download url is fetched on demand
+    // per click (fetchAttachment) since Smartsheet's are short-lived.
+    const attachments = (row.attachments || [])
+      .map((a) => ({ id: a.id, name: a.name, mimeType: a.mimeType || '', type: a.attachmentType || '' }))
+      .filter((a) => a.id && a.name);
+
     const status = cellText(cellFor(row, COLUMNS.status));
     const crewSizeRaw = cellText(cellFor(row, COLUMNS.crewSize));
     const crewSize = crewSizeRaw ? parseInt(crewSizeRaw, 10) : null;
@@ -238,6 +262,7 @@ function transformSheetToDispatch(sheet) {
       crewSize: crewSize && crewSize > 0 ? crewSize : null,
       poc: cellMultiValues(cellFor(row, COLUMNS.poc)).join('; '),
       notes: cellText(cellFor(row, COLUMNS.notes)),
+      attachments,
     });
   });
 
@@ -248,4 +273,4 @@ function transformSheetToDispatch(sheet) {
   return { workers, jobs };
 }
 
-module.exports = { fetchSheet, transformSheetToDispatch, resolveColumns, updateJobCrew };
+module.exports = { fetchSheet, fetchAttachment, transformSheetToDispatch, resolveColumns, updateJobCrew };
