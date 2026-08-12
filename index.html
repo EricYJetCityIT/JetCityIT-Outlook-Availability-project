@@ -1698,9 +1698,16 @@ const JCITDispatch=(function(){
     const crew=crewOf(j);
     const crewLine=crew.length?crew.map(c=>esc(c.name)+(c.lead?' (lead)':'')).join(', '):'Unassigned';
     const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
-    // Opens the "Daily Project Report" Smartsheet form with the Project Name
-    // pre-filled from this job, so the guys can log what they did for the day.
-    const reportUrl='https://app.smartsheet.com/b/form/6ef33a83770a4907b87c360c5ba89b63?Project%20Name='+encodeURIComponent(j.project||'');
+    // Opens the "Daily Project Report" Smartsheet form, pre-filling fields from
+    // this job (Project Name, Service Date, Project Start, Lead) so the guys type
+    // less. Smartsheet ignores any prefill value that doesn't match a field's
+    // options, so an odd/blank start time or an unmatched lead just stays empty.
+    const isoToMDY=function(s){s=String(s||'');return /^\d{4}-\d{2}-\d{2}/.test(s)?s.slice(5,7)+'/'+s.slice(8,10)+'/'+s.slice(0,4):'';};
+    const rptQuery=[['Project Name',j.project],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||'']]
+      .filter(function(p){return p[1];})
+      .map(function(p){return encodeURIComponent(p[0])+'='+encodeURIComponent(p[1]);})
+      .join('&');
+    const reportUrl='https://app.smartsheet.com/b/form/6ef33a83770a4907b87c360c5ba89b63'+(rptQuery?'?'+rptQuery:'');
     return overlay(j.project,
       `<div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
       ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
