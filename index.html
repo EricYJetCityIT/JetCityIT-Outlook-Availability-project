@@ -1453,10 +1453,51 @@ const JCITDispatch=(function(){
       }catch(e){console.error('Failed to save crew assignment:',e)}
     })();
   }
+  // Lazily load the self-hosted PDF.js library the first time a PDF is opened
+  // (it's ~1.5MB, so we don't pay for it on every page load). Same-origin, so
+  // the CSP script-src 'self' / worker-src 'self' allow it; no CDN, no SRI
+  // needed (it's served from our own origin, like the MSAL vendor file).
+  let pdfJsPromise=null;
+  function ensurePdfJs(){
+    if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+    if(pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise=new Promise((resolve,reject)=>{
+      const s=document.createElement('script');
+      s.src='/vendor/pdf.min.js';
+      s.onload=()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.min.js'; resolve(window.pdfjsLib); }catch(e){ reject(e); } };
+      s.onerror=()=>{ pdfJsPromise=null; reject(new Error('Failed to load PDF viewer')); };
+      document.head.appendChild(s);
+    });
+    return pdfJsPromise;
+  }
+  // Render every page of a PDF blob as a canvas into `container`, scaled to fit
+  // width and sharp on high-DPI screens. Pages append as they finish so the
+  // first page shows quickly.
+  async function renderPdfInline(container, blob){
+    container.innerHTML='<div style="text-align:center;color:var(--text3);padding:24px">Loading PDF…</div>';
+    const pdfjsLib=await ensurePdfJs();
+    const data=new Uint8Array(await blob.arrayBuffer());
+    const pdf=await pdfjsLib.getDocument({data, isEvalSupported:false}).promise;
+    const wrap=document.createElement('div');
+    wrap.style.cssText='max-height:80vh;overflow:auto;background:#525659;padding:10px;text-align:center;border-radius:6px';
+    container.innerHTML=''; container.appendChild(wrap);
+    const dpr=Math.min(window.devicePixelRatio||1, 2);
+    const cssWidth=Math.min((wrap.clientWidth||600)-20, 1000);
+    for(let p=1;p<=pdf.numPages;p++){
+      const page=await pdf.getPage(p);
+      const base=page.getViewport({scale:1});
+      const vp=page.getViewport({scale:(cssWidth/base.width)*dpr});
+      const canvas=document.createElement('canvas');
+      canvas.width=vp.width; canvas.height=vp.height;
+      canvas.style.cssText='display:block;margin:0 auto 10px;max-width:100%;height:auto;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4)';
+      wrap.appendChild(canvas);
+      await page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
+    }
+  }
   // Opens a Smartsheet attachment in an in-app viewer modal. The file bytes are
   // proxied through /api/attachment/{id}/content (same-origin, so the CSP allows
   // it and the Smartsheet token stays server-side), turned into a blob, and
-  // shown inline — PDFs in an iframe, images in an <img>. Anything not
+  // shown inline — PDFs via PDF.js (canvas), images in an <img>. Anything not
   // previewable in-browser (Office docs, etc.) falls back to a download link.
   async function viewAttachment(id,name,mime){
     if(id==null||id==='') return;
@@ -1470,8 +1511,8 @@ const JCITDispatch=(function(){
       +'</div>';
     ov.querySelector('.dp-modal-title').textContent=label;
     document.body.appendChild(ov);
-    let objUrl=null, keepBlob=false;
-    const cleanup=()=>{ if(objUrl&&!keepBlob) URL.revokeObjectURL(objUrl); ov.remove(); document.removeEventListener('keydown',onKey); };
+    let objUrl=null;
+    const cleanup=()=>{ if(objUrl) URL.revokeObjectURL(objUrl); ov.remove(); document.removeEventListener('keydown',onKey); };
     const onKey=(ev)=>{ if(ev.key==='Escape') cleanup(); };
     document.addEventListener('keydown',onKey);
     ov.addEventListener('click',(ev)=>{ const c=ev.target.closest('[data-av]'); if((c&&c.getAttribute('data-av')==='close')||ev.target===ov) cleanup(); });
@@ -1495,22 +1536,12 @@ const JCITDispatch=(function(){
         body.innerHTML='<img alt="" style="max-width:100%;max-height:78vh;display:block;margin:0 auto"/>';
         body.querySelector('img').src=objUrl;
       }else if(type==='application/pdf'){
-        // Desktop browsers render a PDF in an iframe fine, but mobile browsers
-        // can't (they show a broken placeholder), so on mobile offer to open the
-        // PDF in the device's own viewer instead. keepBlob stops cleanup from
-        // revoking the object URL while the newly-opened tab is still using it.
-        const isMobile=window.matchMedia('(max-width:768px)').matches||/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-        if(isMobile){
-          body.style.display='flex'; body.style.flexDirection='column';
-          body.innerHTML='<div style="text-align:center"><div style="font-size:34px">📄</div><p style="margin:8px 0 14px">Tap to open this PDF in your viewer.</p></div>';
-          const a=document.createElement('a'); a.className='btn btn-primary btn-sm'; a.href=objUrl; a.target='_blank'; a.rel='noopener'; a.textContent='Open PDF';
-          a.addEventListener('click',function(){ keepBlob=true; });
-          body.firstChild.appendChild(a);
-        }else{
-          body.style.display='block';
-          body.innerHTML='<iframe title="" style="width:100%;height:78vh;border:0"></iframe>';
-          body.querySelector('iframe').src=objUrl;
-        }
+        // Render the PDF inline with self-hosted PDF.js (works on every device,
+        // unlike an <iframe> which mobile browsers can't display). Falls back to
+        // the download link if the viewer fails to load or render.
+        body.style.display='block';
+        try{ await renderPdfInline(body, blob); }
+        catch(e){ console.error('PDF render failed:',e); showDownloadFallback(); }
       }else if(type.indexOf('wordprocessingml')>=0||/\.docx$/i.test(label)){
         // Word .docx: the server converts it to HTML (mammoth) and we render it
         // inline. The raw file stays available via the Download button (objUrl).
