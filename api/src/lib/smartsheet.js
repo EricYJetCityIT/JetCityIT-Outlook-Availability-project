@@ -18,7 +18,7 @@ function getToken() {
 // so names and picklist entries can be read reliably instead of splitting
 // displayValue strings on commas.
 async function fetchSheet() {
-  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}?include=objectValue,attachments`, {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}?include=objectValue,attachments,format`, {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
   if (!res.ok) {
@@ -248,6 +248,15 @@ function transformSheetToDispatch(sheet) {
     lead.forEach((n) => workerNames.add(n));
     technicians.forEach((n) => workerNames.add(n));
 
+    // A job struck through in Smartsheet (line through the whole row) means it's
+    // cancelled. Smartsheet's cell `format` descriptor is a comma-separated
+    // string of format indices; the strikethrough flag lives at a fixed index
+    // (1 = on). Check the Project cell, which gets struck when the row is.
+    // NOTE: _fmt below is a TEMPORARY diagnostic to confirm the index against
+    // the real cancelled row — remove once verified.
+    const projFmt = (cellFor(row, COLUMNS.project) || {}).format || '';
+    const cancelled = projFmt.split(',')[5] === '1';
+
     jobs.push({
       id: 'ss-' + row.id,
       date,
@@ -263,6 +272,8 @@ function transformSheetToDispatch(sheet) {
       poc: cellMultiValues(cellFor(row, COLUMNS.poc)).join('; '),
       notes: cellText(cellFor(row, COLUMNS.notes)),
       attachments,
+      cancelled,
+      _fmt: projFmt,
     });
   });
 
