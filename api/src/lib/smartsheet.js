@@ -250,10 +250,9 @@ function transformSheetToDispatch(sheet) {
 
     // A job struck through in Smartsheet (line through the whole row) means it's
     // cancelled. Smartsheet's cell `format` descriptor is a comma-separated
-    // string of format indices; the strikethrough flag lives at a fixed index
-    // (1 = on). Check the Project cell, which gets struck when the row is.
-    // NOTE: _fmt below is a TEMPORARY diagnostic to confirm the index against
-    // the real cancelled row — remove once verified.
+    // string of format indices; index 5 is the strikethrough flag (1 = on),
+    // confirmed against the real cancelled rows. Check the Project cell, which
+    // gets struck when the whole row is.
     const projFmt = (cellFor(row, COLUMNS.project) || {}).format || '';
     const cancelled = projFmt.split(',')[5] === '1';
 
@@ -273,7 +272,6 @@ function transformSheetToDispatch(sheet) {
       notes: cellText(cellFor(row, COLUMNS.notes)),
       attachments,
       cancelled,
-      _fmt: projFmt,
     });
   });
 
