@@ -295,6 +295,8 @@ input[type=text]::placeholder{color:var(--text3)}
 /* Cancelled jobs (struck through in Smartsheet): dim the card + line through the title. */
 .dp-job-cancelled{opacity:.6}
 .dp-job-cancelled .dp-job-project{text-decoration:line-through}
+.dp-wk-job-cancelled{opacity:.6}
+.dp-wk-job-cancelled .dp-wk-job-project{text-decoration:line-through}
 .dp-job-project{font-size:12.5px;font-weight:600;line-height:1.35;margin-bottom:4px}
 .dp-job-meta{font-size:11px;color:var(--text2);margin-bottom:6px}
 .dp-job-addr{font-size:11px;color:var(--text3);margin-bottom:8px}
@@ -1762,7 +1764,7 @@ const JCITDispatch=(function(){
         const isLead=(j.lead||[]).indexOf(name)>=0;
         const mates=crewOf(j).filter(c=>c.name!==name).map(c=>c.name+(c.lead?' (lead)':''));
         const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
-        return `<div class="dp-wk-job">
+        return `<div class="dp-wk-job${j.cancelled?' dp-wk-job-cancelled':''}">
           <div class="dp-wk-job-project">${esc(j.project)}${isLead?' <span class="hrs-tag" style="font-size:10px">You lead</span>':''}</div>
           <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
           ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
