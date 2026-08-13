@@ -1794,14 +1794,14 @@ const JCITDispatch=(function(){
     const crewLine=crew.length?crew.map(c=>esc(c.name)+(c.lead?' (lead)':'')).join(', '):'Unassigned';
     const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
     // Opens the "Daily Project Report" Smartsheet form, pre-filling fields from
-    // this job (Project Name, Service Date, Project Start, Lead, POC) so the guys
-    // type less. Smartsheet ignores any prefill value that doesn't match a field's
-    // options, so an odd/blank start time or an unmatched lead just stays empty.
+    // this job (Project Name, Location, Service Date, Project Start, Lead, POC) so
+    // the guys type less. Smartsheet ignores any prefill value that doesn't match a
+    // field's options, so an odd/blank start time or an unmatched lead just stays empty.
     const isoToMDY=function(s){s=String(s||'');return /^\d{4}-\d{2}-\d{2}/.test(s)?s.slice(5,7)+'/'+s.slice(8,10)+'/'+s.slice(0,4):'';};
     // POC is stored as "Name 425-555-1234 (new)"; the report just wants the name,
     // so strip phone numbers and any parenthetical tag.
     const pocName=function(s){return String(s||'').replace(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g,'').replace(/\([^)]*\)/g,'').replace(/\s{2,}/g,' ').replace(/\s*[;,]\s*$/,'').replace(/^\s*[;,]\s*/,'').trim();};
-    const rptQuery=[['Project Name',j.project],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',pocName(j.poc)]]
+    const rptQuery=[['Project Name',j.project],['Location',j.address],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',pocName(j.poc)]]
       .filter(function(p){return p[1];})
       .map(function(p){return encodeURIComponent(p[0])+'='+encodeURIComponent(p[1]);})
       .join('&');
