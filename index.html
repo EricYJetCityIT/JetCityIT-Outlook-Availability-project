@@ -1858,7 +1858,8 @@ const JCITDispatch=(function(){
       .join('&');
     const reportUrl='https://app.smartsheet.com/b/form/6ef33a83770a4907b87c360c5ba89b63'+(rptQuery?'?'+rptQuery:'');
     return overlay(j.project,
-      `<div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
+      `${j.cancelled?`<div style="display:inline-block;background:var(--red);color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 10px;border-radius:6px;margin-bottom:10px">🚫 Cancelled</div>`:''}
+      <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
       ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
