@@ -276,6 +276,8 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-board{display:grid;grid-template-columns:repeat(7,minmax(150px,1fr));gap:10px;min-width:1050px}
 .dp-day-col{min-width:0;border-radius:var(--radius);padding:2px;transition:background .1s}
 .dp-day-col.dp-dragover{background:var(--green-light)}
+/* Outline the current day's whole column so "today" is easy to spot. */
+.dp-day-col-today{outline:2.5px solid var(--green-dark);outline-offset:5px;border-radius:14px}
 .dp-day-head{text-align:center;padding-bottom:8px}
 .dp-day-dow{font-size:11px;color:var(--text3);text-transform:uppercase}
 .dp-day-num{font-size:16px;font-weight:600}
@@ -1633,7 +1635,7 @@ const JCITDispatch=(function(){
       const jobsHtml=jobsForDate(iso).map(j=>jobCardHtml(j,editable)).join('');
       const addBtn=editable?`<button class="dp-add-job" data-dpact="new" data-date="${iso}">+ Add job</button>`:'';
       const emptyMsg=(!editable&&!jobsHtml)?'<div style="text-align:center;font-size:11px;color:var(--text3);padding:8px 0">No jobs</div>':'';
-      return `<div class="dp-day-col" data-dpact="daycol" data-date="${iso}">
+      return `<div class="dp-day-col${isTodayISO(iso)?' dp-day-col-today':''}" data-dpact="daycol" data-date="${iso}">
         <div class="dp-day-head"><div class="dp-day-dow">${DAYS[i]}</div><div class="dp-day-num${isTodayISO(iso)?' dp-today':''}">${d.getDate()}</div></div>
         ${jobsHtml}${emptyMsg}${addBtn}
       </div>`;
