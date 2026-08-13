@@ -1470,8 +1470,8 @@ const JCITDispatch=(function(){
       +'</div>';
     ov.querySelector('.dp-modal-title').textContent=label;
     document.body.appendChild(ov);
-    let objUrl=null;
-    const cleanup=()=>{ if(objUrl) URL.revokeObjectURL(objUrl); ov.remove(); document.removeEventListener('keydown',onKey); };
+    let objUrl=null, keepBlob=false;
+    const cleanup=()=>{ if(objUrl&&!keepBlob) URL.revokeObjectURL(objUrl); ov.remove(); document.removeEventListener('keydown',onKey); };
     const onKey=(ev)=>{ if(ev.key==='Escape') cleanup(); };
     document.addEventListener('keydown',onKey);
     ov.addEventListener('click',(ev)=>{ const c=ev.target.closest('[data-av]'); if((c&&c.getAttribute('data-av')==='close')||ev.target===ov) cleanup(); });
@@ -1495,9 +1495,22 @@ const JCITDispatch=(function(){
         body.innerHTML='<img alt="" style="max-width:100%;max-height:78vh;display:block;margin:0 auto"/>';
         body.querySelector('img').src=objUrl;
       }else if(type==='application/pdf'){
-        body.style.display='block';
-        body.innerHTML='<iframe title="" style="width:100%;height:78vh;border:0"></iframe>';
-        body.querySelector('iframe').src=objUrl;
+        // Desktop browsers render a PDF in an iframe fine, but mobile browsers
+        // can't (they show a broken placeholder), so on mobile offer to open the
+        // PDF in the device's own viewer instead. keepBlob stops cleanup from
+        // revoking the object URL while the newly-opened tab is still using it.
+        const isMobile=window.matchMedia('(max-width:768px)').matches||/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        if(isMobile){
+          body.style.display='flex'; body.style.flexDirection='column';
+          body.innerHTML='<div style="text-align:center"><div style="font-size:34px">📄</div><p style="margin:8px 0 14px">Tap to open this PDF in your viewer.</p></div>';
+          const a=document.createElement('a'); a.className='btn btn-primary btn-sm'; a.href=objUrl; a.target='_blank'; a.rel='noopener'; a.textContent='Open PDF';
+          a.addEventListener('click',function(){ keepBlob=true; });
+          body.firstChild.appendChild(a);
+        }else{
+          body.style.display='block';
+          body.innerHTML='<iframe title="" style="width:100%;height:78vh;border:0"></iframe>';
+          body.querySelector('iframe').src=objUrl;
+        }
       }else if(type.indexOf('wordprocessingml')>=0||/\.docx$/i.test(label)){
         // Word .docx: the server converts it to HTML (mammoth) and we render it
         // inline. The raw file stays available via the Download button (objUrl).
