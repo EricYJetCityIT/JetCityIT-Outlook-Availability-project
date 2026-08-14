@@ -1841,6 +1841,11 @@ const JCITDispatch=(function(){
       `<button class="btn btn-sm" data-dpact="data-export">Download .json</button><div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="data-load">Load JSON</button></div>`);
   }
   function detailModal(j){
+    // Assign crew is a manager-only action even though this popup itself is
+    // shared with the read-only Crew calendar view -- gate it on which tab
+    // is actually active, same check refreshActiveView() already uses.
+    const mgrViewEl=document.getElementById('view-manager');
+    const isManagerView=!!(mgrViewEl&&mgrViewEl.classList.contains('active'));
     const crew=crewOf(j);
     const crewLine=crew.length?crew.map(c=>esc(c.name)+(c.lead?' (lead)':'')).join(', '):'Unassigned';
     const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
@@ -1866,7 +1871,7 @@ const JCITDispatch=(function(){
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button></div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
