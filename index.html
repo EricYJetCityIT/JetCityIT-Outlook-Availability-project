@@ -321,6 +321,14 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-wk-job{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px}
 .dp-wk-job-project{font-size:14px;font-weight:600}
 .dp-wk-job-line{font-size:12px;color:var(--text2);margin-top:3px}
+/* Client color-coding of the personal-schedule cards — same palette as the board's
+   .dp-job-* tints. Placed after the .dp-wk-job base rule so the colored left border
+   isn't reset by its `border` shorthand. */
+.dp-wk-job-amazon{background:#FFF3E0;border-left:4px solid #F59E0B}
+.dp-wk-job-tmobile{background:#FCE4F1;border-left:4px solid #E20074}
+.dp-wk-job-pse{background:#E7F6EC;border-left:4px solid #22A06B}
+.dp-wk-job-fhcc{background:#E4F2FD;border-left:4px solid #2F9BE0}
+.dp-wk-job-kp{background:#E6EBF8;border-left:4px solid #1E40AF}
 .dp-tel{color:var(--green,#16A37F);text-decoration:none;font-weight:600;white-space:nowrap}
 .dp-tel:hover{text-decoration:underline}
 /* Bigger, comfortable tap target for phone numbers on touch/mobile */
@@ -1809,7 +1817,8 @@ const JCITDispatch=(function(){
         const isLead=(j.lead||[]).indexOf(name)>=0;
         const mates=crewOf(j).filter(c=>c.name!==name).map(c=>c.name+(c.lead?' (lead)':''));
         const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
-        return `<div class="dp-wk-job${j.cancelled?' dp-wk-job-cancelled':''}">
+        const cat=jobCategory(j);
+        return `<div class="dp-wk-job${cat?' dp-wk-job-'+cat:''}${j.cancelled?' dp-wk-job-cancelled':''}">
           <div class="dp-wk-job-project">${esc(j.project)}${isLead?' <span class="hrs-tag" style="font-size:10px">You lead</span>':''}</div>
           <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
           ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
