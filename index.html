@@ -16,6 +16,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* Stop mobile browsers (esp. Android Chrome) from auto-inflating text beyond
+   the CSS sizes — that "font boosting" enlarges numbers past their cells and
+   makes tight grids like the month-picker overlap on phones. 100% keeps the
+   author sizes while still allowing the user to pinch-zoom. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 :root{
   --bg:#F7F8FA;
   --surface:#FFFFFF;
