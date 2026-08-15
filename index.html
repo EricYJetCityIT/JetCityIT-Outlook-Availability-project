@@ -153,6 +153,11 @@ input[type=text]::placeholder{color:var(--text3)}
 .grid-col-heads{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:6px}
 .grid-col-heads span{text-align:center;font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.02em}
 .grid-col-heads span.today{color:var(--green)}
+.grid-col-heads span.dayhead{cursor:pointer;border-radius:6px;padding:2px 1px;transition:background .1s,color .1s}
+.grid-col-heads span.dayhead:hover{background:#EEF2F6}
+.grid-col-heads span.dayhead:focus-visible{outline:2px solid var(--green-mid);outline-offset:1px}
+.grid-col-heads span.dayhead.dayoff{background:#FEE2E2;color:#B91C1C}
+.grid-col-heads span.dayhead.dayoff:hover{background:#FECACA}
 .slot-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
 .time-lbl{font-size:11px;color:var(--text3);display:flex;align-items:center;padding-right:6px;user-select:none;font-variant-numeric:tabular-nums}
 .slot{height:26px;border-radius:4px;cursor:pointer;background:var(--green);border:1.5px solid var(--green-dark);transition:background .08s,border-color .08s,transform .06s;user-select:none;-webkit-user-select:none}
@@ -1030,7 +1035,9 @@ function renderGrid(){
     const isToday=isCurrentWeek&&i===today;
     const hName=getHoliday(date);
     const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>10?hName.slice(0,9)+'…':hName}</span>`:'';
-    html+=`<span class="${isToday?'today':''}" style="${hName?'color:#C4320A;':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${isToday?'var(--green)':hName?'#C4320A':'var(--text3)'}">${dayNum}</span>${hBadge}</span>`;
+    const dayFull=isDayFull(i);
+    const numColor=dayFull?'#B91C1C':(isToday?'var(--green)':hName?'#C4320A':'var(--text3)');
+    html+=`<span class="dayhead${isToday?' today':''}${dayFull?' dayoff':''}" data-dayhead="${i}" role="button" tabindex="0" title="Tap to mark ${d} ${dayFull?'available':'unavailable'} all day" style="${hName&&!dayFull?'color:#C4320A;':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${numColor}">${dayNum}</span>${hBadge}</span>`;
   });
   html+='</div>';
 
@@ -1109,6 +1116,22 @@ function attachDragListeners(){
     paintSlot(el);
   },{passive:false});
   grid.addEventListener('touchend',function(){dragActive=false;});
+
+  // Day-header tap = toggle the whole column. Delegated on the grid node (which
+  // persists across renders); the drag handlers above ignore non-slot targets,
+  // so a header tap never starts a paint drag.
+  grid.addEventListener('click',function(e){
+    const head=e.target.closest('[data-dayhead]');
+    if(!head) return;
+    toggleDay(parseInt(head.dataset.dayhead));
+  });
+  grid.addEventListener('keydown',function(e){
+    if(e.key!=='Enter'&&e.key!==' ') return;
+    const head=e.target.closest('[data-dayhead]');
+    if(!head) return;
+    e.preventDefault();
+    toggleDay(parseInt(head.dataset.dayhead));
+  });
 }
 
 function toggleSlot(day,slot){
@@ -1121,6 +1144,28 @@ function toggleSlot(day,slot){
     if(cells[day])cells[day].classList.toggle('on',techSlots[day].has(slot));
   }
   updateBadge();
+}
+
+// Whole-day helpers for the day-header tap shortcut. A day is "full" when
+// every one of its N slots is marked unavailable.
+function isDayFull(day){
+  for(let s=0;s<N;s++){ if(!techSlots[day].has(START*2+s)) return false; }
+  return true;
+}
+// Tapping a day header toggles the entire column: if the day is already fully
+// unavailable it clears back to available, otherwise it fills every slot.
+// Re-renders (updates the header state + all cells) and auto-saves like the
+// per-slot taps do.
+function toggleDay(day){
+  if(isDayFull(day)){
+    techSlots[day]=new Set();
+  }else{
+    const s=new Set();
+    for(let i=0;i<N;i++) s.add(START*2+i);
+    techSlots[day]=s;
+  }
+  renderGrid();
+  scheduleAutoSave();
 }
 
 function updateBadge(){
