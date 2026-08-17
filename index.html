@@ -40,6 +40,44 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   --shadow:0 1px 3px rgba(15,23,36,.07),0 4px 16px rgba(15,23,36,.05);
   --shadow-sm:0 1px 2px rgba(15,23,36,.06);
 }
+/* Dark theme — the app's structural colors are variable-driven, so overriding
+   these core tokens re-themes the header, page, cards, text and borders. (The
+   remaining hardcoded accent colors — client card tints, red slots, holiday
+   badges — get their dark variants in a follow-up pass.) */
+:root[data-theme="dark"]{
+  --bg:#0F141A;
+  --surface:#191F27;
+  --surface2:#232B35;
+  --border:#2C343F;
+  --border2:#3A4450;
+  --text:#E7EAEE;
+  --text2:#AEB6C0;
+  --text3:#7A828D;
+  --green:#22B892;
+  --green-light:#123029;
+  --green-dark:#48D6B0;
+  --green-mid:#2E8B72;
+  --red:#F26D63;
+  --shadow:0 1px 3px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.35);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+}
+/* Settings (gear) button + dropdown */
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;position:relative}
+.hdr-gear{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;flex:none}
+.hdr-gear:hover{background:var(--surface2);color:var(--text)}
+.settings-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:14px;z-index:1000;width:240px;display:none}
+.settings-menu.open{display:block}
+.settings-row{margin-bottom:16px}
+.settings-row:last-child{margin-bottom:0}
+.settings-row h4{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:8px}
+.seg{display:flex;gap:4px;background:var(--surface2);border-radius:8px;padding:3px}
+.seg button{flex:1;border:none;background:none;color:var(--text2);font-size:12px;font-weight:600;padding:6px 4px;border-radius:6px;cursor:pointer;font-family:inherit;transition:background .12s,color .12s}
+.seg button.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
+.zoom-ctl{display:flex;align-items:center;gap:8px}
+.zoom-ctl button{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:17px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;transition:background .12s}
+.zoom-ctl button:hover{background:var(--surface2)}
+.zoom-ctl button:disabled{opacity:.4;cursor:default}
+.zoom-val{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}
 html,body{height:100%}
 body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.5}
 
@@ -374,6 +412,18 @@ if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(e=>console.error('SW registration failed:',e))});
 }
 </script>
+<script>
+// Apply saved theme + zoom before the page paints, to avoid a light-mode flash.
+(function(){
+  try{
+    var t=localStorage.getItem('jc-theme')||'system';
+    var dark = t==='dark' || (t==='system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.setAttribute('data-theme', dark?'dark':'light');
+    var z=parseFloat(localStorage.getItem('jc-zoom'));
+    if(z>=0.8 && z<=1.5 && z!==1) document.documentElement.style.zoom=z;
+  }catch(e){}
+})();
+</script>
 </head>
 <body>
 
@@ -405,6 +455,29 @@ if('serviceWorker' in navigator){
     </svg>
   </div>
   <span class="hdr-name">Team Availability</span>
+  <div class="hdr-right">
+    <button class="hdr-gear" id="settings-gear" onclick="toggleSettingsMenu(event)" title="Settings" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="settings-menu" id="settings-menu">
+      <div class="settings-row">
+        <h4>Appearance</h4>
+        <div class="seg" id="theme-seg">
+          <button data-theme-choice="light" onclick="setThemeChoice('light')">Light</button>
+          <button data-theme-choice="dark" onclick="setThemeChoice('dark')">Dark</button>
+          <button data-theme-choice="system" onclick="setThemeChoice('system')">System</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <h4>Zoom</h4>
+        <div class="zoom-ctl">
+          <button id="zoom-out" onclick="changeZoom(-1)" aria-label="Zoom out">&minus;</button>
+          <span class="zoom-val" id="zoom-val">100%</span>
+          <button id="zoom-in" onclick="changeZoom(1)" aria-label="Zoom in">+</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ── Week picker bar ── -->
@@ -2099,17 +2172,51 @@ async function msSignIn(){
   }
 }
 
+// ── Settings: theme (light/dark/system) + whole-app zoom ─────────────────────
+// The chosen theme + zoom persist in localStorage; an inline <head> script
+// applies them before first paint (no flash), and this syncs the menu UI.
+function getThemeChoice(){ try{ return localStorage.getItem('jc-theme')||'system'; }catch(e){ return 'system'; } }
+function resolveDark(choice){ return choice==='dark' || (choice==='system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
+function applyThemeChoice(choice){
+  document.documentElement.setAttribute('data-theme', resolveDark(choice)?'dark':'light');
+  document.querySelectorAll('#theme-seg button').forEach(function(b){ b.classList.toggle('active', b.dataset.themeChoice===choice); });
+}
+function setThemeChoice(choice){ try{ localStorage.setItem('jc-theme',choice); }catch(e){} applyThemeChoice(choice); }
+let jcZoom=1;
+function getZoomLevel(){ try{ var z=parseFloat(localStorage.getItem('jc-zoom')); return (z>=0.8&&z<=1.5)?z:1; }catch(e){ return 1; } }
+function applyZoom(z){
+  jcZoom=z;
+  document.documentElement.style.zoom = (z===1?'':z);
+  var v=document.getElementById('zoom-val'); if(v) v.textContent=Math.round(z*100)+'%';
+  var o=document.getElementById('zoom-out'); if(o) o.disabled=(z<=0.8);
+  var i=document.getElementById('zoom-in'); if(i) i.disabled=(z>=1.5);
+}
+function changeZoom(dir){ var z=Math.round((jcZoom+dir*0.1)*10)/10; z=Math.max(0.8,Math.min(1.5,z)); try{ localStorage.setItem('jc-zoom', z); }catch(e){} applyZoom(z); }
+function toggleSettingsMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('settings-menu'); if(m) m.classList.toggle('open'); }
+function initSettingsUI(){
+  applyThemeChoice(getThemeChoice());
+  applyZoom(getZoomLevel());
+  document.addEventListener('click', function(e){
+    var m=document.getElementById('settings-menu');
+    if(m && m.classList.contains('open') && !e.target.closest('#settings-menu') && !e.target.closest('#settings-gear')) m.classList.remove('open');
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape'){ var m=document.getElementById('settings-menu'); if(m) m.classList.remove('open'); } });
+  if(window.matchMedia){ try{ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(){ if(getThemeChoice()==='system') applyThemeChoice('system'); }); }catch(e){} }
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', initSettingsUI); else initSettingsUI();
+
 function finishLogin(name){
   currentUserName = name;
   const nameInput = document.getElementById('tech-name');
   if(nameInput){ nameInput.value = name; }
-  const hdr = document.querySelector('.hdr');
-  if(hdr && !document.getElementById('ms-user-badge')){
+  const right = document.querySelector('.hdr-right');
+  const gear = document.getElementById('settings-gear');
+  if(right && !document.getElementById('ms-user-badge')){
     const badge = document.createElement('div');
     badge.id = 'ms-user-badge';
-    badge.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--green-light);color:var(--green-dark);font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px';
+    badge.style.cssText = 'display:flex;align-items:center;gap:6px;background:var(--green-light);color:var(--green-dark);font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px';
     badge.innerHTML = '<span style="width:7px;height:7px;background:var(--green);border-radius:50%;display:inline-block"></span>' + name;
-    hdr.appendChild(badge);
+    right.insertBefore(badge, gear);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';
   loadMyRole();
