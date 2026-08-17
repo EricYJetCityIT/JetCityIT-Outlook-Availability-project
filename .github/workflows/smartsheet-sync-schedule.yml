@@ -26,3 +26,14 @@ jobs:
           curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
             -X POST "$URL" \
             -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"
+
+      # Auto-checks "Proj Rpt Rec'd" on the Crew Calendar for jobs whose Daily
+      # Project Report was just filed via the app (matched by the hidden Job ID
+      # on the report). Independent of the sync above — always runs even if the
+      # sync step failed.
+      - name: Call report-match endpoint
+        if: ${{ always() }}
+        run: |
+          curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST "https://crew-calendar.jetcityit.com/api/report-match" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"

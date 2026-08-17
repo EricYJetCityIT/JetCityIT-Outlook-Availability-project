@@ -1916,7 +1916,13 @@ const JCITDispatch=(function(){
     // POC is stored as "Name 425-555-1234 (new)"; the report just wants the name,
     // so strip phone numbers and any parenthetical tag.
     const pocName=function(s){return String(s||'').replace(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g,'').replace(/\([^)]*\)/g,'').replace(/\s{2,}/g,' ').replace(/\s*[;,]\s*$/,'').replace(/^\s*[;,]\s*/,'').trim();};
-    const rptQuery=[['Project Name',j.project],['Location',j.address],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',pocName(j.poc)]]
+    // 'Job ID' is a hidden field on the form; it carries this job's Smartsheet
+    // row id (the full "ss-<rowid>" form, kept as text so the ~16-digit id
+    // isn't mangled as a number) so the report-match backend can auto-check
+    // "Proj Rpt Rec'd" on the exact Crew Calendar row. Only reports filed via
+    // this button carry it; ones filed from the bare form link don't and stay
+    // manual.
+    const rptQuery=[['Project Name',j.project],['Location',j.address],['Service Date',isoToMDY(j.date)],['Project Start',j.startTime],['Lead',(j.lead&&j.lead[0])||''],['POC',pocName(j.poc)],['Job ID',String(j.id||'')]]
       .filter(function(p){return p[1];})
       .map(function(p){return encodeURIComponent(p[0])+'='+encodeURIComponent(p[1]);})
       .join('&');

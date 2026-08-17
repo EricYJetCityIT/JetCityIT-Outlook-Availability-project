@@ -45,6 +45,57 @@ async function fetchAttachment(attachmentId) {
   return res.json();
 }
 
+// Fetches just the column definitions for an arbitrary sheet (used to look
+// up a column id by title without pulling every row). Returns { columns }
+// to match the shape fetchSheet/resolveColumns expect.
+async function fetchSheetColumns(sheetId) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${sheetId}/columns?includeAll=true`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet columns error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return { columns: data.data || [] };
+}
+
+// Fetches an arbitrary sheet but only the rows modified at/after sinceISO
+// (Smartsheet's rowsModifiedSince filter). Used by the report matcher to
+// read just the newly-submitted Daily Project Report rows instead of the
+// whole (~1,900 row) sheet each run. Returns the full sheet JSON (columns +
+// the filtered rows). Omitting sinceISO returns all rows.
+async function fetchRowsModifiedSince(sheetId, sinceISO) {
+  const q = sinceISO ? `?rowsModifiedSince=${encodeURIComponent(sinceISO)}` : '';
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${sheetId}${q}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+// Low-level PUT /rows for an arbitrary sheet. `rows` is the Smartsheet row
+// array (each `{ id, cells: [...] }`). allowPartialSuccess makes Smartsheet
+// apply the rows it can and report the rest in failedItems instead of
+// rejecting the whole batch — important for the matcher, where one stale
+// row id (a deleted job) shouldn't block every other tick.
+async function putRows(sheetId, rows, { allowPartialSuccess = false } = {}) {
+  const q = allowPartialSuccess ? '?allowPartialSuccess=true' : '';
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${sheetId}/rows${q}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(rows),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet row update error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 // Multi-value cells (MULTI_CONTACT_LIST, MULTI_PICKLIST) carry their values
 // in objectValue.values, either as plain strings (picklist) or {name,email}
 // objects (contact). Falls back to splitting displayValue for older
@@ -282,4 +333,13 @@ function transformSheetToDispatch(sheet) {
   return { workers, jobs };
 }
 
-module.exports = { fetchSheet, fetchAttachment, transformSheetToDispatch, resolveColumns, updateJobCrew };
+module.exports = {
+  fetchSheet,
+  fetchAttachment,
+  fetchSheetColumns,
+  fetchRowsModifiedSince,
+  putRows,
+  transformSheetToDispatch,
+  resolveColumns,
+  updateJobCrew,
+};
