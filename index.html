@@ -35,6 +35,10 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   --green-dark:#0D6E56;
   --green-mid:#52C9A8;
   --red:#F04438;
+  --unavail-bg:#FEE2E2;
+  --unavail-border:#FCA5A5;
+  --unavail-text:#B91C1C;
+  --holiday-text:#C4320A;
   --radius:12px;
   --radius-sm:8px;
   --shadow:0 1px 3px rgba(15,23,36,.07),0 4px 16px rgba(15,23,36,.05);
@@ -58,9 +62,32 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   --green-dark:#48D6B0;
   --green-mid:#2E8B72;
   --red:#F26D63;
+  --unavail-bg:#3A1E1E;
+  --unavail-border:#6E3838;
+  --unavail-text:#F0A5A0;
+  --holiday-text:#F0A868;
   --shadow:0 1px 3px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.35);
   --shadow-sm:0 1px 2px rgba(0,0,0,.3);
 }
+/* Dark variants for the remaining hardcoded accent colors — client card tints
+   get dark hue-matched backgrounds (keeping their colored left accent), and the
+   status pills / holiday badge / avatar border get darkened fills. */
+:root[data-theme="dark"] .dp-job-amazon,:root[data-theme="dark"] .dp-wk-job-amazon{background:#332711}
+:root[data-theme="dark"] .dp-job-tmobile,:root[data-theme="dark"] .dp-wk-job-tmobile{background:#331623}
+:root[data-theme="dark"] .dp-job-pse,:root[data-theme="dark"] .dp-wk-job-pse{background:#13291F}
+:root[data-theme="dark"] .dp-job-fhcc,:root[data-theme="dark"] .dp-wk-job-fhcc{background:#132734}
+:root[data-theme="dark"] .dp-job-kp,:root[data-theme="dark"] .dp-wk-job-kp{background:#1B2140;border-left-color:#4C6EF5}
+:root[data-theme="dark"] .slot:hover{background:#1C3A31}
+:root[data-theme="dark"] .slot.on:hover{background:#4A2626;border-color:#8A4A4A}
+:root[data-theme="dark"] .grid-col-heads span.dayhead.dayoff:hover{background:#4A2626}
+:root[data-theme="dark"] .mc-cell.sel-week{background:#15302A}
+:root[data-theme="dark"] .dp-badge-client,:root[data-theme="dark"] .dp-pill.dp-st-progress{background:#16273A;color:#8CBCE8}
+:root[data-theme="dark"] .dp-pill.dp-st-cancelled{background:#331A1A;color:#E89898}
+:root[data-theme="dark"] .dp-pill.dp-st-postponed{background:#33280F;color:#E2B565}
+:root[data-theme="dark"] .holiday-badge{background:#33260F;border-color:#5C3F1E}
+:root[data-theme="dark"] .avatar{border-color:#2E6E5C}
+:root[data-theme="dark"] .btn-danger{border-color:#5A2E2E}
+:root[data-theme="dark"] .btn-danger:hover{background:#2A1818}
 /* Settings (gear) button + dropdown */
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;position:relative}
 .hdr-gear{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;flex:none}
@@ -131,14 +158,14 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .cal-footer{margin-top:12px;border-top:1px solid var(--border);padding-top:10px;display:flex;align-items:center;justify-content:space-between}
 
 /* ── Holiday styling ── */
-.cal-day.cal-holiday{color:#C4320A;font-weight:600}
+.cal-day.cal-holiday{color:var(--holiday-text);font-weight:600}
 .cal-day.cal-holiday::before{content:"";width:5px;height:5px;background:#F97316;border-radius:50%;position:absolute;top:3px;right:3px}
-.mc-cell.is-holiday{color:#C4320A;font-weight:600;position:relative}
+.mc-cell.is-holiday{color:var(--holiday-text);font-weight:600;position:relative}
 .mc-cell.is-holiday::before{content:"";width:4px;height:4px;background:#F97316;border-radius:50%;position:absolute;top:2px;right:2px}
-.holiday-badge{display:inline-flex;align-items:center;gap:3px;background:#FFF7ED;color:#C4320A;border:1px solid #FDBA74;border-radius:4px;font-size:10px;font-weight:600;padding:1px 5px;margin-left:4px;white-space:nowrap;vertical-align:middle;line-height:1.4}
+.holiday-badge{display:inline-flex;align-items:center;gap:3px;background:#FFF7ED;color:var(--holiday-text);border:1px solid #FDBA74;border-radius:4px;font-size:10px;font-weight:600;padding:1px 5px;margin-left:4px;white-space:nowrap;vertical-align:middle;line-height:1.4}
 .holiday-badge-sm{font-size:9px;padding:1px 4px}
 .col-head-holiday{display:flex;flex-direction:column;align-items:center;gap:1px}
-.col-head-holiday .holiday-name{font-size:9px;color:#C4320A;font-weight:500;line-height:1;white-space:nowrap;max-width:60px;overflow:hidden;text-overflow:ellipsis}
+.col-head-holiday .holiday-name{font-size:9px;color:var(--holiday-text);font-weight:500;line-height:1;white-space:nowrap;max-width:60px;overflow:hidden;text-overflow:ellipsis}
 .cal-footer span{font-size:11px;color:var(--text3)}
 .cal-today-btn{font-size:12px;color:var(--green);border:none;background:none;cursor:pointer;font-weight:500;font-family:inherit}
 .month-nav{position:relative}
@@ -197,15 +224,15 @@ input[type=text]::placeholder{color:var(--text3)}
 .grid-col-heads span{text-align:center;font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.02em}
 .grid-col-heads span.today{color:var(--green)}
 .grid-col-heads span.dayhead{cursor:pointer;border-radius:6px;padding:2px 1px;transition:background .1s,color .1s}
-.grid-col-heads span.dayhead:hover{background:#EEF2F6}
+.grid-col-heads span.dayhead:hover{background:var(--surface2)}
 .grid-col-heads span.dayhead:focus-visible{outline:2px solid var(--green-mid);outline-offset:1px}
-.grid-col-heads span.dayhead.dayoff{background:#FEE2E2;color:#B91C1C}
+.grid-col-heads span.dayhead.dayoff{background:var(--unavail-bg);color:var(--unavail-text)}
 .grid-col-heads span.dayhead.dayoff:hover{background:#FECACA}
 .slot-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
 .time-lbl{font-size:11px;color:var(--text3);display:flex;align-items:center;padding-right:6px;user-select:none;font-variant-numeric:tabular-nums}
 .slot{height:26px;border-radius:4px;cursor:pointer;background:var(--green);border:1.5px solid var(--green-dark);transition:background .08s,border-color .08s,transform .06s;user-select:none;-webkit-user-select:none}
 .slot:hover{background:#D9F5ED;border-color:var(--green-mid);transform:scaleY(1.06)}
-.slot.on{background:#FEE2E2;border-color:#FCA5A5}
+.slot.on{background:var(--unavail-bg);border-color:var(--unavail-border)}
 .slot.on:hover{background:#FECACA;border-color:#F87171}
 .hour-sep{height:1px;background:var(--border);margin:4px 0 4px 46px;opacity:.6}
 
@@ -435,7 +462,7 @@ if('serviceWorker' in navigator){
     </div>
     <div style="font-size:22px;font-weight:700;color:var(--text);letter-spacing:-.4px;margin-bottom:8px">Jet City IT</div>
     <div style="font-size:15px;color:var(--text3);margin-bottom:32px">Sign in with your JetCityIT Microsoft account to submit your availability.</div>
-    <div id="ms-login-err" style="display:none;background:#fff5f4;border:1px solid #fecdca;border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px;text-align:left"></div>
+    <div id="ms-login-err" style="display:none;background:var(--unavail-bg);border:1px solid var(--unavail-border);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px;text-align:left"></div>
     <button id="ms-login-btn" onclick="msSignIn()" style="width:100%;padding:14px 0;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:10px;transition:background .15s">
       <svg width="18" height="18" viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
       Sign in with Microsoft
@@ -562,7 +589,7 @@ if('serviceWorker' in navigator){
           <div class="card-sub">Click to mark when you're <strong>unavailable</strong> · 30-min blocks · 6 am – 8 pm</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <span class="hrs-tag" id="hrs-badge" style="display:none;background:#FEE2E2;color:#B91C1C"></span>
+          <span class="hrs-tag" id="hrs-badge" style="display:none;background:var(--unavail-bg);color:var(--unavail-text)"></span>
           <button class="btn btn-ghost btn-sm" onclick="clearAllSlots()">Reset</button>
           <button class="btn btn-primary btn-sm" id="save-btn" onclick="saveSlots()">
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -575,7 +602,7 @@ if('serviceWorker' in navigator){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px">
           <div class="legend">
             <span class="legend-item"><span class="ldot" style="background:var(--green);border:1.5px solid var(--green-dark)"></span>Available</span>
-            <span class="legend-item"><span class="ldot" style="background:#FEE2E2;border:1.5px solid #FCA5A5"></span>Unavailable</span>
+            <span class="legend-item"><span class="ldot" style="background:var(--unavail-bg);border:1.5px solid var(--unavail-border)"></span>Unavailable</span>
           </div>
           <div class="msg" id="save-msg"></div>
         </div>
@@ -1122,8 +1149,8 @@ function renderGrid(){
     const hName=getHoliday(date);
     const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>10?hName.slice(0,9)+'…':hName}</span>`:'';
     const dayFull=isDayFull(i);
-    const numColor=dayFull?'#B91C1C':(isToday?'var(--green)':hName?'#C4320A':'var(--text3)');
-    html+=`<span class="dayhead${isToday?' today':''}${dayFull?' dayoff':''}" data-dayhead="${i}" role="button" tabindex="0" title="Tap to mark ${d} ${dayFull?'available':'unavailable'} all day" style="${hName&&!dayFull?'color:#C4320A;':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${numColor}">${dayNum}</span>${hBadge}</span>`;
+    const numColor=dayFull?'var(--unavail-text)':(isToday?'var(--green)':hName?'var(--holiday-text)':'var(--text3)');
+    html+=`<span class="dayhead${isToday?' today':''}${dayFull?' dayoff':''}" data-dayhead="${i}" role="button" tabindex="0" title="Tap to mark ${d} ${dayFull?'available':'unavailable'} all day" style="${hName&&!dayFull?'color:var(--holiday-text);':''}">${d}<br><span style="font-size:13px;font-weight:${isToday?'600':'400'};color:${numColor}">${dayNum}</span>${hBadge}</span>`;
   });
   html+='</div>';
 
@@ -1414,7 +1441,7 @@ function buildHeatmap(overlapCount,overlapNames,total){
     const date=new Date(getSelectedWeek().monDate);date.setDate(date.getDate()+i);
     const hName=getHoliday(date);
     const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>8?hName.slice(0,7)+'…':hName}</span>`:'';
-    html+=`<span class="${i===today?'today':''}" style="${hName?'color:#C4320A;':''}">${d}${hBadge}</span>`;
+    html+=`<span class="${i===today?'today':''}" style="${hName?'color:var(--holiday-text);':''}">${d}${hBadge}</span>`;
   });
   html+='</div>';
 
@@ -1478,7 +1505,7 @@ function buildIndividual(techData){
       const date=new Date(getSelectedWeek().monDate);date.setDate(date.getDate()+i);
       const hName=getHoliday(date);
       const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>8?hName.slice(0,7)+'…':hName}</span>`:'';
-      html+=`<span class="${i===today?'today':''}" style="${hName?'color:#C4320A;':''}">${d}${hBadge}</span>`;
+      html+=`<span class="${i===today?'today':''}" style="${hName?'color:var(--holiday-text);':''}">${d}${hBadge}</span>`;
     });
     html+='</div>';
     for(let s=0;s<N;s++){
@@ -1488,7 +1515,7 @@ function buildIndividual(techData){
       DAYS.forEach((_,di)=>{
         const unavail=slotSets[di].has(abs);
         // available = tech color, unavailable = light red
-        html+=`<div style="height:22px;border-radius:4px;background:${unavail?'#FEE2E2':c.fill};border:1.5px solid ${unavail?'#FCA5A5':c.border}"></div>`;
+        html+=`<div style="height:22px;border-radius:4px;background:${unavail?'var(--unavail-bg)':c.fill};border:1.5px solid ${unavail?'var(--unavail-border)':c.border}"></div>`;
       });
       html+='</div>';
     }
@@ -2467,7 +2494,7 @@ function renderCalDropdown(){
   }
   html += '</div>';
   html += '<div class="cal-footer"><span>Click any weekday to select that week</span><button class="cal-today-btn" onclick="calGoToday()">Today</button></div>';
-  html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="color:#C4320A;font-weight:600">●</span> US federal holiday</div>';
+  html += '<div style="margin-top:8px;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px"><span style="color:var(--holiday-text);font-weight:600">●</span> US federal holiday</div>';
   el.innerHTML = html;
 }
 
