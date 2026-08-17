@@ -443,7 +443,7 @@ if('serviceWorker' in navigator){
 // Apply saved theme + zoom before the page paints, to avoid a light-mode flash.
 (function(){
   try{
-    var t=localStorage.getItem('jc-theme')||'system';
+    var t=localStorage.getItem('jc-theme')||'light';
     var dark = t==='dark' || (t==='system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.setAttribute('data-theme', dark?'dark':'light');
     var z=parseFloat(localStorage.getItem('jc-zoom'));
@@ -2202,7 +2202,7 @@ async function msSignIn(){
 // ── Settings: theme (light/dark/system) + whole-app zoom ─────────────────────
 // The chosen theme + zoom persist in localStorage; an inline <head> script
 // applies them before first paint (no flash), and this syncs the menu UI.
-function getThemeChoice(){ try{ return localStorage.getItem('jc-theme')||'system'; }catch(e){ return 'system'; } }
+function getThemeChoice(){ try{ return localStorage.getItem('jc-theme')||'light'; }catch(e){ return 'light'; } }
 function resolveDark(choice){ return choice==='dark' || (choice==='system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
 function applyThemeChoice(choice){
   document.documentElement.setAttribute('data-theme', resolveDark(choice)?'dark':'light');
