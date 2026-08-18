@@ -1,4 +1,5 @@
 const { app } = require('@azure/functions');
+const { safeEqual } = require('../lib/secure');
 
 // Private "get the app" landing page. Not linked from anywhere in the site,
 // not indexed — the only way in is a link with the right ?token=, handed
@@ -105,7 +106,7 @@ app.http('install', {
   handler: async (request) => {
     const expected = process.env.INSTALL_INVITE_TOKEN;
     const provided = new URL(request.url).searchParams.get('token') || '';
-    if (!expected || provided !== expected) {
+    if (!expected || !safeEqual(provided, expected)) {
       return { status: 404, body: 'Not found' };
     }
     return { headers: { 'Content-Type': 'text/html' }, body: pageHtml() };

@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { getContainer } = require('../lib/cosmos');
 const { fetchRowsModifiedSince, fetchSheetColumns, putRows } = require('../lib/smartsheet');
+const { safeEqual } = require('../lib/secure');
 
 const CONTAINER_ID = 'dispatch';
 const CURSOR_DOC_ID = 'report-match-state';
@@ -117,7 +118,7 @@ app.http('reportMatch', {
   handler: async (request, context) => {
     const expected = process.env.SYNC_SECRET;
     const provided = request.headers.get('x-sync-secret') || '';
-    if (!expected || provided !== expected) {
+    if (!expected || !safeEqual(provided, expected)) {
       return { status: 401, jsonBody: { error: 'Invalid or missing sync secret' } };
     }
 
