@@ -410,6 +410,12 @@ input[type=text]::placeholder{color:var(--text3)}
 body.is-viewer [data-dpact="assign-open"],
 body.is-viewer .js-editor-only{display:none !important}
 
+/* Manager view is editor-only. Hide the tab by default; reveal it only once
+   the API confirms the signed-in user is an editor (adds `is-editor`). This
+   means non-editors never see the Manager tab. Enforcement is still server-side. */
+#tab-manager{display:none}
+body.is-editor #tab-manager{display:inline-block}
+
 /* ── Dispatch modals ── */
 .dp-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
 .dp-modal{background:var(--surface);border-radius:14px;width:100%;max-width:520px;box-shadow:0 8px 40px rgba(15,23,36,.18);font-family:inherit}
@@ -1065,20 +1071,14 @@ async function deleteAll(){
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const MANAGER_PIN = 'JetCityIT1975';
-let managerUnlocked = false;
-
 function switchTab(id){
   flushPendingSave();
-  if(id === 'manager' && !managerUnlocked && !currentUserIsEditor){
-    const entered = prompt('🔒 Manager view is protected.\n\nEnter PIN to continue:');
-    if(entered === null) return; // cancelled
-    if(entered !== MANAGER_PIN){
-      alert('❌ Incorrect PIN. Access denied.');
-      return;
-    }
-    managerUnlocked = true;
-  }
+  // Manager view is editor-only (Entra DataEditor role / EDITOR_UPNS). The tab
+  // is hidden for non-editors via the `is-editor` body class; this guard is a
+  // belt-and-suspenders block in case the tab is reached before the role loads.
+  // The API is the real security boundary — every write endpoint re-checks the
+  // caller server-side, so this is a UX gate, not the enforcement point.
+  if(id === 'manager' && !currentUserIsEditor) return;
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
@@ -2259,11 +2259,11 @@ async function loadMyRole(){
     if(res.ok){
       const me=await res.json();
       currentUserIsEditor=!!me.isEditor;
+      // Read-only users get `is-viewer` (write controls hide); editors get
+      // `is-editor`, which reveals the Manager-view tab (hidden by default).
+      // Non-editors never see the Manager tab at all.
       document.body.classList.toggle('is-viewer', !currentUserIsEditor);
-      // Editors (Entra DataEditor role / EDITOR_UPNS) are already authenticated,
-      // so skip the Manager-view PIN for them. The PIN stays as a fallback for
-      // signed-in read-only users who still need occasional Manager access.
-      if(currentUserIsEditor) managerUnlocked = true;
+      document.body.classList.toggle('is-editor', currentUserIsEditor);
     }
   }catch(e){ console.error('Failed to load role:',e); }
 }
