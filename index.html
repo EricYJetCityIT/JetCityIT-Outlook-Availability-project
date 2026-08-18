@@ -1633,29 +1633,63 @@ const JCITDispatch=(function(){
     });
     return pdfJsPromise;
   }
-  // Render every page of a PDF blob as a canvas into `container`, scaled to fit
-  // width and sharp on high-DPI screens. Pages append as they finish so the
-  // first page shows quickly.
+  // Render every page of a PDF blob as a canvas into `container`, with a zoom
+  // toolbar (−/+/Fit). "Fit" (zoom 1) sizes pages to the viewer width; zooming
+  // re-renders the pages at the higher scale — re-rendering (not CSS-scaling the
+  // canvas) keeps text crisp, which matters for dense schedules. Zoomed pages
+  // overflow the width and scroll horizontally. Canvases render sharp on
+  // high-DPI screens, with a backing-store cap so memory stays sane at high zoom.
   async function renderPdfInline(container, blob){
     container.innerHTML='<div style="text-align:center;color:var(--text3);padding:24px">Loading PDF…</div>';
     const pdfjsLib=await ensurePdfJs();
     const data=new Uint8Array(await blob.arrayBuffer());
     const pdf=await pdfjsLib.getDocument({data, isEvalSupported:false}).promise;
+    container.innerHTML='';
+    const bar=document.createElement('div');
+    bar.style.cssText='display:flex;align-items:center;justify-content:center;gap:8px;padding:2px 0 10px';
+    bar.innerHTML='<button class="btn btn-sm" data-z="out" title="Zoom out" aria-label="Zoom out">−</button>'
+      +'<span data-z="lbl" style="min-width:50px;text-align:center;font-size:13px;font-weight:600">100%</span>'
+      +'<button class="btn btn-sm" data-z="in" title="Zoom in" aria-label="Zoom in">+</button>'
+      +'<button class="btn btn-sm" data-z="fit" title="Fit to width">Fit</button>';
     const wrap=document.createElement('div');
-    wrap.style.cssText='max-height:80vh;overflow:auto;background:#525659;padding:10px;text-align:center;border-radius:6px';
-    container.innerHTML=''; container.appendChild(wrap);
+    wrap.style.cssText='max-height:76vh;overflow:auto;background:#525659;padding:10px;text-align:center;border-radius:6px';
+    container.appendChild(bar); container.appendChild(wrap);
     const dpr=Math.min(window.devicePixelRatio||1, 2);
-    const cssWidth=Math.min((wrap.clientWidth||600)-20, 1000);
-    for(let p=1;p<=pdf.numPages;p++){
-      const page=await pdf.getPage(p);
-      const base=page.getViewport({scale:1});
-      const vp=page.getViewport({scale:(cssWidth/base.width)*dpr});
-      const canvas=document.createElement('canvas');
-      canvas.width=vp.width; canvas.height=vp.height;
-      canvas.style.cssText='display:block;margin:0 auto 10px;max-width:100%;height:auto;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4)';
-      wrap.appendChild(canvas);
-      await page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
+    const fitWidth=Math.min((wrap.clientWidth||600)-20, 1000); // css px at 100%
+    const MAX_CANVAS_W=4000; // backing-store cap (px) so big zooms don't blow memory
+    const MIN_ZOOM=0.5, MAX_ZOOM=3, STEP=0.25;
+    let zoom=1, renderToken=0;
+    async function renderAll(){
+      const myToken=++renderToken;
+      bar.querySelector('[data-z="lbl"]').textContent=Math.round(zoom*100)+'%';
+      wrap.scrollTop=0; wrap.scrollLeft=0; wrap.innerHTML='';
+      const cssW=fitWidth*zoom;
+      for(let p=1;p<=pdf.numPages;p++){
+        if(myToken!==renderToken) return; // a newer zoom superseded this pass
+        const page=await pdf.getPage(p);
+        const base=page.getViewport({scale:1});
+        let renderScale=(cssW/base.width)*dpr;
+        if(base.width*renderScale>MAX_CANVAS_W) renderScale=MAX_CANVAS_W/base.width;
+        const vp=page.getViewport({scale:renderScale});
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.round(vp.width); canvas.height=Math.round(vp.height);
+        // Display width is the true zoomed css width; when it exceeds the viewer
+        // the wrap scrolls. max-width:none lets it grow past the container.
+        canvas.style.cssText='display:block;margin:0 auto 10px;width:'+Math.round(cssW)+'px;max-width:none;height:auto;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.4)';
+        wrap.appendChild(canvas);
+        await page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
+      }
     }
+    bar.addEventListener('click',(e)=>{
+      const b=e.target.closest('[data-z]'); if(!b) return;
+      const a=b.getAttribute('data-z');
+      if(a==='in') zoom=Math.min(zoom+STEP, MAX_ZOOM);
+      else if(a==='out') zoom=Math.max(zoom-STEP, MIN_ZOOM);
+      else if(a==='fit') zoom=1;
+      else return;
+      renderAll();
+    });
+    await renderAll();
   }
   // Opens a Smartsheet attachment in an in-app viewer modal. The file bytes are
   // proxied through /api/attachment/{id}/content (same-origin, so the CSP allows
