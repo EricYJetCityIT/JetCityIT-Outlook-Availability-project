@@ -1633,6 +1633,29 @@ const JCITDispatch=(function(){
     });
     return pdfJsPromise;
   }
+  // Make an overflow-scroll element pannable by click-and-dragging (grab the
+  // document and move it, instead of hunting for the scrollbars). Mouse only —
+  // touch devices already pan the container natively by dragging, and hijacking
+  // that would break pinch-zoom / momentum scroll. No-op when nothing overflows.
+  function enableDragPan(el){
+    el.style.cursor='grab';
+    let down=false, sx=0, sy=0, sl=0, st=0;
+    el.addEventListener('pointerdown',(e)=>{
+      if(e.pointerType==='touch' || e.button!==0) return;
+      down=true; sx=e.clientX; sy=e.clientY; sl=el.scrollLeft; st=el.scrollTop;
+      el.style.cursor='grabbing';
+      try{ el.setPointerCapture(e.pointerId); }catch(_){}
+      e.preventDefault();
+    });
+    el.addEventListener('pointermove',(e)=>{
+      if(!down) return;
+      el.scrollLeft=sl-(e.clientX-sx); el.scrollTop=st-(e.clientY-sy);
+    });
+    const end=(e)=>{ if(!down) return; down=false; el.style.cursor='grab'; try{ el.releasePointerCapture(e.pointerId); }catch(_){} };
+    el.addEventListener('pointerup',end);
+    el.addEventListener('pointercancel',end);
+    el.addEventListener('pointerleave',end);
+  }
   // Render every page of a PDF blob as a canvas into `container`, with a zoom
   // toolbar (−/+/Fit). "Fit" (zoom 1) sizes pages to the viewer width; zooming
   // re-renders the pages at the higher scale — re-rendering (not CSS-scaling the
@@ -1652,8 +1675,9 @@ const JCITDispatch=(function(){
       +'<button class="btn btn-sm" data-z="in" title="Zoom in" aria-label="Zoom in">+</button>'
       +'<button class="btn btn-sm" data-z="fit" title="Fit to width">Fit</button>';
     const wrap=document.createElement('div');
-    wrap.style.cssText='max-height:76vh;overflow:auto;background:#525659;padding:10px;text-align:center;border-radius:6px';
+    wrap.style.cssText='max-height:76vh;overflow:auto;background:#525659;padding:10px;text-align:center;border-radius:6px;user-select:none;-webkit-user-select:none';
     container.appendChild(bar); container.appendChild(wrap);
+    enableDragPan(wrap); // click-and-drag to pan around a zoomed page
     const dpr=Math.min(window.devicePixelRatio||1, 2);
     const fitWidth=Math.min((wrap.clientWidth||600)-20, 1000); // css px at 100%
     const MAX_CANVAS_W=4000; // backing-store cap (px) so big zooms don't blow memory
