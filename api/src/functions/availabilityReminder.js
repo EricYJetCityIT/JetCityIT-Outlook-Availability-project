@@ -58,9 +58,13 @@ async function activeWorkerNames() {
 
 // Matches a roster name (e.g. "Ben V", abbreviated to first name + last
 // initial, same convention the Smartsheet roster already uses) against the
-// company directory by first-name + last-initial. Good enough for a ~20
-// person roster; a company large enough to have two people share both would
-// need something sturdier than name matching anyway.
+// company directory by first-name + last-initial. Checks the initial against
+// EVERY word after the first name, not just the last one -- a directory
+// displayName like "Ben Van Cise" means the roster's "V" is the first half of
+// a compound surname ("Van Cise"), not the final word ("Cise"). Good enough
+// for a ~20 person roster; a company large enough to have two people share
+// both a first name and some later-word initial would need something
+// sturdier than name matching anyway.
 function matchDirectoryUser(name, directoryUsers) {
   const parts = name.trim().split(/\s+/);
   if (parts.length < 2) return null;
@@ -68,8 +72,8 @@ function matchDirectoryUser(name, directoryUsers) {
   const lastInitial = parts[parts.length - 1][0].toLowerCase();
   const match = directoryUsers.find((u) => {
     const dParts = (u.displayName || '').trim().split(/\s+/);
-    if (dParts.length < 2) return false;
-    return dParts[0].toLowerCase() === firstName && dParts[dParts.length - 1][0].toLowerCase() === lastInitial;
+    if (dParts.length < 2 || dParts[0].toLowerCase() !== firstName) return false;
+    return dParts.slice(1).some((p) => p[0].toLowerCase() === lastInitial);
   });
   return match ? match.mail || match.userPrincipalName || null : null;
 }
