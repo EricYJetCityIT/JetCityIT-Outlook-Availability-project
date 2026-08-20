@@ -57,4 +57,27 @@ async function sendMail({ from, to, subject, html }) {
   }
 }
 
-module.exports = { getAppToken, sendMail };
+// Full company directory (id, displayName, mail, userPrincipalName), used as
+// a fallback when Smartsheet's contact list doesn't have someone's email --
+// Smartsheet's contactOptions is that account's contextual "suggested
+// contacts," not a complete roster, so it silently misses anyone who hasn't
+// recently been a suggested contact. Requires an application-level
+// User.Read.All permission (admin-consented) on top of Mail.Send.
+async function listUsers() {
+  const token = await getAppToken();
+  let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName&$top=999';
+  const users = [];
+  while (url) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Graph listUsers error ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    users.push(...(data.value || []));
+    url = data['@odata.nextLink'] || null;
+  }
+  return users;
+}
+
+module.exports = { getAppToken, sendMail, listUsers };

@@ -1,7 +1,7 @@
 const { app } = require('@azure/functions');
 const { getContainer } = require('../lib/cosmos');
 const { fetchSheet, resolveColumns } = require('../lib/smartsheet');
-const { sendMail } = require('../lib/graph');
+const { sendMail, listUsers } = require('../lib/graph');
 const { safeEqual } = require('../lib/secure');
 const { audit } = require('../lib/audit');
 
@@ -56,6 +56,24 @@ async function activeWorkerNames() {
   return (resource && resource.workers ? resource.workers : []).filter((w) => w.active).map((w) => w.name);
 }
 
+// Matches a roster name (e.g. "Ben V", abbreviated to first name + last
+// initial, same convention the Smartsheet roster already uses) against the
+// company directory by first-name + last-initial. Good enough for a ~20
+// person roster; a company large enough to have two people share both would
+// need something sturdier than name matching anyway.
+function matchDirectoryUser(name, directoryUsers) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const firstName = parts[0].toLowerCase();
+  const lastInitial = parts[parts.length - 1][0].toLowerCase();
+  const match = directoryUsers.find((u) => {
+    const dParts = (u.displayName || '').trim().split(/\s+/);
+    if (dParts.length < 2) return false;
+    return dParts[0].toLowerCase() === firstName && dParts[dParts.length - 1][0].toLowerCase() === lastInitial;
+  });
+  return match ? match.mail || match.userPrincipalName || null : null;
+}
+
 // Checks this week and next week for missing availability submissions among
 // the active roster, and emails anyone missing either one -- one combined
 // email per person naming which week(s), not one email per missing week.
@@ -92,6 +110,22 @@ async function runReminder(context) {
   const nameToEmail = new Map();
   emailToName.forEach((name, email) => nameToEmail.set(name, email));
 
+  // The company directory is only fetched if Smartsheet's contact map
+  // actually misses someone -- most weeks it won't be needed at all.
+  let directoryUsers = null;
+  let directoryError = null;
+  async function directoryUsersOnce() {
+    if (directoryUsers === null) {
+      try {
+        directoryUsers = await listUsers();
+      } catch (e) {
+        directoryError = e.message;
+        directoryUsers = [];
+      }
+    }
+    return directoryUsers;
+  }
+
   let sent = 0;
   let skipped = 0;
   // Surfaced directly in the response (not just context.log/error) because
@@ -99,10 +133,13 @@ async function runReminder(context) {
   // nowhere to land, so this is the only way to see why someone was skipped.
   const skippedDetail = [];
   for (const [name, missingWeeks] of missing) {
-    const email = nameToEmail.get(name);
+    let email = nameToEmail.get(name);
+    if (!email) {
+      email = matchDirectoryUser(name, await directoryUsersOnce());
+    }
     if (!email) {
       skipped++;
-      skippedDetail.push({ name, reason: 'no-email-on-file' });
+      skippedDetail.push({ name, reason: 'no-email-on-file', directoryError: directoryError || undefined });
       continue;
     }
     const weeksHtml = missingWeeks.map((label) => `<li>${label}</li>`).join('');
