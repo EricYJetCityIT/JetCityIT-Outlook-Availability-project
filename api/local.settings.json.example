@@ -10,7 +10,8 @@
     "SMARTSHEET_API_TOKEN": "<generate from Smartsheet: Account > Apps & Integrations > API Access>",
     "SMARTSHEET_SHEET_ID": "3896324323757956",
     "REPORT_SHEET_ID": "6097352604837764",
-    "SYNC_SECRET": "<shared secret the GitHub Actions cron workflow sends as X-Sync-Secret; must match the GitHub repo secret of the same name>",
+    "SYNC_SECRET": "<shared secret the GitHub Actions cron workflows send as X-Sync-Secret; must match the GitHub repo secret of the same name>",
+    "MAIL_CLIENT_SECRET": "<client secret for the JetCity Availability App registration (Azure Portal > App registrations > Certificates & secrets); used ONLY for the app-only Graph Mail.Send call the availability-reminder cron makes -- also requires an admin-consented Mail.Send APPLICATION permission on that same app registration>",
     "RATE_LIMIT_PER_MIN": "120",
     "EDITOR_UPNS": "<comma-separated emails allowed to CHANGE data (reassign crew, clear availability weeks), e.g. dylanm@jetcityit.com,ericy@jetcityit.com. Everyone else is read-only. Optional if using the Entra 'DataEditor' app role instead.>"
   }

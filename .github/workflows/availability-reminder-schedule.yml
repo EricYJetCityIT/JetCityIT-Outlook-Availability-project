@@ -1,0 +1,22 @@
+name: Weekly availability reminder
+
+# Reminds any active tech who hasn't submitted availability yet for the
+# current or next week. Azure Static Web Apps' managed Functions only support
+# HTTP triggers, so the actual check (api/src/functions/availabilityReminder.js)
+# is an HTTP endpoint instead of a Timer trigger, and this workflow is what
+# calls it on a schedule. 15:00 UTC on Monday = 7-8am Pacific depending on DST;
+# adjust the cron below if a different time is wanted.
+on:
+  schedule:
+    - cron: '0 15 * * 1'
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call availability-reminder endpoint
+        run: |
+          curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST "https://crew-calendar.jetcityit.com/api/availability-reminder" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"
