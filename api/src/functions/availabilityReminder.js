@@ -94,11 +94,15 @@ async function runReminder(context) {
 
   let sent = 0;
   let skipped = 0;
+  // Surfaced directly in the response (not just context.log/error) because
+  // Application Insights isn't enabled on this app -- those calls have
+  // nowhere to land, so this is the only way to see why someone was skipped.
+  const skippedDetail = [];
   for (const [name, missingWeeks] of missing) {
     const email = nameToEmail.get(name);
     if (!email) {
       skipped++;
-      context.log(`availability-reminder: no email on file for "${name}", skipping.`);
+      skippedDetail.push({ name, reason: 'no-email-on-file' });
       continue;
     }
     const weeksHtml = missingWeeks.map((label) => `<li>${label}</li>`).join('');
@@ -112,13 +116,12 @@ async function runReminder(context) {
       sent++;
     } catch (e) {
       skipped++;
-      context.error(`availability-reminder: failed to email ${name}:`, e);
+      skippedDetail.push({ name, reason: 'send-failed', error: e.message });
     }
   }
 
   audit(context, null, 'availability.reminder.sent', { weeks: weeks.map((w) => w.key), sent, skipped });
-  context.log(`availability-reminder: ${sent} sent, ${skipped} skipped.`);
-  return { sent, skipped, weeks: weeks.map((w) => w.key) };
+  return { sent, skipped, skippedDetail, weeks: weeks.map((w) => w.key) };
 }
 
 // HTTP-triggered (SWA managed Functions don't run Timer triggers) and called
@@ -139,8 +142,9 @@ app.http('availabilityReminder', {
       const result = await runReminder(context);
       return { jsonBody: result };
     } catch (e) {
-      context.error('availability-reminder failed:', e);
-      return { status: 500, jsonBody: { error: 'availability-reminder failed' } };
+      // Application Insights isn't enabled on this app, so context.error has
+      // nowhere to land -- include the message in the response itself.
+      return { status: 500, jsonBody: { error: 'availability-reminder failed', message: e.message } };
     }
   },
 });
