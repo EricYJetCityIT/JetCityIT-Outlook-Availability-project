@@ -81,6 +81,12 @@ app.http('sendReport', {
       const date = (fields.find((f) => f.label === 'Service Date') || {}).value || '';
       const subject = 'Daily Project Report — ' + project + (date ? (' · ' + date) : '');
 
+      // Optional per-field selection from the View-report checkboxes: `include`
+      // is the list of field labels to keep. Absent → all fields. Subject still
+      // uses the full report's Project/Date regardless of what's ticked.
+      const include = Array.isArray(body.include) ? body.include : null;
+      const emailFields = include ? fields.filter((f) => include.includes(f.label)) : fields;
+
       // Download + compress the report's photos to attach inline. Keep the whole
       // /sendMail request under Graph's ~4MB cap (base64 adds ~33%), so budget
       // the raw total to ~2.8MB. Compressed photos are a few hundred KB each, so
@@ -106,14 +112,14 @@ app.http('sendReport', {
 
       let attached = files.length;
       try {
-        await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, attached, skipped), attachments: files });
+        await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, emailFields, attached, skipped), attachments: files });
       } catch (e) {
         // If sending with the photos fails (e.g. size), retry once without them
         // so the report still gets delivered.
         context.error('sendReport send failed; retrying without photos:', e);
         try {
           attached = 0;
-          await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, (r.attachments || []).length) });
+          await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, emailFields, 0, (r.attachments || []).length) });
         } catch (e2) {
           context.error('sendReport send failed (no photos too):', e2);
           return { status: 502, jsonBody: { error: 'Email send failed. Check that Mail.Send + MAIL_CLIENT_SECRET are configured.' } };

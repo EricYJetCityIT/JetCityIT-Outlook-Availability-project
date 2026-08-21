@@ -2047,14 +2047,19 @@ const JCITDispatch=(function(){
     const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
     document.addEventListener('keydown',onKey);
     let fields=null;
-    ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-rp]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-rp'); if(a==='close') cleanup(); else if(a==='fwd') forwardReport(j,fields); });
+    ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-rp]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-rp');
+      if(a==='close'){ cleanup(); return; }
+      if(a==='all'||a==='none'){ ov.querySelectorAll('.dp-rp-chk').forEach(cb=>{cb.checked=(a==='all');}); return; }
+      if(a==='fwd'){ const inc=[...ov.querySelectorAll('.dp-rp-chk:checked')].map(cb=>cb.getAttribute('data-label')); if(!inc.length){ alert('Select at least one field to include.'); return; } forwardReport(j,fields,inc); }
+    });
     const body=ov.querySelector('[data-rp-body]');
     try{
       const r=await fetchReport(j.id);
       if(!r||!r.found){ body.innerHTML='<div style="color:var(--text3);padding:8px 0">No submitted report is linked to this job yet.<br><span style="font-size:12px">Only reports filed through the app’s “📝 Daily report” button get linked.</span></div>'; return; }
       fields=r.fields||[];
-      const when=r.createdAt?('<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Submitted '+esc(String(r.createdAt).replace('T',' ').replace('Z',' UTC'))+'</div>'):'';
-      body.innerHTML=when+'<div class="dp-rpt-fields">'+fields.map(f=>`<div class="dp-rpt-field"><div class="dp-rpt-flabel">${esc(f.label)}</div><div class="dp-rpt-fval">${esc(f.value)}</div></div>`).join('')+'</div>';
+      const when=r.createdAt?('<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Submitted '+esc(String(r.createdAt).replace('T',' ').replace('Z',' UTC'))+'</div>'):'';
+      const hint='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Untick any fields you don’t want included when forwarding. <a href="#" data-rp="all" style="color:var(--green)">All</a> · <a href="#" data-rp="none" style="color:var(--green)">None</a></div>';
+      body.innerHTML=when+hint+'<div class="dp-rpt-fields">'+fields.map(f=>`<label class="dp-rpt-field" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" class="dp-rp-chk" data-label="${esc(f.label)}" checked style="margin-top:3px;flex:0 0 auto"><span style="flex:1;min-width:0"><span class="dp-rpt-flabel" style="display:block">${esc(f.label)}</span><span class="dp-rpt-fval" style="display:block">${esc(f.value)}</span></span></label>`).join('')+'</div>';
       const fwd=ov.querySelector('[data-rp="fwd"]'); if(fwd) fwd.style.display='';
     }catch(e){ console.error('report load failed',e); body.innerHTML='<div style="color:var(--red)">Could not load the report. Please try again.</div>'; }
   }
@@ -2079,13 +2084,15 @@ const JCITDispatch=(function(){
   // Sends the report as a formatted HTML email via the backend, which builds the
   // HTML and sends it from the signed-in editor's own mailbox (app-only Graph
   // sendMail). Keeps Graph server-side — no browser token or consent popup.
-  async function sendReportEmail(jobId,to){
+  async function sendReportEmail(jobId,to,include){
     const token=await getApiToken();
-    const res=await fetch('/api/send-report',{ method:'POST', headers:{ 'X-Jetcity-Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify({ jobId:jobId, to:to }) });
+    const payload={ jobId:jobId, to:to };
+    if(Array.isArray(include)) payload.include=include; // labels of fields to keep
+    const res=await fetch('/api/send-report',{ method:'POST', headers:{ 'X-Jetcity-Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify(payload) });
     if(!res.ok){ let m='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
     return res.json();
   }
-  async function forwardReport(j,fields){
+  async function forwardReport(j,fields,include){
     if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
     // Searchable dropdown (native <datalist>) of client contacts AND JCIT staff:
     // type to filter by name/email, or enter any address. Prefilled with this
@@ -2112,7 +2119,7 @@ const JCITDispatch=(function(){
       const to=(emailInput.value||'').trim();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ msgEl.textContent='Please enter a valid email address.'; msgEl.style.color='var(--red)'; return; }
       btn.disabled=true; btn.textContent='Sending…'; msgEl.style.color='var(--text3)'; msgEl.textContent='Sending to '+to+'…';
-      try{ await sendReportEmail(j.id,to); msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400); }
+      try{ await sendReportEmail(j.id,to,include); msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400); }
       catch(err){ console.error('send report failed',err); btn.disabled=false; btn.textContent='✉ Send report'; msgEl.style.color='var(--red)'; msgEl.textContent='Could not send — '+(String(err.message||err).slice(0,120)); }
     } });
     setTimeout(()=>{ if(emailInput){ emailInput.focus(); } },30);
