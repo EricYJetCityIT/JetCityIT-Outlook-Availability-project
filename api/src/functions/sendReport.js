@@ -82,16 +82,27 @@ app.http('sendReport', {
           files.push(f);
         } catch (e) { context.error('report attachment fetch failed', a.id, e); skipped++; }
       }
-      const html = buildReportHtml(project, date, fields, files.length, skipped);
-
+      let attached = files.length;
       try {
-        if (files.length) await sendMailWithAttachments({ from: user.upn, to, subject, html, attachments: files });
-        else await sendMail({ from: user.upn, to, subject, html });
+        if (files.length) {
+          try {
+            await sendMailWithAttachments({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, files.length, skipped), attachments: files });
+          } catch (attErr) {
+            // Attaching needs Mail.ReadWrite (draft + upload session). If that's
+            // not granted (app currently has only Mail.Send) or an upload fails,
+            // still deliver the formatted report WITHOUT photos rather than error.
+            context.error('sendReport attachments failed, sending without photos:', attErr);
+            attached = 0;
+            await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, (r.attachments || []).length) });
+          }
+        } else {
+          await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, 0) });
+        }
       } catch (e) {
         context.error('sendReport send failed:', e);
         return { status: 502, jsonBody: { error: 'Email send failed. Check that Mail.Send + MAIL_CLIENT_SECRET are configured.' } };
       }
-      return { jsonBody: { sent: true, to, attached: files.length, omitted: skipped } };
+      return { jsonBody: { sent: true, to, attached, omitted: attached ? skipped : (r.attachments || []).length } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
