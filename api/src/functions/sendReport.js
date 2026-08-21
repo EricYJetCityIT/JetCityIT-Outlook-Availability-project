@@ -1,7 +1,21 @@
 const { app } = require('@azure/functions');
+const Jimp = require('jimp');
 const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
 const { fetchReportByJobId, fetchAttachmentBytes } = require('../lib/smartsheet');
-const { sendMail, sendMailWithAttachments } = require('../lib/graph');
+const { sendMail } = require('../lib/graph');
+
+// Downscale + recompress a photo so several fit under Graph's ~4MB /sendMail
+// inline cap (keeping us on Mail.Send only, no mailbox-write permission).
+// Returns { name, contentType, bytes } as JPEG, or null for non-images.
+async function compressPhoto(name, contentType, bytes) {
+  if (!/^image\//i.test(contentType || '') && !/\.(jpe?g|png|bmp|tiff?|gif)$/i.test(name || '')) return null;
+  const img = await Jimp.read(bytes);
+  if (img.bitmap.width > 1600) img.resize(1600, Jimp.AUTO);
+  img.quality(72);
+  const out = await img.getBufferAsync(Jimp.MIME_JPEG);
+  const base = String(name || 'photo').replace(/\.[^.]+$/, '');
+  return { name: base + '.jpg', contentType: 'image/jpeg', bytes: out };
+}
 
 // Forwards a job's submitted Daily Project Report as a formatted HTML email,
 // sent FROM the signed-in editor's own mailbox (app-only Graph sendMail, the
@@ -67,40 +81,43 @@ app.http('sendReport', {
       const date = (fields.find((f) => f.label === 'Service Date') || {}).value || '';
       const subject = 'Daily Project Report — ' + project + (date ? (' · ' + date) : '');
 
-      // Download the report's photos to attach, within a size/count budget so a
-      // job with many large photos can't build a huge or slow message.
-      const MAX_TOTAL = 22 * 1024 * 1024; // ~22MB, under the common 25MB message cap
+      // Download + compress the report's photos to attach inline. Keep the whole
+      // /sendMail request under Graph's ~4MB cap (base64 adds ~33%), so budget
+      // the raw total to ~2.8MB. Compressed photos are a few hundred KB each, so
+      // several fit; any beyond the budget/count are noted as omitted.
+      const MAX_TOTAL = Math.floor(2.8 * 1024 * 1024);
       const MAX_COUNT = 20;
       const attMeta = (r.attachments || []).slice(0, MAX_COUNT);
       const files = [];
       let total = 0, skipped = (r.attachments || []).length - attMeta.length;
       for (const a of attMeta) {
         try {
-          const f = await fetchAttachmentBytes(getReportSheetId(), a.id);
+          const raw = await fetchAttachmentBytes(getReportSheetId(), a.id);
+          let f = raw;
+          try {
+            const c = await compressPhoto(raw.name, raw.contentType, raw.bytes);
+            if (c) f = c; // non-images keep their original bytes
+          } catch (ce) { context.error('photo compress failed, using original', a.id, ce); }
           if (total + f.bytes.length > MAX_TOTAL) { skipped++; continue; }
           total += f.bytes.length;
           files.push(f);
         } catch (e) { context.error('report attachment fetch failed', a.id, e); skipped++; }
       }
+
       let attached = files.length;
       try {
-        if (files.length) {
-          try {
-            await sendMailWithAttachments({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, files.length, skipped), attachments: files });
-          } catch (attErr) {
-            // Attaching needs Mail.ReadWrite (draft + upload session). If that's
-            // not granted (app currently has only Mail.Send) or an upload fails,
-            // still deliver the formatted report WITHOUT photos rather than error.
-            context.error('sendReport attachments failed, sending without photos:', attErr);
-            attached = 0;
-            await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, (r.attachments || []).length) });
-          }
-        } else {
-          await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, 0) });
-        }
+        await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, attached, skipped), attachments: files });
       } catch (e) {
-        context.error('sendReport send failed:', e);
-        return { status: 502, jsonBody: { error: 'Email send failed. Check that Mail.Send + MAIL_CLIENT_SECRET are configured.' } };
+        // If sending with the photos fails (e.g. size), retry once without them
+        // so the report still gets delivered.
+        context.error('sendReport send failed; retrying without photos:', e);
+        try {
+          attached = 0;
+          await sendMail({ from: user.upn, to, subject, html: buildReportHtml(project, date, fields, 0, (r.attachments || []).length) });
+        } catch (e2) {
+          context.error('sendReport send failed (no photos too):', e2);
+          return { status: 502, jsonBody: { error: 'Email send failed. Check that Mail.Send + MAIL_CLIENT_SECRET are configured.' } };
+        }
       }
       return { jsonBody: { sent: true, to, attached, omitted: attached ? skipped : (r.attachments || []).length } };
     } catch (e) {

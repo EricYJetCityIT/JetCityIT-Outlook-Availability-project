@@ -11,6 +11,7 @@
     "@azure/cosmos": "^4.1.1",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
-    "mammoth": "^1.8.0"
+    "mammoth": "^1.8.0",
+    "jimp": "^0.22.12"
   }
 }
