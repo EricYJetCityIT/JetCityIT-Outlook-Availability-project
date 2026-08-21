@@ -2058,32 +2058,31 @@ const JCITDispatch=(function(){
       const fwd=ov.querySelector('[data-rp="fwd"]'); if(fwd) fwd.style.display='';
     }catch(e){ console.error('report load failed',e); body.innerHTML='<div style="color:var(--red)">Could not load the report. Please try again.</div>'; }
   }
+  // All distinct client emails we know, gathered from the Client Mover contacts
+  // across every loaded job — powers the searchable recipient list in Forward.
+  function allClientEmails(){
+    const seen={}, out=[];
+    (state.jobs||[]).forEach(j=>{ const cm=j.clientMover; if(cm&&cm.email){ const k=cm.email.toLowerCase(); if(!seen[k]){ seen[k]=1; out.push({email:cm.email,name:cm.name||''}); } } });
+    out.sort((a,b)=>(a.name||a.email).toLowerCase().localeCompare((b.name||b.email).toLowerCase()));
+    return out;
+  }
   async function forwardReport(j,fields){
     if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
-    // Candidate recipient emails, best first: the Client Mover contact's email,
-    // then any email found in POC / notes. Deduped. POC is usually phone-only,
-    // and most Client Mover contacts are name-only, so often there's just the
-    // "Other" (type-it-yourself) fallback.
-    const cands=[]; const seen={};
-    const add=(email,label)=>{ if(!email) return; const k=String(email).toLowerCase(); if(seen[k]) return; seen[k]=1; cands.push({email:String(email),label:label}); };
-    if(j.clientMover&&j.clientMover.email) add(j.clientMover.email,'Client mover'+(j.clientMover.name?(' — '+j.clientMover.name):''));
-    add(detectEmail(j.poc),'POC');
-    add(detectEmail(j.notes),'From notes');
-    const first=cands.length?cands[0].email:'';
-    const pickHtml=cands.length
-      ? '<label class="dp-fld">Recipient</label><select id="dp-fw-pick" style="width:100%;margin-bottom:12px;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);font-family:inherit;font-size:14px">'+cands.map(c=>`<option value="${esc(c.email)}">${esc(c.label)} — ${esc(c.email)}</option>`).join('')+'<option value="__other">Other (type an email)…</option></select>'
-      : '';
+    // Searchable dropdown of every known client email (native <datalist>): type
+    // to filter by name/email, or enter any address. Prefilled with this job's
+    // Client Mover email when it has one.
+    const clients=allClientEmails();
+    const dl='<datalist id="dp-fw-clients">'+clients.map(c=>`<option value="${esc(c.email)}">${esc((c.name?c.name+' — ':'')+c.email)}</option>`).join('')+'</datalist>';
+    const first=(j.clientMover&&j.clientMover.email)?j.clientMover.email:'';
     const ov=document.createElement('div'); ov.className='dp-overlay';
-    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd">'+pickHtml+'<label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" placeholder="name@example.com" value="'+esc(first)+'"/><div style="font-size:12px;color:var(--text3);margin-top:8px">Opens your email app with the report ready to review and send.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="open">✉ Open email</button></div></div>';
+    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" list="dp-fw-clients" autocomplete="off" placeholder="Search clients or type an email…" value="'+esc(first)+'"/>'+dl+'<div style="font-size:12px;color:var(--text3);margin-top:8px">Start typing to search saved client emails ('+clients.length+' on file), or enter any address. Opens your email app with the report ready to review and send.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="open">✉ Open email</button></div></div>';
     document.body.appendChild(ov);
     const cleanup=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); };
     const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
     document.addEventListener('keydown',onKey);
     const emailInput=ov.querySelector('#dp-fw-email');
-    const pick=ov.querySelector('#dp-fw-pick');
-    if(pick) pick.addEventListener('change',()=>{ if(pick.value==='__other'){ emailInput.value=''; emailInput.focus(); } else { emailInput.value=pick.value; } });
     ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-fw]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-fw'); if(a==='close'){ cleanup(); return; } if(a==='open'){ const to=(emailInput.value||'').trim(); if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ alert('Please enter a valid email address.'); return; } openReportMailto(j,fields,to); cleanup(); } });
-    setTimeout(()=>{ if(emailInput&&!first) emailInput.focus(); },30);
+    setTimeout(()=>{ if(emailInput){ emailInput.focus(); } },30);
   }
   function openReportMailto(j,fields,to){
     const subject='Daily Project Report — '+(j.project||'')+(j.date?(' · '+j.date):'');
@@ -2228,7 +2227,7 @@ const JCITDispatch=(function(){
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button><button class="btn btn-sm" data-dpact="fwdreport" data-id="${j.id}">✉ Forward</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2282,7 +2281,6 @@ const JCITDispatch=(function(){
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
-    if(act==='fwdreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) forwardReport(j); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return; modal=null; renderModalRoot(); return; }
   }
   function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }
