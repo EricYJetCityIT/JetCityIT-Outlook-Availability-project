@@ -1,7 +1,7 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
-const { fetchReportByJobId } = require('../lib/smartsheet');
-const { sendMail } = require('../lib/graph');
+const { fetchReportByJobId, fetchAttachmentBytes } = require('../lib/smartsheet');
+const { sendMail, sendMailWithAttachments } = require('../lib/graph');
 
 // Forwards a job's submitted Daily Project Report as a formatted HTML email,
 // sent FROM the signed-in editor's own mailbox (app-only Graph sendMail, the
@@ -20,18 +20,26 @@ function escHtml(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// HTML mirroring the Smartsheet report: title, subtitle, label/value table.
-// Inline styles only — mail clients strip <style>/CSS classes.
-function buildReportHtml(project, date, fields) {
+// HTML mirroring the Smartsheet report: title, subtitle, label/value table,
+// and a photos note. Inline styles only — mail clients strip <style>/classes.
+function buildReportHtml(project, date, fields, attachedCount, omittedCount) {
   const rows = (fields || []).map((f) =>
     `<tr>`
     + `<td style="padding:7px 16px 7px 0;font-weight:600;color:#3a4a5a;vertical-align:top;white-space:nowrap;border-bottom:1px solid #eef1f4">${escHtml(f.label)}</td>`
     + `<td style="padding:7px 0;color:#1a2430;vertical-align:top;border-bottom:1px solid #eef1f4">${escHtml(f.value).replace(/\n/g, '<br>')}</td>`
     + `</tr>`).join('');
+  let photos = '';
+  if (attachedCount > 0) {
+    photos = `<p style="color:#3a4a5a;font-size:13px;margin-top:16px">📎 ${attachedCount} photo${attachedCount !== 1 ? 's' : ''} attached`
+      + (omittedCount > 0 ? ` <span style="color:#9aa4ae">(${omittedCount} more not attached — too large)</span>` : '') + `</p>`;
+  } else if (omittedCount > 0) {
+    photos = `<p style="color:#9aa4ae;font-size:13px;margin-top:16px">${omittedCount} photo${omittedCount !== 1 ? 's' : ''} on this report were too large to attach.</p>`;
+  }
   return `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:660px;color:#1a2430;font-size:14px;line-height:1.45">`
     + `<h2 style="margin:0 0 2px;font-size:20px;color:#12805c">Daily Project Report</h2>`
     + `<div style="color:#66707a;font-size:13px;margin-bottom:16px">${escHtml(project)}${date ? (' &middot; ' + escHtml(date)) : ''}</div>`
     + `<table style="border-collapse:collapse;width:100%">${rows}</table>`
+    + photos
     + `<p style="color:#9aa4ae;font-size:12px;margin-top:20px">Sent from the JCIT Crew Calendar</p>`
     + `</div>`;
 }
@@ -58,15 +66,32 @@ app.http('sendReport', {
       const project = (fields.find((f) => f.label === 'Project Name') || {}).value || '';
       const date = (fields.find((f) => f.label === 'Service Date') || {}).value || '';
       const subject = 'Daily Project Report — ' + project + (date ? (' · ' + date) : '');
-      const html = buildReportHtml(project, date, fields);
+
+      // Download the report's photos to attach, within a size/count budget so a
+      // job with many large photos can't build a huge or slow message.
+      const MAX_TOTAL = 22 * 1024 * 1024; // ~22MB, under the common 25MB message cap
+      const MAX_COUNT = 20;
+      const attMeta = (r.attachments || []).slice(0, MAX_COUNT);
+      const files = [];
+      let total = 0, skipped = (r.attachments || []).length - attMeta.length;
+      for (const a of attMeta) {
+        try {
+          const f = await fetchAttachmentBytes(getReportSheetId(), a.id);
+          if (total + f.bytes.length > MAX_TOTAL) { skipped++; continue; }
+          total += f.bytes.length;
+          files.push(f);
+        } catch (e) { context.error('report attachment fetch failed', a.id, e); skipped++; }
+      }
+      const html = buildReportHtml(project, date, fields, files.length, skipped);
 
       try {
-        await sendMail({ from: user.upn, to, subject, html });
+        if (files.length) await sendMailWithAttachments({ from: user.upn, to, subject, html, attachments: files });
+        else await sendMail({ from: user.upn, to, subject, html });
       } catch (e) {
-        context.error('sendReport sendMail failed:', e);
+        context.error('sendReport send failed:', e);
         return { status: 502, jsonBody: { error: 'Email send failed. Check that Mail.Send + MAIL_CLIENT_SECRET are configured.' } };
       }
-      return { jsonBody: { sent: true, to } };
+      return { jsonBody: { sent: true, to, attached: files.length, omitted: skipped } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

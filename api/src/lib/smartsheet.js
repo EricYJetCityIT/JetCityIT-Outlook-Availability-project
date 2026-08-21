@@ -389,7 +389,7 @@ async function fetchReportByJobId(reportSheetId, jobId) {
     .map((r) => String(r.objectId)))];
   if (!rowIds.length) return { found: false };
 
-  const rres = await fetch(`${SMARTSHEET_API_BASE}/sheets/${reportSheetId}?rowIds=${rowIds.join(',')}&include=objectValue`, { headers });
+  const rres = await fetch(`${SMARTSHEET_API_BASE}/sheets/${reportSheetId}?rowIds=${rowIds.join(',')}&include=objectValue,attachments`, { headers });
   if (!rres.ok) {
     const t = await rres.text().catch(() => '');
     throw new Error(`Smartsheet rows error ${rres.status}: ${t}`);
@@ -424,7 +424,36 @@ async function fetchReportByJobId(reportSheetId, jobId) {
     fields.push({ label: c.title, value: String(val) });
   });
 
-  return { found: true, rowId: String(row.id), createdAt: row.createdAt || null, matchCount: matches.length, fields };
+  // The photos/files the tech uploaded on the report form (FILE attachments;
+  // LINK attachments have no downloadable bytes and are skipped). id/name/
+  // mimeType only — bytes are fetched on demand via fetchAttachmentBytes.
+  const attachments = (row.attachments || [])
+    .filter((a) => a.id && a.name && (a.attachmentType === 'FILE' || !a.attachmentType))
+    .map((a) => ({ id: a.id, name: a.name, mimeType: a.mimeType || '', sizeInKb: a.sizeInKb || 0 }));
+
+  return { found: true, rowId: String(row.id), createdAt: row.createdAt || null, matchCount: matches.length, fields, attachments };
+}
+
+// Downloads one attachment's bytes from an arbitrary sheet. Smartsheet only
+// exposes the (short-lived, pre-signed) download url via the per-attachment
+// metadata endpoint, so this fetches that first, then the file. Returns a
+// Buffer plus name/contentType for emailing.
+async function fetchAttachmentBytes(sheetId, attachmentId) {
+  const headers = { Authorization: `Bearer ${getToken()}` };
+  const metaRes = await fetch(`${SMARTSHEET_API_BASE}/sheets/${sheetId}/attachments/${encodeURIComponent(attachmentId)}`, { headers });
+  if (!metaRes.ok) {
+    const t = await metaRes.text().catch(() => '');
+    throw new Error(`Smartsheet attachment meta error ${metaRes.status}: ${t}`);
+  }
+  const meta = await metaRes.json();
+  if (!meta.url) throw new Error('Attachment has no downloadable url');
+  const fileRes = await fetch(meta.url);
+  if (!fileRes.ok) {
+    const t = await fileRes.text().catch(() => '');
+    throw new Error(`Attachment download error ${fileRes.status}: ${t}`);
+  }
+  const bytes = Buffer.from(await fileRes.arrayBuffer());
+  return { name: meta.name || String(attachmentId), contentType: meta.mimeType || 'application/octet-stream', bytes };
 }
 
 module.exports = {
@@ -437,4 +466,5 @@ module.exports = {
   resolveColumns,
   updateJobCrew,
   fetchReportByJobId,
+  fetchAttachmentBytes,
 };

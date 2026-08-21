@@ -57,6 +57,61 @@ async function sendMail({ from, to, subject, html }) {
   }
 }
 
+// Sends an HTML email as `from` with file attachments. Small files (<3MB) go
+// straight into the draft; larger ones (the report photos are often several MB,
+// past Graph's ~4MB single-request cap) use an upload session with chunked PUTs
+// (chunks must be a multiple of 320 KiB except the last). Flow: create draft →
+// attach each file → send. attachments = [{ name, contentType, bytes:Buffer }].
+async function sendMailWithAttachments({ from, to, subject, html, attachments }) {
+  const list = attachments || [];
+  if (!list.length) return sendMail({ from, to, subject, html });
+  const token = await getAppToken();
+  const base = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(from)}`;
+  const authJson = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  const draftRes = await fetch(`${base}/messages`, {
+    method: 'POST', headers: authJson,
+    body: JSON.stringify({ subject, body: { contentType: 'HTML', content: html }, toRecipients: [{ emailAddress: { address: to } }] }),
+  });
+  if (!draftRes.ok) throw new Error(`Graph draft error ${draftRes.status}: ${await draftRes.text().catch(() => '')}`);
+  const msgId = (await draftRes.json()).id;
+
+  const SMALL = 3 * 1024 * 1024;
+  const CHUNK = 320 * 1024 * 10; // 3.2MB, a multiple of 320 KiB
+  for (const att of list) {
+    const size = att.bytes.length;
+    const contentType = att.contentType || 'application/octet-stream';
+    if (size <= SMALL) {
+      const r = await fetch(`${base}/messages/${msgId}/attachments`, {
+        method: 'POST', headers: authJson,
+        body: JSON.stringify({ '@odata.type': '#microsoft.graph.fileAttachment', name: att.name, contentType, contentBytes: att.bytes.toString('base64') }),
+      });
+      if (!r.ok) throw new Error(`Graph attach error ${r.status}: ${await r.text().catch(() => '')}`);
+    } else {
+      const sessRes = await fetch(`${base}/messages/${msgId}/attachments/createUploadSession`, {
+        method: 'POST', headers: authJson,
+        body: JSON.stringify({ AttachmentItem: { attachmentType: 'file', name: att.name, size, contentType } }),
+      });
+      if (!sessRes.ok) throw new Error(`Graph upload session error ${sessRes.status}: ${await sessRes.text().catch(() => '')}`);
+      const uploadUrl = (await sessRes.json()).uploadUrl;
+      for (let start = 0; start < size; start += CHUNK) {
+        const end = Math.min(start + CHUNK, size);
+        const put = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Length': String(end - start), 'Content-Range': `bytes ${start}-${end - 1}/${size}` },
+          body: att.bytes.subarray(start, end),
+        });
+        if (!(put.status === 200 || put.status === 201 || put.status === 202)) {
+          throw new Error(`Graph upload chunk error ${put.status}: ${await put.text().catch(() => '')}`);
+        }
+      }
+    }
+  }
+
+  const sendRes = await fetch(`${base}/messages/${msgId}/send`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  if (!(sendRes.ok || sendRes.status === 202)) throw new Error(`Graph send error ${sendRes.status}: ${await sendRes.text().catch(() => '')}`);
+}
+
 // Full company directory (id, displayName, mail, userPrincipalName), used as
 // a fallback when Smartsheet's contact list doesn't have someone's email --
 // Smartsheet's contactOptions is that account's contextual "suggested
@@ -80,4 +135,4 @@ async function listUsers() {
   return users;
 }
 
-module.exports = { getAppToken, sendMail, listUsers };
+module.exports = { getAppToken, sendMail, sendMailWithAttachments, listUsers };

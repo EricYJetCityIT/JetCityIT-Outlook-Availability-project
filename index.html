@@ -2066,6 +2066,16 @@ const JCITDispatch=(function(){
     out.sort((a,b)=>(a.name||a.email).toLowerCase().localeCompare((b.name||b.email).toLowerCase()));
     return out;
   }
+  // Company directory (JCIT staff) for the recipient picker, fetched once and
+  // cached. Best-effort — if it fails, the picker just falls back to client
+  // emails + free text.
+  let __dirCache=null;
+  async function fetchDirectory(){
+    if(__dirCache) return __dirCache;
+    try{ const token=await getApiToken(); const res=await fetch('/api/directory',{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); __dirCache=res.ok?((await res.json()).users||[]):[]; }
+    catch(e){ __dirCache=[]; }
+    return __dirCache;
+  }
   // Sends the report as a formatted HTML email via the backend, which builds the
   // HTML and sends it from the signed-in editor's own mailbox (app-only Graph
   // sendMail). Keeps Graph server-side — no browser token or consent popup.
@@ -2077,14 +2087,20 @@ const JCITDispatch=(function(){
   }
   async function forwardReport(j,fields){
     if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
-    // Searchable dropdown of every known client email (native <datalist>): type
-    // to filter by name/email, or enter any address. Prefilled with this job's
-    // Client Mover email when it has one.
+    // Searchable dropdown (native <datalist>) of client contacts AND JCIT staff:
+    // type to filter by name/email, or enter any address. Prefilled with this
+    // job's Client Mover email when it has one.
     const clients=allClientEmails();
-    const dl='<datalist id="dp-fw-clients">'+clients.map(c=>`<option value="${esc(c.email)}">${esc((c.name?c.name+' — ':'')+c.email)}</option>`).join('')+'</datalist>';
+    const company=await fetchDirectory();
+    const seen={}, all=[];
+    const addOpt=(email,label)=>{ const k=String(email||'').toLowerCase(); if(!email||seen[k]) return; seen[k]=1; all.push({email:String(email),label:label}); };
+    clients.forEach(c=>addOpt(c.email, c.name||c.email));
+    company.forEach(c=>addOpt(c.email, (c.name||c.email)+' (JCIT)'));
+    all.sort((a,b)=>a.label.toLowerCase().localeCompare(b.label.toLowerCase()));
+    const dl='<datalist id="dp-fw-clients">'+all.map(c=>`<option value="${esc(c.email)}">${esc(c.label+' — '+c.email)}</option>`).join('')+'</datalist>';
     const first=(j.clientMover&&j.clientMover.email)?j.clientMover.email:'';
     const ov=document.createElement('div'); ov.className='dp-overlay';
-    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" list="dp-fw-clients" autocomplete="off" placeholder="Search clients or type an email…" value="'+esc(first)+'"/>'+dl+'<div id="dp-fw-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Start typing to search saved client emails ('+clients.length+' on file), or enter any address. Sends a formatted copy from your mailbox.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="send">✉ Send report</button></div></div>';
+    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" list="dp-fw-clients" autocomplete="off" placeholder="Search a client or JCIT name, or type an email…" value="'+esc(first)+'"/>'+dl+'<div id="dp-fw-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Search client contacts and JCIT staff ('+all.length+' on file), or enter any address. Sends a formatted copy (with the job photos) from your mailbox.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="send">✉ Send report</button></div></div>';
     document.body.appendChild(ov);
     const cleanup=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); };
     const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
