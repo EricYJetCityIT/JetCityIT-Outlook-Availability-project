@@ -384,6 +384,21 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-pill.dp-st-complete{background:var(--green-light);color:var(--green-dark)}
 .dp-pill.dp-st-cancelled{background:#FCEBEB;color:#791F1F}
 .dp-pill.dp-st-postponed{background:#FAEEDA;color:#854F0B}
+/* Project-reports view: red/green job cards + status pills (theme-aware tokens) */
+.dp-job.dp-job-rpt-yes{background:var(--green-light);border-left:4px solid var(--green)}
+.dp-job.dp-job-rpt-no{background:var(--unavail-bg);border-left:4px solid var(--unavail-border)}
+.dp-pill.dp-rpt-in{background:var(--green-light);color:var(--green-dark)}
+.dp-pill.dp-rpt-out{background:var(--unavail-bg);color:var(--unavail-text)}
+.dp-rpt-summary{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin-bottom:20px;padding:16px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:12px}
+.dp-rpt-pie{flex:0 0 auto;line-height:0}
+.dp-rpt-legend{display:flex;flex-direction:column;gap:5px}
+.dp-rpt-pct{font-size:26px;font-weight:800;color:var(--text);margin-bottom:4px;line-height:1}
+.dp-rpt-pct span{font-size:13px;font-weight:500;color:var(--text3)}
+.dp-rpt-legend-row{display:flex;align-items:center;font-size:14px;color:var(--text)}
+.dp-rpt-sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px}
+.dp-rpt-fields{display:flex;flex-direction:column;gap:12px}
+.dp-rpt-flabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text3);margin-bottom:2px}
+.dp-rpt-fval{font-size:14px;color:var(--text);white-space:pre-wrap;word-break:break-word}
 .dp-add-job{width:100%;padding:8px;border:1px dashed var(--border2);border-radius:10px;background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:inherit}
 .dp-add-job:hover{border-color:var(--green);color:var(--green)}
 .dp-wk-day{margin-bottom:14px}
@@ -1366,6 +1381,7 @@ function mgrSubTabsHtml(){
       <button class="mgr-sub-tab ${mgrMode==='overlap'?'active':''}" onclick="setMgrMode('overlap')">Team heatmap</button>
       <button class="mgr-sub-tab ${mgrMode==='individual'?'active':''}" onclick="setMgrMode('individual')">Individual</button>
       <button class="mgr-sub-tab ${mgrMode==='dispatch'?'active':''}" onclick="setMgrMode('dispatch')">Dispatch</button>
+      <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>
     </div>`;
 }
 
@@ -1380,6 +1396,13 @@ async function renderManager(){
     subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
     el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(false)}`;
+    return;
+  }
+
+  if(mgrMode==='reports'){
+    subLbl.textContent='Week of '+week.label;
+    await JCITDispatch.ensureLoaded();
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.reportsViewHtml()}`;
     return;
   }
 
@@ -1892,12 +1915,12 @@ const JCITDispatch=(function(){
     const dt=new Date(syncMeta.updatedAt);
     return 'Synced automatically from Smartsheet · last updated '+dt.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   }
-  function boardHtml(editable){
+  function boardHtml(editable,colorMode){
     const dates=weekDates(); const weekIso=dates.map(toISO);
     const rosterStrip=editable?rosterStripHtml(weekIso):'';
     const cols=dates.map((d,i)=>{
       const iso=toISO(d);
-      const jobsHtml=jobsForDate(iso).map(j=>jobCardHtml(j,editable)).join('');
+      const jobsHtml=jobsForDate(iso).map(j=>jobCardHtml(j,editable,colorMode)).join('');
       const addBtn=editable?`<button class="dp-add-job" data-dpact="new" data-date="${iso}">+ Add job</button>`:'';
       const emptyMsg=(!editable&&!jobsHtml)?'<div style="text-align:center;font-size:11px;color:var(--text3);padding:8px 0">No jobs</div>':'';
       return `<div class="dp-day-col${isTodayISO(iso)?' dp-day-col-today':''}" data-dpact="daycol" data-date="${iso}">
@@ -1949,20 +1972,116 @@ const JCITDispatch=(function(){
       +atts.map(a=>`<a href="#" data-dpact="attachment" data-att-id="${esc(String(a.id))}" data-att-name="${esc(a.name)}" data-att-mime="${esc(a.mimeType||'')}">${attIcon(a.mimeType)} ${esc(a.name)}</a>`).join('')
       +'</span>';
   }
-  function jobCardHtml(j,editable){
+  function jobCardHtml(j,editable,colorMode){
     const crew=crewOf(j);
     let crewHtml=crew.map(c=>avatarHtml(c.name,c.lead)).join('');
     if(j.crewSize){ for(let k=crew.length;k<j.crewSize;k++) crewHtml+='<span class="dp-slot-empty">+</span>'; }
     const sm=STATUS_META[j.status||'']||STATUS_META[''];
     const meta=esc(j.startTime||'')+(j.duration?' · '+esc(j.duration)+' hrs':'');
-    const cat=jobCategory(j);
-    return `<div class="dp-job${editable?'':' dp-job-ro'}${cat?' dp-job-'+cat:''}${j.cancelled?' dp-job-cancelled':''}" data-dpact="${editable?'edit':'detail'}" data-id="${j.id}">
+    const reportMode=colorMode==='report';
+    // In report mode the card is tinted green (report received) or red (missing)
+    // instead of by client, and shows a report-status pill; cancelled jobs keep
+    // their dim/strikethrough and are excluded from the counts.
+    const cat=reportMode?'':jobCategory(j);
+    const rptCls=(reportMode&&!j.cancelled)?(j.reportReceived?' dp-job-rpt-yes':' dp-job-rpt-no'):'';
+    const statusHtml=reportMode
+      ? (j.cancelled?'<span class="dp-pill">Cancelled</span>':(j.reportReceived?'<span class="dp-pill dp-rpt-in">✓ Report in</span>':'<span class="dp-pill dp-rpt-out">Needs report</span>'))
+      : `<span class="dp-pill ${sm.cls}">${sm.label}</span>`;
+    return `<div class="dp-job${editable?'':' dp-job-ro'}${cat?' dp-job-'+cat:''}${rptCls}${j.cancelled?' dp-job-cancelled':''}" data-dpact="${editable?'edit':'detail'}" data-id="${j.id}">
       <div class="dp-job-project">${esc(j.project)}</div>
       ${meta?`<div class="dp-job-meta">${meta}</div>`:''}
       ${j.address?`<div class="dp-job-addr">${esc(j.address)}</div>`:''}
       <div class="dp-job-crew">${crewHtml||'<span class="dp-slot-empty">+</span>'}</div>
-      <div>${j.client?`<span class="dp-badge-client">${esc(j.client)}</span>`:''}<span class="dp-pill ${sm.cls}">${sm.label}</span>${(j.attachments&&j.attachments.length)?`<span style="margin-left:6px;font-size:11px;color:var(--text3);white-space:nowrap" title="${j.attachments.length} attachment${j.attachments.length>1?'s':''}">📎${j.attachments.length>1?' '+j.attachments.length:''}</span>`:''}</div>
+      <div>${j.client?`<span class="dp-badge-client">${esc(j.client)}</span>`:''}${statusHtml}${(j.attachments&&j.attachments.length)?`<span style="margin-left:6px;font-size:11px;color:var(--text3);white-space:nowrap" title="${j.attachments.length} attachment${j.attachments.length>1?'s':''}">📎${j.attachments.length>1?' '+j.attachments.length:''}</span>`:''}</div>
     </div>`;
+  }
+  // ── Project reports view (Manager tab) ──────────────────────────────────────
+  function detectEmail(s){ const m=String(s||'').match(/[^\s@]+@[^\s@]+\.[^\s@]+/); return m?m[0]:''; }
+  function reportPiePath(cx,cy,r,a0deg,a1deg){
+    const a0=(a0deg-90)*Math.PI/180, a1=(a1deg-90)*Math.PI/180;
+    const x0=cx+r*Math.cos(a0), y0=cy+r*Math.sin(a0);
+    const x1=cx+r*Math.cos(a1), y1=cy+r*Math.sin(a1);
+    const large=(a1deg-a0deg)>180?1:0;
+    return `M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`;
+  }
+  function reportPieSvg(received,missing){
+    const total=received+missing, cx=80, cy=80, r=72;
+    if(!total) return '';
+    let slices;
+    if(received===0) slices=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--red)"/>`;
+    else if(missing===0) slices=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--green)"/>`;
+    else { const a=360*received/total; slices=`<path d="${reportPiePath(cx,cy,r,0,a)}" fill="var(--green)"/><path d="${reportPiePath(cx,cy,r,a,360)}" fill="var(--red)"/>`; }
+    return `<svg width="150" height="150" viewBox="0 0 160 160" role="img" aria-label="${received} of ${total} reports received">${slices}</svg>`;
+  }
+  function reportsViewHtml(){
+    const dates=weekDates();
+    const weekJobs=dates.reduce((acc,d)=>acc.concat(jobsForDate(toISO(d))),[]).filter(j=>!j.cancelled);
+    const total=weekJobs.length;
+    const received=weekJobs.filter(j=>j.reportReceived).length;
+    const missing=total-received;
+    const pct=total?Math.round(received/total*100):0;
+    const summary=total
+      ? `<div class="dp-rpt-summary">
+          <div class="dp-rpt-pie">${reportPieSvg(received,missing)}</div>
+          <div class="dp-rpt-legend">
+            <div class="dp-rpt-pct">${pct}%<span> of reports in</span></div>
+            <div class="dp-rpt-legend-row"><span class="dp-rpt-sw" style="background:var(--green)"></span><b>${received}</b>&nbsp;submitted</div>
+            <div class="dp-rpt-legend-row"><span class="dp-rpt-sw" style="background:var(--red)"></span><b>${missing}</b>&nbsp;missing</div>
+            <div class="dp-rpt-legend-row" style="color:var(--text3);font-size:12px">${total} job${total!==1?'s':''} this week · cancelled excluded</div>
+          </div>
+        </div>`
+      : `<div style="color:var(--text3);font-size:14px;padding:8px 0 16px">No jobs scheduled this week.</div>`;
+    return summary+boardHtml(false,'report');
+  }
+  async function fetchReport(jobId){
+    const token=await getApiToken();
+    const res=await fetch('/api/report?jobId='+encodeURIComponent(jobId),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    return res.json();
+  }
+  async function viewReport(j){
+    const ov=document.createElement('div'); ov.className='dp-overlay';
+    ov.innerHTML='<div class="dp-modal" style="max-width:640px;width:94vw"><div class="dp-modal-hd"><span class="dp-modal-title">Project report</span><button class="dp-close" data-rp="close">✕</button></div><div class="dp-modal-bd" data-rp-body style="min-height:120px">Loading…</div><div class="dp-modal-ft"><button class="btn btn-primary btn-sm" data-rp="fwd" style="display:none">✉ Forward to POC</button><button class="btn btn-sm" data-rp="close">Close</button></div></div>';
+    document.body.appendChild(ov);
+    const cleanup=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); };
+    const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
+    document.addEventListener('keydown',onKey);
+    let fields=null;
+    ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-rp]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-rp'); if(a==='close') cleanup(); else if(a==='fwd') forwardReport(j,fields); });
+    const body=ov.querySelector('[data-rp-body]');
+    try{
+      const r=await fetchReport(j.id);
+      if(!r||!r.found){ body.innerHTML='<div style="color:var(--text3);padding:8px 0">No submitted report is linked to this job yet.<br><span style="font-size:12px">Only reports filed through the app’s “📝 Daily report” button get linked.</span></div>'; return; }
+      fields=r.fields||[];
+      const when=r.createdAt?('<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Submitted '+esc(String(r.createdAt).replace('T',' ').replace('Z',' UTC'))+'</div>'):'';
+      body.innerHTML=when+'<div class="dp-rpt-fields">'+fields.map(f=>`<div class="dp-rpt-field"><div class="dp-rpt-flabel">${esc(f.label)}</div><div class="dp-rpt-fval">${esc(f.value)}</div></div>`).join('')+'</div>';
+      const fwd=ov.querySelector('[data-rp="fwd"]'); if(fwd) fwd.style.display='';
+    }catch(e){ console.error('report load failed',e); body.innerHTML='<div style="color:var(--red)">Could not load the report. Please try again.</div>'; }
+  }
+  async function forwardReport(j,fields){
+    if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
+    const guess=detectEmail(j.poc)||detectEmail(j.notes)||'';
+    const ov=document.createElement('div'); ov.className='dp-overlay';
+    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report to POC</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" placeholder="name@example.com" value="'+esc(guess)+'"/><div style="font-size:12px;color:var(--text3);margin-top:8px">Opens your email app with the report ready to review and send.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="open">✉ Open email</button></div></div>';
+    document.body.appendChild(ov);
+    const cleanup=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); };
+    const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
+    document.addEventListener('keydown',onKey);
+    ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-fw]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-fw'); if(a==='close'){ cleanup(); return; } if(a==='open'){ const to=(document.getElementById('dp-fw-email').value||'').trim(); if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ alert('Please enter a valid email address.'); return; } openReportMailto(j,fields,to); cleanup(); } });
+    setTimeout(()=>{ const inp=document.getElementById('dp-fw-email'); if(inp){ inp.focus(); } },30);
+  }
+  function openReportMailto(j,fields,to){
+    const subject='Daily Project Report — '+(j.project||'')+(j.date?(' · '+j.date):'');
+    const lines=[];
+    if(j.project) lines.push('Project: '+j.project);
+    if(j.date) lines.push('Date: '+j.date);
+    if(j.address) lines.push('Location: '+j.address);
+    lines.push('');
+    (fields||[]).forEach(f=>{ lines.push(f.label+': '+f.value); });
+    let body=lines.join('\n'); let truncated=false; const CAP=1600;
+    if(body.length>CAP){ body=body.slice(0,CAP); truncated=true; }
+    body+='\n\n— Sent from the JCIT Crew Calendar'+(truncated?'\n(Report truncated — open the calendar for the full report.)':'');
+    window.location.href='mailto:'+encodeURIComponent(to)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
   }
 
   // ── Personal schedule (always read-only) ────────────────────────────────────
@@ -2094,7 +2213,7 @@ const JCITDispatch=(function(){
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button><button class="btn btn-sm" data-dpact="fwdreport" data-id="${j.id}">✉ Forward</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2147,6 +2266,8 @@ const JCITDispatch=(function(){
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
+    if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
+    if(act==='fwdreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) forwardReport(j); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return; modal=null; renderModalRoot(); return; }
   }
   function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }
@@ -2186,7 +2307,7 @@ const JCITDispatch=(function(){
   }
   init();
 
-  return { boardHtml, myScheduleHtml, ensureLoaded };
+  return { boardHtml, myScheduleHtml, ensureLoaded, reportsViewHtml };
 })();
 
 async function renderCrewView(){

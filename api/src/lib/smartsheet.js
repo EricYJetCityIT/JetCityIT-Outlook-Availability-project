@@ -198,6 +198,9 @@ function resolveColumns(sheet) {
     client: requireColumn('Client'),
     crewSize: requireColumn('Crew Size'),
     status: requireColumn('Status'),
+    // Optional (not requireColumn): the "Proj Rpt Rec'd" checkbox drives the
+    // Project-reports view's red/green. Absent → every job reads as "no report".
+    reportReceived: colByTitle["Proj Rpt Rec'd"] || null,
   };
 
   const emailToName = new Map();
@@ -307,6 +310,11 @@ function transformSheetToDispatch(sheet) {
     const projFmt = (cellFor(row, COLUMNS.project) || {}).format || '';
     const cancelled = projFmt.split(',')[5] === '1';
 
+    // "Proj Rpt Rec'd" checkbox: a checked box has cell.value === true; an
+    // unchecked one usually has no cell entry at all, so absent === false.
+    const rptCell = COLUMNS.reportReceived ? cellFor(row, COLUMNS.reportReceived) : null;
+    const reportReceived = !!(rptCell && (rptCell.value === true || rptCell.value === 'true'));
+
     jobs.push({
       id: 'ss-' + row.id,
       date,
@@ -323,6 +331,7 @@ function transformSheetToDispatch(sheet) {
       notes: cellText(cellFor(row, COLUMNS.notes)),
       attachments,
       cancelled,
+      reportReceived,
     });
   });
 
@@ -331,6 +340,66 @@ function transformSheetToDispatch(sheet) {
     .map((name) => ({ name, active: true }));
 
   return { workers, jobs };
+}
+
+// Fetches the submitted Daily Project Report row(s) for one job from the report
+// sheet, matched on the hidden "Job ID" cell (the "ss-<rowid>" the app button
+// stamps). Two light calls: a sheet search to find candidate row ids, then a
+// rowIds-filtered read for their full cells. Returns the latest matching row as
+// an ordered {label,value} field list (empty cells and the Job ID column
+// dropped). { found:false } when no report carries this job's id (e.g. it was
+// filed from the bare form, or none exists yet). jobId is "ss-<rowid>".
+async function fetchReportByJobId(reportSheetId, jobId) {
+  const term = String(jobId);
+  const headers = { Authorization: `Bearer ${getToken()}` };
+
+  const sres = await fetch(`${SMARTSHEET_API_BASE}/search/sheets/${reportSheetId}?query=${encodeURIComponent(term)}`, { headers });
+  if (!sres.ok) {
+    const t = await sres.text().catch(() => '');
+    throw new Error(`Smartsheet search error ${sres.status}: ${t}`);
+  }
+  const sjson = await sres.json();
+  const rowIds = [...new Set((sjson.results || [])
+    .filter((r) => r.objectType === 'row' && r.objectId != null)
+    .map((r) => String(r.objectId)))];
+  if (!rowIds.length) return { found: false };
+
+  const rres = await fetch(`${SMARTSHEET_API_BASE}/sheets/${reportSheetId}?rowIds=${rowIds.join(',')}&include=objectValue`, { headers });
+  if (!rres.ok) {
+    const t = await rres.text().catch(() => '');
+    throw new Error(`Smartsheet rows error ${rres.status}: ${t}`);
+  }
+  const sheet = await rres.json();
+  const cols = sheet.columns || [];
+  const jobIdCol = cols.find((c) => c.title === 'Job ID');
+
+  // Keep only rows whose Job ID cell exactly equals the job's id (search can
+  // also hit the substring inside a longer note); newest (by createdAt) first.
+  const matches = (sheet.rows || []).filter((row) => {
+    if (!jobIdCol) return true;
+    const cell = (row.cells || []).find((c) => c.columnId === jobIdCol.id);
+    const v = cell ? (cell.value != null ? cell.value : cell.displayValue || '') : '';
+    return String(v).trim() === term;
+  });
+  if (!matches.length) return { found: false };
+  matches.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  const row = matches[0];
+
+  const orderedCols = cols.slice().sort((a, b) => (a.index || 0) - (b.index || 0));
+  const fields = [];
+  orderedCols.forEach((c) => {
+    if (c.title === 'Job ID') return; // internal linking field, not report content
+    const cell = (row.cells || []).find((x) => x.columnId === c.id);
+    if (!cell) return;
+    let val;
+    if (cell.objectValue && Array.isArray(cell.objectValue.values)) val = cellMultiValues(cell).join(', ');
+    else if (c.type === 'CHECKBOX') val = (cell.value === true || cell.value === 'true') ? 'Yes' : '';
+    else val = cellText(cell);
+    if (val == null || String(val).trim() === '') return;
+    fields.push({ label: c.title, value: String(val) });
+  });
+
+  return { found: true, rowId: String(row.id), createdAt: row.createdAt || null, matchCount: matches.length, fields };
 }
 
 module.exports = {
@@ -342,4 +411,5 @@ module.exports = {
   transformSheetToDispatch,
   resolveColumns,
   updateJobCrew,
+  fetchReportByJobId,
 };
