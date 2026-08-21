@@ -2066,31 +2066,14 @@ const JCITDispatch=(function(){
     out.sort((a,b)=>(a.name||a.email).toLowerCase().localeCompare((b.name||b.email).toLowerCase()));
     return out;
   }
-  function reportEmailSubject(j){ return 'Daily Project Report — '+(j.project||'')+(j.date?(' · '+j.date):''); }
-  // Builds the HTML email body — mirrors the Smartsheet report: a title, a
-  // subtitle, and a two-column label/value table. Empty fields are already
-  // dropped upstream, so they don't appear (as requested). Inline styles only
-  // (email clients strip <style>/CSS classes).
-  function reportEmailHtml(j,fields){
-    const rows=(fields||[]).map(f=>`<tr>`
-      +`<td style="padding:7px 16px 7px 0;font-weight:600;color:#3a4a5a;vertical-align:top;white-space:nowrap;border-bottom:1px solid #eef1f4">${esc(f.label)}</td>`
-      +`<td style="padding:7px 0;color:#1a2430;vertical-align:top;border-bottom:1px solid #eef1f4">${esc(f.value).replace(/\n/g,'<br>')}</td>`
-      +`</tr>`).join('');
-    return `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:660px;color:#1a2430;font-size:14px;line-height:1.45">`
-      +`<h2 style="margin:0 0 2px;font-size:20px;color:#12805c">Daily Project Report</h2>`
-      +`<div style="color:#66707a;font-size:13px;margin-bottom:16px">${esc(j.project||'')}${j.date?(' &middot; '+esc(j.date)):''}</div>`
-      +`<table style="border-collapse:collapse;width:100%">${rows}</table>`
-      +`<p style="color:#9aa4ae;font-size:12px;margin-top:20px">Sent from the JCIT Crew Calendar</p>`
-      +`</div>`;
-  }
-  // Sends the report as an HTML email from the signed-in user's own mailbox via
-  // Microsoft Graph (needs the app's Mail.Send permission consented). Graph
-  // returns 202 Accepted on success.
-  async function sendReportEmail(j,fields,to){
-    const token=await getMailToken();
-    const msg={ message:{ subject:reportEmailSubject(j), body:{ contentType:'HTML', content:reportEmailHtml(j,fields) }, toRecipients:[{ emailAddress:{ address:to } }] }, saveToSentItems:true };
-    const res=await fetch('https://graph.microsoft.com/v1.0/me/sendMail',{ method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify(msg) });
-    if(!(res.status===202||res.ok)){ const t=await res.text().catch(()=> ''); throw new Error('Graph '+res.status+' '+t); }
+  // Sends the report as a formatted HTML email via the backend, which builds the
+  // HTML and sends it from the signed-in editor's own mailbox (app-only Graph
+  // sendMail). Keeps Graph server-side — no browser token or consent popup.
+  async function sendReportEmail(jobId,to){
+    const token=await getApiToken();
+    const res=await fetch('/api/send-report',{ method:'POST', headers:{ 'X-Jetcity-Authorization':'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify({ jobId:jobId, to:to }) });
+    if(!res.ok){ let m='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
+    return res.json();
   }
   async function forwardReport(j,fields){
     if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
@@ -2113,7 +2096,7 @@ const JCITDispatch=(function(){
       const to=(emailInput.value||'').trim();
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ msgEl.textContent='Please enter a valid email address.'; msgEl.style.color='var(--red)'; return; }
       btn.disabled=true; btn.textContent='Sending…'; msgEl.style.color='var(--text3)'; msgEl.textContent='Sending to '+to+'…';
-      try{ await sendReportEmail(j,fields,to); msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400); }
+      try{ await sendReportEmail(j.id,to); msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400); }
       catch(err){ console.error('send report failed',err); btn.disabled=false; btn.textContent='✉ Send report'; msgEl.style.color='var(--red)'; msgEl.textContent='Could not send — '+(String(err.message||err).slice(0,120)); }
     } });
     setTimeout(()=>{ if(emailInput){ emailInput.focus(); } },30);
@@ -2500,20 +2483,6 @@ async function getApiToken(){
     return r.accessToken;
   } catch(e) {
     const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
-    return r.accessToken;
-  }
-}
-
-// Token for Graph sendMail — requested just-in-time (not folded into the login
-// scopes) so the sign-in flow stays untouched. With admin consent granted on
-// the app's Mail.Send permission the silent path works and no popup appears.
-async function getMailToken(){
-  if(!msalAccount) throw new Error('Not signed in');
-  try {
-    const r = await msalInstance.acquireTokenSilent({ scopes: ['Mail.Send'], account: msalAccount });
-    return r.accessToken;
-  } catch(e) {
-    const r = await msalInstance.acquireTokenPopup({ scopes: ['Mail.Send'], account: msalAccount });
     return r.accessToken;
   }
 }
