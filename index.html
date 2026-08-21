@@ -2066,6 +2066,32 @@ const JCITDispatch=(function(){
     out.sort((a,b)=>(a.name||a.email).toLowerCase().localeCompare((b.name||b.email).toLowerCase()));
     return out;
   }
+  function reportEmailSubject(j){ return 'Daily Project Report — '+(j.project||'')+(j.date?(' · '+j.date):''); }
+  // Builds the HTML email body — mirrors the Smartsheet report: a title, a
+  // subtitle, and a two-column label/value table. Empty fields are already
+  // dropped upstream, so they don't appear (as requested). Inline styles only
+  // (email clients strip <style>/CSS classes).
+  function reportEmailHtml(j,fields){
+    const rows=(fields||[]).map(f=>`<tr>`
+      +`<td style="padding:7px 16px 7px 0;font-weight:600;color:#3a4a5a;vertical-align:top;white-space:nowrap;border-bottom:1px solid #eef1f4">${esc(f.label)}</td>`
+      +`<td style="padding:7px 0;color:#1a2430;vertical-align:top;border-bottom:1px solid #eef1f4">${esc(f.value).replace(/\n/g,'<br>')}</td>`
+      +`</tr>`).join('');
+    return `<div style="font-family:'Segoe UI',Arial,sans-serif;max-width:660px;color:#1a2430;font-size:14px;line-height:1.45">`
+      +`<h2 style="margin:0 0 2px;font-size:20px;color:#12805c">Daily Project Report</h2>`
+      +`<div style="color:#66707a;font-size:13px;margin-bottom:16px">${esc(j.project||'')}${j.date?(' &middot; '+esc(j.date)):''}</div>`
+      +`<table style="border-collapse:collapse;width:100%">${rows}</table>`
+      +`<p style="color:#9aa4ae;font-size:12px;margin-top:20px">Sent from the JCIT Crew Calendar</p>`
+      +`</div>`;
+  }
+  // Sends the report as an HTML email from the signed-in user's own mailbox via
+  // Microsoft Graph (needs the app's Mail.Send permission consented). Graph
+  // returns 202 Accepted on success.
+  async function sendReportEmail(j,fields,to){
+    const token=await getMailToken();
+    const msg={ message:{ subject:reportEmailSubject(j), body:{ contentType:'HTML', content:reportEmailHtml(j,fields) }, toRecipients:[{ emailAddress:{ address:to } }] }, saveToSentItems:true };
+    const res=await fetch('https://graph.microsoft.com/v1.0/me/sendMail',{ method:'POST', headers:{ Authorization:'Bearer '+token, 'Content-Type':'application/json' }, body:JSON.stringify(msg) });
+    if(!(res.status===202||res.ok)){ const t=await res.text().catch(()=> ''); throw new Error('Graph '+res.status+' '+t); }
+  }
   async function forwardReport(j,fields){
     if(!fields){ try{ const r=await fetchReport(j.id); if(!r||!r.found){ alert('No linked report to forward yet. Only reports filed via the app’s “Daily report” button are linked.'); return; } fields=r.fields||[]; }catch(e){ alert('Could not load the report to forward.'); return; } }
     // Searchable dropdown of every known client email (native <datalist>): type
@@ -2075,27 +2101,22 @@ const JCITDispatch=(function(){
     const dl='<datalist id="dp-fw-clients">'+clients.map(c=>`<option value="${esc(c.email)}">${esc((c.name?c.name+' — ':'')+c.email)}</option>`).join('')+'</datalist>';
     const first=(j.clientMover&&j.clientMover.email)?j.clientMover.email:'';
     const ov=document.createElement('div'); ov.className='dp-overlay';
-    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" list="dp-fw-clients" autocomplete="off" placeholder="Search clients or type an email…" value="'+esc(first)+'"/>'+dl+'<div style="font-size:12px;color:var(--text3);margin-top:8px">Start typing to search saved client emails ('+clients.length+' on file), or enter any address. Opens your email app with the report ready to review and send.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="open">✉ Open email</button></div></div>';
+    ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward report</span><button class="dp-close" data-fw="close">✕</button></div><div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="dp-fw-email" type="email" list="dp-fw-clients" autocomplete="off" placeholder="Search clients or type an email…" value="'+esc(first)+'"/>'+dl+'<div id="dp-fw-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Start typing to search saved client emails ('+clients.length+' on file), or enter any address. Sends a formatted copy from your mailbox.</div></div><div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-fw="send">✉ Send report</button></div></div>';
     document.body.appendChild(ov);
     const cleanup=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); };
     const onKey=(e)=>{ if(e.key==='Escape') cleanup(); };
     document.addEventListener('keydown',onKey);
     const emailInput=ov.querySelector('#dp-fw-email');
-    ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-fw]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-fw'); if(a==='close'){ cleanup(); return; } if(a==='open'){ const to=(emailInput.value||'').trim(); if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ alert('Please enter a valid email address.'); return; } openReportMailto(j,fields,to); cleanup(); } });
+    const msgEl=ov.querySelector('#dp-fw-msg');
+    const btn=ov.querySelector('[data-fw="send"]');
+    ov.addEventListener('click',async(e)=>{ const c=e.target.closest('[data-fw]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-fw'); if(a==='close'){ cleanup(); return; } if(a==='send'){
+      const to=(emailInput.value||'').trim();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ msgEl.textContent='Please enter a valid email address.'; msgEl.style.color='var(--red)'; return; }
+      btn.disabled=true; btn.textContent='Sending…'; msgEl.style.color='var(--text3)'; msgEl.textContent='Sending to '+to+'…';
+      try{ await sendReportEmail(j,fields,to); msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400); }
+      catch(err){ console.error('send report failed',err); btn.disabled=false; btn.textContent='✉ Send report'; msgEl.style.color='var(--red)'; msgEl.textContent='Could not send — '+(String(err.message||err).slice(0,120)); }
+    } });
     setTimeout(()=>{ if(emailInput){ emailInput.focus(); } },30);
-  }
-  function openReportMailto(j,fields,to){
-    const subject='Daily Project Report — '+(j.project||'')+(j.date?(' · '+j.date):'');
-    const lines=[];
-    if(j.project) lines.push('Project: '+j.project);
-    if(j.date) lines.push('Date: '+j.date);
-    if(j.address) lines.push('Location: '+j.address);
-    lines.push('');
-    (fields||[]).forEach(f=>{ lines.push(f.label+': '+f.value); });
-    let body=lines.join('\n'); let truncated=false; const CAP=1600;
-    if(body.length>CAP){ body=body.slice(0,CAP); truncated=true; }
-    body+='\n\n— Sent from the JCIT Crew Calendar'+(truncated?'\n(Report truncated — open the calendar for the full report.)':'');
-    window.location.href='mailto:'+encodeURIComponent(to)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
   }
 
   // ── Personal schedule (always read-only) ────────────────────────────────────
@@ -2479,6 +2500,20 @@ async function getApiToken(){
     return r.accessToken;
   } catch(e) {
     const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
+    return r.accessToken;
+  }
+}
+
+// Token for Graph sendMail — requested just-in-time (not folded into the login
+// scopes) so the sign-in flow stays untouched. With admin consent granted on
+// the app's Mail.Send permission the silent path works and no popup appears.
+async function getMailToken(){
+  if(!msalAccount) throw new Error('Not signed in');
+  try {
+    const r = await msalInstance.acquireTokenSilent({ scopes: ['Mail.Send'], account: msalAccount });
+    return r.accessToken;
+  } catch(e) {
+    const r = await msalInstance.acquireTokenPopup({ scopes: ['Mail.Send'], account: msalAccount });
     return r.accessToken;
   }
 }
