@@ -119,6 +119,27 @@ function cellText(cell) {
   return '';
 }
 
+// Reads a single-contact cell (e.g. "Client Mover") into { name, email }.
+// Contacts picked from the directory carry the email in objectValue; a plain
+// name has none; and a free-typed email lands in displayValue. Returns null
+// when the cell is empty. email is '' when only a name is known.
+function contactCell(cell) {
+  if (!cell) return null;
+  let name = '', email = '';
+  const ov = cell.objectValue;
+  if (ov) {
+    if (Array.isArray(ov.values) && ov.values.length) { name = ov.values[0].name || ''; email = ov.values[0].email || ''; }
+    else { name = ov.name || ''; email = ov.email || ''; }
+  }
+  if (!name) name = cellText(cell);
+  if (!email) {
+    const m = String(cell.displayValue != null ? cell.displayValue : (cell.value || '')).match(/[^\s@]+@[^\s@]+\.[^\s@]+/);
+    if (m) email = m[0];
+  }
+  if (!name && !email) return null;
+  return { name: String(name).trim(), email: String(email).trim() };
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Smartsheet doesn't reject free text typed into a contact-type cell — it
@@ -201,6 +222,9 @@ function resolveColumns(sheet) {
     // Optional (not requireColumn): the "Proj Rpt Rec'd" checkbox drives the
     // Project-reports view's red/green. Absent → every job reads as "no report".
     reportReceived: colByTitle["Proj Rpt Rec'd"] || null,
+    // Optional: the client-side contact ("Client Mover"). Mostly name-only, but
+    // some carry a real email — surfaced so "Forward report" can offer it.
+    clientMover: colByTitle['Client Mover'] || null,
   };
 
   const emailToName = new Map();
@@ -332,6 +356,7 @@ function transformSheetToDispatch(sheet) {
       attachments,
       cancelled,
       reportReceived,
+      clientMover: contactCell(cellFor(row, COLUMNS.clientMover)),
     });
   });
 
