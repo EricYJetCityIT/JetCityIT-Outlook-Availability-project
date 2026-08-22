@@ -142,6 +142,22 @@ function contactCell(cell) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Canonical display-name overrides for people whose Smartsheet contact label is
+// wrong/inconsistent, so the app shows one name everywhere (crew, roster, and
+// name-matching) without rewriting Smartsheet data. Add more as `email: name`.
+// Also keyed by the bad name itself for the rare cell that has a name but no
+// email. e.g. jason@jetcityit.com is labeled "Jason M" in Smartsheet but is
+// Jason Pletschette — standardized to "Jason P" (JCIT roster convention).
+const NAME_OVERRIDES_BY_EMAIL = { 'jason@jetcityit.com': 'Jason P' };
+const NAME_ALIASES = { 'jason m': 'Jason P' };
+function canonicalName(email, name) {
+  const e = String(email || '').toLowerCase();
+  if (NAME_OVERRIDES_BY_EMAIL[e]) return NAME_OVERRIDES_BY_EMAIL[e];
+  const n = String(name || '').trim().toLowerCase();
+  if (NAME_ALIASES[n]) return NAME_ALIASES[n];
+  return name;
+}
+
 // Smartsheet doesn't reject free text typed into a contact-type cell — it
 // just stores it as an ad-hoc {name: "<whatever was typed>"} contact object
 // with no email, indistinguishable in shape from a real directory pick.
@@ -179,13 +195,13 @@ function techNamesFromCell(cell, emailToName) {
         if (EMAIL_RE.test(v)) addResolved(v);
         return; // a bare non-email string here is free-text noise, not a name
       }
-      if (v.name && isPlausibleName(v.name)) { names.push(v.name); return; }
+      if (v.name && isPlausibleName(v.name)) { names.push(canonicalName(v.email, v.name)); return; }
       if (v.email) { addResolved(v.email); return; }
     });
   } else if (cell && cell.displayValue) {
     cell.displayValue.split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => {
       if (EMAIL_RE.test(s)) addResolved(s);
-      else if (isPlausibleName(s)) names.push(s); // no objectValue to check against — best effort
+      else if (isPlausibleName(s)) names.push(canonicalName(null, s)); // no objectValue — best effort
     });
   }
   return names;
@@ -228,8 +244,8 @@ function resolveColumns(sheet) {
   };
 
   const emailToName = new Map();
-  (COLUMNS.lead.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
-  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), c.name));
+  (COLUMNS.lead.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), canonicalName(c.email, c.name)));
+  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.email && c.name && emailToName.set(c.email.toLowerCase(), canonicalName(c.email, c.name)));
 
   return { COLUMNS, emailToName };
 }
@@ -295,8 +311,8 @@ function transformSheetToDispatch(sheet) {
   const cellFor = (row, column) => row.cells.find((c) => c.columnId === column.id);
 
   const workerNames = new Set();
-  (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
-  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.name && workerNames.add(c.name));
+  (COLUMNS.lead.contactOptions || []).forEach((c) => c.name && workerNames.add(canonicalName(c.email, c.name)));
+  (COLUMNS.technicians.contactOptions || []).forEach((c) => c.name && workerNames.add(canonicalName(c.email, c.name)));
 
   const jobs = [];
   sheet.rows.forEach((row) => {
