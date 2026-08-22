@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { safeEqual } = require('../lib/secure');
-const { fetchSheet, buildNameNormalizationRows, putRows } = require('../lib/smartsheet');
+const { fetchSheet, buildNameNormalizationRows, putRows, resolveColumns } = require('../lib/smartsheet');
 
 // One-off maintenance pass: rewrite Lead/Technicians contact display names on
 // the Crew Calendar sheet to their canonical form (the same canonicalName
@@ -29,7 +29,22 @@ app.http('normalizeNames', {
       const updates = buildNameNormalizationRows(sheet);
       const sample = updates.slice(0, 8).map((u) => ({ rowId: u.id, changes: u.changes }));
       if (!apply) {
-        return { jsonBody: { dryRun: true, rowsToChange: updates.length, sample } };
+        // Diagnostic: raw objectValue of the first few Lead/Technicians cells
+        // that mention Jason, so we can see exactly how the contact is stored.
+        let raw = [];
+        try {
+          const { COLUMNS } = resolveColumns(sheet);
+          const ids = [COLUMNS.lead.id, COLUMNS.technicians.id];
+          for (const row of (sheet.rows || [])) {
+            for (const cell of (row.cells || [])) {
+              if (ids.includes(cell.columnId) && /jason/i.test(cell.displayValue || '')) {
+                raw.push({ display: cell.displayValue, value: cell.value, objectValue: cell.objectValue });
+              }
+            }
+            if (raw.length >= 3) break;
+          }
+        } catch (e) { raw = [{ err: String(e.message || e) }]; }
+        return { jsonBody: { dryRun: true, rowsToChange: updates.length, sample, raw } };
       }
       const sheetId = getSheetId();
       let written = 0;
