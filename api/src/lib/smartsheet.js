@@ -296,6 +296,39 @@ async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames,
   return res.json();
 }
 
+// Scans the Lead/Technicians cells and returns the row updates needed to bring
+// contact display names in line with the canonicalName overrides (e.g. rewrite
+// the jason@ contact from "Jason M" to "Jason P") — a one-off source cleanup so
+// Smartsheet matches what the app already shows. Every other contact in a cell
+// is preserved unchanged; only cells that actually need a change are included.
+// Returns [{ id, cells, changes }] — pass id+cells to putRows; `changes` is for
+// reporting/dry-run.
+function buildNameNormalizationRows(sheet) {
+  const { COLUMNS } = resolveColumns(sheet);
+  const cols = [COLUMNS.lead, COLUMNS.technicians];
+  const updates = [];
+  (sheet.rows || []).forEach((row) => {
+    const cells = [];
+    const changes = [];
+    cols.forEach((col) => {
+      const cell = (row.cells || []).find((c) => c.columnId === col.id);
+      if (!cell || !cell.objectValue || !Array.isArray(cell.objectValue.values)) return;
+      let dirty = false;
+      const values = cell.objectValue.values.map((v) => {
+        if (v && typeof v === 'object' && (v.email || v.name)) {
+          const canon = canonicalName(v.email, v.name);
+          if (canon !== v.name) { dirty = true; changes.push({ from: v.name, to: canon }); }
+          return v.email ? { objectType: 'CONTACT', email: v.email, name: canon } : { objectType: 'CONTACT', name: canon };
+        }
+        return v;
+      });
+      if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values } });
+    });
+    if (cells.length) updates.push({ id: String(row.id), cells, changes });
+  });
+  return updates;
+}
+
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
@@ -483,4 +516,5 @@ module.exports = {
   updateJobCrew,
   fetchReportByJobId,
   fetchAttachmentBytes,
+  buildNameNormalizationRows,
 };
