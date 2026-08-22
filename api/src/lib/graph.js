@@ -90,4 +90,22 @@ async function listUsers() {
   return users;
 }
 
-module.exports = { getAppToken, sendMail, listUsers };
+// Matches a roster name ("Eve N" — first name + last initial, the convention
+// the Smartsheet roster uses) to a directory user's email. Checks the initial
+// against every word after the first name so compound surnames ("Van Cise")
+// still match. Used to resolve people Smartsheet's contactOptions (only its
+// "suggested contacts") doesn't know. Mirrors the reminder's matcher.
+function matchDirectoryUser(name, directoryUsers) {
+  const parts = String(name || '').trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const firstName = parts[0].toLowerCase();
+  const lastInitial = parts[parts.length - 1][0].toLowerCase();
+  const match = (directoryUsers || []).find((u) => {
+    const dParts = (u.displayName || '').trim().split(/\s+/);
+    if (dParts.length < 2 || dParts[0].toLowerCase() !== firstName) return false;
+    return dParts.slice(1).some((p) => p[0] && p[0].toLowerCase() === lastInitial);
+  });
+  return match ? match.mail || match.userPrincipalName || null : null;
+}
+
+module.exports = { getAppToken, sendMail, listUsers, matchDirectoryUser };

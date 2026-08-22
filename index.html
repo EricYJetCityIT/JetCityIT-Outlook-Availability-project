@@ -1626,18 +1626,20 @@ const JCITDispatch=(function(){
   // technician on an existing job. Everything else about a job stays
   // Smartsheet-only, so this hits its own narrow endpoint instead of the
   // (rejected) full-state /api/dispatch PUT.
-  function saveCrew(jobId){
-    const j=jobById(jobId); if(!j) return;
-    (async()=>{
-      try{
-        const token=await getApiToken();
-        await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/crew',{
-          method:'PUT',
-          headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
-          body:JSON.stringify({lead:j.lead||[],technicians:j.technicians||[]})
-        });
-      }catch(e){console.error('Failed to save crew assignment:',e)}
-    })();
+  // Commits the job's current lead/technicians to Smartsheet (via the API,
+  // which also re-syncs). Awaits and checks the response so failures surface;
+  // returns the parsed result (incl. `unresolved` names the server couldn't map
+  // to an email). Throws on a non-OK response.
+  async function saveCrewAwait(jobId){
+    const j=jobById(jobId); if(!j) return null;
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/crew',{
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},
+      body:JSON.stringify({lead:j.lead||[],technicians:j.technicians||[]})
+    });
+    if(!res.ok){ let m='HTTP '+res.status; try{ const jj=await res.json(); if(jj&&jj.error) m=jj.error; }catch(_){} throw new Error(m); }
+    return res.json();
   }
   // Lazily load the self-hosted PDF.js library the first time a PDF is opened
   // (it's ~1.5MB, so we don't pay for it on every page load). Same-origin, so
@@ -2200,8 +2202,8 @@ const JCITDispatch=(function(){
         <button class="dp-tech-btn${isTech?' dp-on':''}" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}">${isTech?'On crew':'Add'}</button></div>`;
     }).join('');
     return overlay('Assign crew · '+esc(j.project)+(dayLabel?' · '+dayLabel:''),
-      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add to the crew. ★ marks the lead. People available on this job's date are listed first, based on what each person submitted under "My availability".</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
-      `<span></span><button class="btn btn-primary btn-sm" data-dpact="assign-done">Done</button>`);
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Tap a name to add or remove from the crew. ★ marks the lead. People available on this job's date are listed first, based on what each person submitted under "My availability". <b>Changes save when you click Save crew.</b></div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No active crew.</div>'}</div>`,
+      `<span id="dp-assign-msg" style="font-size:12px;color:var(--text3);align-self:center"></span><div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="assign-save" data-id="${j.id}">Save crew</button></div>`);
   }
   function rosterModal(){
     const rows=state.workers.map(w=>`<div class="dp-assign-row"><span class="dp-assign-name" style="cursor:default">${esc(w.name)}${w.active?'':' <span style="color:var(--text3)">(inactive)</span>'}</span>
@@ -2295,10 +2297,26 @@ const JCITDispatch=(function(){
       save(); modal=null; renderModalRoot(); refreshActiveView(); return;
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
-    if(act==='assign-open'){ modal={type:'assign',id:el.getAttribute('data-id')}; renderModalRoot(); return; }
-    if(act==='toggle-tech'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.technicians=j.technicians||[]; const i=j.technicians.indexOf(nm); if(i>=0) j.technicians.splice(i,1); else j.technicians.push(nm); saveCrew(j.id); renderModalRoot(); refreshActiveView(); } return; }
-    if(act==='toggle-lead'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.lead=j.lead||[]; const i=j.lead.indexOf(nm); if(i>=0) j.lead.splice(i,1); else j.lead.push(nm); saveCrew(j.id); renderModalRoot(); refreshActiveView(); } return; }
-    if(act==='assign-done'){ modal=null; renderModalRoot(); refreshActiveView(); return; }
+    if(act==='assign-open'){ const jj=jobById(el.getAttribute('data-id')); modal={type:'assign',id:el.getAttribute('data-id'),orig:jj?{lead:(jj.lead||[]).slice(),technicians:(jj.technicians||[]).slice()}:{lead:[],technicians:[]}}; renderModalRoot(); return; }
+    // Toggles update the pending crew locally and re-render the modal only —
+    // nothing is written until "Save crew" (avoids a Smartsheet re-sync on every
+    // tap, and lets the user cancel).
+    if(act==='toggle-tech'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.technicians=j.technicians||[]; const i=j.technicians.indexOf(nm); if(i>=0) j.technicians.splice(i,1); else j.technicians.push(nm); renderModalRoot(); } return; }
+    if(act==='toggle-lead'){ const j=jobById(el.getAttribute('data-job')),nm=el.getAttribute('data-name'); if(j){ j.lead=j.lead||[]; const i=j.lead.indexOf(nm); if(i>=0) j.lead.splice(i,1); else j.lead.push(nm); renderModalRoot(); } return; }
+    if(act==='assign-save'){
+      const id=el.getAttribute('data-id'); const btn=el; const msg=document.getElementById('dp-assign-msg');
+      btn.disabled=true; const orig=btn.textContent; btn.textContent='Saving…'; if(msg){ msg.style.color='var(--text3)'; msg.textContent='Saving…'; }
+      (async()=>{
+        try{
+          const res=await saveCrewAwait(id);
+          const un=(res&&res.unresolved)||[];
+          if(modal) modal.orig={lead:(jobById(id).lead||[]).slice(),technicians:(jobById(id).technicians||[]).slice()};
+          if(un.length){ const j=jobById(id); if(j){ j.lead=(j.lead||[]).filter(n=>un.indexOf(n)<0); j.technicians=(j.technicians||[]).filter(n=>un.indexOf(n)<0); } if(modal) modal.orig={lead:(jobById(id).lead||[]).slice(),technicians:(jobById(id).technicians||[]).slice()}; renderModalRoot(); refreshActiveView(); const m2=document.getElementById('dp-assign-msg'); if(m2){ m2.style.color='var(--red)'; m2.textContent='No email on file for: '+un.join(', ')+' — couldn’t add. Others saved.'; } return; }
+          modal=null; renderModalRoot(); refreshActiveView();
+        }catch(err){ console.error('save crew failed',err); btn.disabled=false; btn.textContent=orig; if(msg){ msg.style.color='var(--red)'; msg.textContent='Could not save — '+String(err.message||err).slice(0,140); } }
+      })();
+      return;
+    }
     if(act==='roster'){ modal={type:'roster'}; renderModalRoot(); return; }
     if(act==='w-add'){ const nmEl=document.getElementById('dp-w-name'),val=nmEl?nmEl.value.trim():''; if(val){ if(!workerByName(val)) state.workers.push({name:val,active:true}); save(); renderModalRoot(); } return; }
     if(act==='w-toggle'){ const w=workerByName(el.getAttribute('data-name')); if(w){ w.active=!w.active; save(); renderModalRoot(); refreshActiveView(); } return; }
@@ -2308,7 +2326,11 @@ const JCITDispatch=(function(){
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
-    if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return; modal=null; renderModalRoot(); return; }
+    if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return;
+      // Closing the assign modal without saving reverts any pending crew edits
+      // back to the last-saved state so they don't linger in the local view.
+      if(modal&&modal.type==='assign'&&modal.orig){ const j=jobById(modal.id); if(j){ j.lead=modal.orig.lead.slice(); j.technicians=modal.orig.technicians.slice(); } }
+      modal=null; renderModalRoot(); return; }
   }
   function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }
 
