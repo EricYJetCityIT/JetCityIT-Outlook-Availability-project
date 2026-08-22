@@ -24,9 +24,11 @@ app.http('normalizeNames', {
       return { status: 401, jsonBody: { error: 'Invalid or missing sync secret' } };
     }
     try {
-      const apply = new URL(request.url).searchParams.get('apply') === 'true';
+      const url = new URL(request.url);
+      const apply = url.searchParams.get('apply') === 'true';
+      const onlyRowId = url.searchParams.get('rowId') || null; // limit to one row for testing
       const sheet = await fetchSheet();
-      const updates = buildNameNormalizationRows(sheet);
+      const updates = buildNameNormalizationRows(sheet, onlyRowId);
       const sample = updates.slice(0, 8).map((u) => ({ rowId: u.id, changes: u.changes }));
       if (!apply) {
         // Diagnostic: raw objectValue of the first few Lead/Technicians cells

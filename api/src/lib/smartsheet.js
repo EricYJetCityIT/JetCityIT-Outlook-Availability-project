@@ -303,26 +303,50 @@ async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames,
 // is preserved unchanged; only cells that actually need a change are included.
 // Returns [{ id, cells, changes }] — pass id+cells to putRows; `changes` is for
 // reporting/dry-run.
-function buildNameNormalizationRows(sheet) {
+function buildNameNormalizationRows(sheet, onlyRowId) {
   const { COLUMNS } = resolveColumns(sheet);
   const cols = [COLUMNS.lead, COLUMNS.technicians];
   const updates = [];
   (sheet.rows || []).forEach((row) => {
+    if (onlyRowId && String(row.id) !== String(onlyRowId)) return;
     const cells = [];
     const changes = [];
     cols.forEach((col) => {
       const cell = (row.cells || []).find((c) => c.columnId === col.id);
-      if (!cell || !cell.objectValue || !Array.isArray(cell.objectValue.values)) return;
-      let dirty = false;
-      const values = cell.objectValue.values.map((v) => {
-        if (v && typeof v === 'object' && (v.email || v.name)) {
-          const canon = canonicalName(v.email, v.name);
-          if (canon !== v.name) { dirty = true; changes.push({ from: v.name, to: canon }); }
-          return v.email ? { objectType: 'CONTACT', email: v.email, name: canon } : { objectType: 'CONTACT', name: canon };
-        }
-        return v;
-      });
-      if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values } });
+      if (!cell) return;
+      const ov = cell.objectValue;
+      if (ov && Array.isArray(ov.values)) {
+        // Structured contacts: rewrite the target contact's name, keep the rest.
+        let dirty = false;
+        const values = ov.values.map((v) => {
+          if (v && typeof v === 'object' && (v.email || v.name)) {
+            const canon = canonicalName(v.email, v.name);
+            if (canon !== v.name) { dirty = true; changes.push({ from: v.name, to: canon }); }
+            return v.email ? { objectType: 'CONTACT', email: v.email, name: canon } : { objectType: 'CONTACT', name: canon };
+          }
+          if (typeof v === 'string') {
+            const canon = EMAIL_RE.test(v) ? v : canonicalName('', v);
+            if (canon !== v) { dirty = true; changes.push({ from: v, to: canon }); }
+            return { objectType: 'CONTACT', name: canon };
+          }
+          return v;
+        });
+        if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values } });
+      } else {
+        // Free-text cell (crew stored as plain, comma-joined names/emails, which
+        // is how this sheet actually holds them). Apply the name aliases to each
+        // token and rewrite as a multi-contact, preserving every other token.
+        const text = String(cell.displayValue != null ? cell.displayValue : (cell.value || ''));
+        if (!text.trim()) return;
+        const tokens = text.split(',').map((s) => s.trim()).filter(Boolean);
+        let dirty = false;
+        const newTokens = tokens.map((t) => {
+          const canon = EMAIL_RE.test(t) ? t : canonicalName('', t);
+          if (canon !== t) { dirty = true; changes.push({ from: t, to: canon }); }
+          return canon;
+        });
+        if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values: newTokens.map((t) => ({ objectType: 'CONTACT', name: t })) } });
+      }
     });
     if (cells.length) updates.push({ id: String(row.id), cells, changes });
   });
