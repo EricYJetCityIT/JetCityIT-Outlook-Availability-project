@@ -296,63 +296,6 @@ async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames,
   return res.json();
 }
 
-// Scans the Lead/Technicians cells and returns the row updates needed to bring
-// contact display names in line with the canonicalName overrides (e.g. rewrite
-// the jason@ contact from "Jason M" to "Jason P") — a one-off source cleanup so
-// Smartsheet matches what the app already shows. Every other contact in a cell
-// is preserved unchanged; only cells that actually need a change are included.
-// Returns [{ id, cells, changes }] — pass id+cells to putRows; `changes` is for
-// reporting/dry-run.
-function buildNameNormalizationRows(sheet, onlyRowId) {
-  const { COLUMNS } = resolveColumns(sheet);
-  const cols = [COLUMNS.lead, COLUMNS.technicians];
-  const updates = [];
-  (sheet.rows || []).forEach((row) => {
-    if (onlyRowId && String(row.id) !== String(onlyRowId)) return;
-    const cells = [];
-    const changes = [];
-    cols.forEach((col) => {
-      const cell = (row.cells || []).find((c) => c.columnId === col.id);
-      if (!cell) return;
-      const ov = cell.objectValue;
-      if (ov && Array.isArray(ov.values)) {
-        // Structured contacts: rewrite the target contact's name, keep the rest.
-        let dirty = false;
-        const values = ov.values.map((v) => {
-          if (v && typeof v === 'object' && (v.email || v.name)) {
-            const canon = canonicalName(v.email, v.name);
-            if (canon !== v.name) { dirty = true; changes.push({ from: v.name, to: canon }); }
-            return v.email ? { objectType: 'CONTACT', email: v.email, name: canon } : { objectType: 'CONTACT', name: canon };
-          }
-          if (typeof v === 'string') {
-            const canon = EMAIL_RE.test(v) ? v : canonicalName('', v);
-            if (canon !== v) { dirty = true; changes.push({ from: v, to: canon }); }
-            return { objectType: 'CONTACT', name: canon };
-          }
-          return v;
-        });
-        if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values } });
-      } else {
-        // Free-text cell (crew stored as plain, comma-joined names/emails, which
-        // is how this sheet actually holds them). Apply the name aliases to each
-        // token and rewrite as a multi-contact, preserving every other token.
-        const text = String(cell.displayValue != null ? cell.displayValue : (cell.value || ''));
-        if (!text.trim()) return;
-        const tokens = text.split(',').map((s) => s.trim()).filter(Boolean);
-        let dirty = false;
-        const newTokens = tokens.map((t) => {
-          const canon = EMAIL_RE.test(t) ? t : canonicalName('', t);
-          if (canon !== t) { dirty = true; changes.push({ from: t, to: canon }); }
-          return canon;
-        });
-        if (dirty) cells.push({ columnId: col.id, objectValue: { objectType: 'MULTI_CONTACT', values: newTokens.map((t) => ({ objectType: 'CONTACT', name: t })) } });
-      }
-    });
-    if (cells.length) updates.push({ id: String(row.id), cells, changes });
-  });
-  return updates;
-}
-
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
@@ -540,5 +483,4 @@ module.exports = {
   updateJobCrew,
   fetchReportByJobId,
   fetchAttachmentBytes,
-  buildNameNormalizationRows,
 };
