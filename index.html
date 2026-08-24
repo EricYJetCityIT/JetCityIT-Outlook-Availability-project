@@ -101,6 +101,15 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .info-link:hover{background:var(--surface2)}
 .info-link svg{flex:none;color:var(--text3)}
 .info-link .il-sub{display:block;font-size:11px;color:var(--text3);margin-top:1px}
+.svc-map-sub{font-size:12px;color:var(--text3);margin:-4px 0 6px}
+.svc-map svg{width:100%;max-width:420px;display:block;margin:0 auto}
+.svc-ring{fill:none;stroke:var(--text3);stroke-width:1.4;stroke-dasharray:5 4;opacity:.75}
+.svc-ringfill{fill:var(--green);opacity:.06}
+.svc-city{font-size:11px;font-weight:600}
+.svc-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:12px;color:var(--text2)}
+.svc-legend span{display:inline-flex;align-items:center;gap:6px}
+.svc-lg-dot{width:11px;height:11px;border-radius:50%;flex:none}
+.svc-note{font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.5}
 .settings-row{margin-bottom:16px}
 .settings-row:last-child{margin-bottom:0}
 .settings-row h4{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:8px}
@@ -540,6 +549,10 @@ if('serviceWorker' in navigator){
       <a class="info-link" href="https://jetcityit.sharepoint.com/sites/JetCityInformationTechnology/Shared%20Documents/General/Admin/Employee%20Handbook/JCIT%20Employee%20Handbook%20Rev24-0806.pdf" target="_blank" rel="noopener noreferrer">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 5.5A1.5 1.5 0 015.5 4H11a2 2 0 012 2v13a1.6 1.6 0 00-1.4-.8H5.5A1.5 1.5 0 014 16.7V5.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M20 5.5A1.5 1.5 0 0018.5 4H13a2 2 0 00-2 2v13a1.6 1.6 0 011.4-.8h6.1a1.5 1.5 0 001.5-1.5V5.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
         <span>Employee Handbook<span class="il-sub">Opens in SharePoint</span></span>
+      </a>
+      <a class="info-link" href="#" onclick="openServiceMap(event); return false;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 4L4 6v14l5-2 6 2 5-2V4l-5 2-6-2z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 4v14M15 6v14" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        <span>Service area map<span class="il-sub">20-mile commute radius</span></span>
       </a>
     </div>
     <button class="hdr-gear" id="settings-gear" onclick="toggleSettingsMenu(event)" title="Settings" aria-label="Settings">
@@ -2538,6 +2551,40 @@ function applyZoom(z){
 function changeZoom(dir){ var z=Math.round((jcZoom+dir*0.1)*10)/10; z=Math.max(0.8,Math.min(1.5,z)); try{ localStorage.setItem('jc-zoom', z); }catch(e){} applyZoom(z); }
 function toggleSettingsMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('settings-menu'); if(m) m.classList.toggle('open'); var i=document.getElementById('info-menu'); if(i) i.classList.remove('open'); }
 function toggleInfoMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('info-menu'); if(m) m.classList.toggle('open'); var s=document.getElementById('settings-menu'); if(s) s.classList.remove('open'); }
+// Self-contained SVG map of the JCIT service area + 20-mile commute radius
+// (from the Employee Handbook). City dots are plotted by real relative
+// geography (equirectangular projection centred on Seattle); no external map
+// tiles, so it needs no CSP change and works offline + in dark mode.
+function openServiceMap(e){
+  if(e) e.stopPropagation();
+  var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
+  var svg='<div class="svc-map"><svg viewBox="0 0 380 545" role="img" aria-label="JCIT service area: 20-mile radius around Seattle with standard and outside-area cities">'
+    +'<circle class="svc-ringfill" cx="200" cy="280" r="120"/><circle class="svc-ring" cx="200" cy="280" r="120"/>'
+    +'<text x="200" y="164" text-anchor="middle" font-size="10.5" fill="var(--text3)">20-mile radius</text>'
+    +'<g fill="#E0952A"><circle cx="236.4" cy="125.6" r="5"/><circle cx="283.8" cy="311.5" r="5"/><circle cx="205.5" cy="397.6" r="5"/><circle cx="168.6" cy="426.3" r="5"/><circle cx="41.1" cy="515.4" r="5"/></g>'
+    +'<g class="svc-city" fill="var(--text2)"><text x="245" y="129">Everett</text><text x="277" y="315" text-anchor="end">Issaquah</text><text x="197" y="401" text-anchor="end">Federal Way</text><text x="161" y="430" text-anchor="end">Tacoma</text><text x="50" y="519">Olympia</text></g>'
+    +'<g fill="var(--green)"><circle cx="204.7" cy="191" r="5"/><circle cx="197.4" cy="218.1" r="5"/><circle cx="258.9" cy="251.9" r="5"/><circle cx="236.5" cy="278.4" r="5"/><circle cx="232.2" cy="331.1" r="5"/><circle cx="227.2" cy="373.4" r="5"/></g>'
+    +'<g class="svc-city" fill="var(--green-dark)"><text x="213" y="188">Lynnwood</text><text x="190" y="222" text-anchor="end">Shoreline</text><text x="267" y="255">Redmond</text><text x="245" y="282">Bellevue</text><text x="241" y="335">Renton</text><text x="236" y="377">Kent</text></g>'
+    +'<circle cx="200" cy="280" r="7" fill="var(--text)"/><circle cx="200" cy="280" r="3" fill="var(--surface)"/>'
+    +'<text x="200" y="266" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--text)">Seattle</text>'
+    +'</svg></div>';
+  var legend='<div class="svc-legend">'
+    +'<span><span class="svc-lg-dot" style="background:var(--green)"></span>Standard service area</span>'
+    +'<span><span class="svc-lg-dot" style="background:#E0952A"></span>Outside standard area (commute compensable)</span>'
+    +'<span><span class="svc-lg-dot" style="background:transparent;border:1.4px dashed var(--text3)"></span>20-mile radius</span>'
+    +'</div>';
+  var note='<div class="svc-note">Commute time within the 20-mile radius isn’t paid without prior approval from the managing partners. Note: Issaquah and Federal Way sit inside the 20-mile ring but are treated as outside the standard service area per the handbook.</div>';
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:560px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Service area &amp; commute radius</span><button class="dp-close" data-sm="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><div class="svc-map-sub">20-mile radius from Seattle · from the JCIT Employee Handbook</div>'+svg+legend+note+'</div>'
+    +'<div class="dp-modal-ft"><span></span><button class="btn btn-sm" data-sm="close">Close</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-sm="close"]'))) cleanup(); });
+}
 function initSettingsUI(){
   applyThemeChoice(getThemeChoice());
   applyZoom(getZoomLevel());
