@@ -400,6 +400,7 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-rpt-flabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text3);margin-bottom:2px}
 .dp-rpt-fval{font-size:14px;color:var(--text);white-space:pre-wrap;word-break:break-word}
 .dp-rp-chk{width:14px;height:14px;flex:0 0 14px;margin-top:2px;accent-color:var(--green);cursor:pointer}
+.dp-rp-spacer{width:14px;flex:0 0 14px}
 .dp-rpt-fieldwrap{cursor:pointer}
 .dp-rpt-field-off{opacity:.42}
 .dp-rpt-celltext{flex:1;min-width:0}
@@ -2097,21 +2098,28 @@ const JCITDispatch=(function(){
       const statusF=fields.find(f=>cls(f)==='status');
       const shorts=fields.filter(f=>f!==titleF&&f!==statusF&&cls(f)==='short');
       const longs=fields.filter(f=>f!==titleF&&f!==statusF&&cls(f)==='long');
-      const chk=(f)=>`<input type="checkbox" class="dp-rp-chk" data-label="${esc(f.label)}" checked>`;
+      // Created + Status are display-only: no checkbox, so they can never be
+      // forwarded. Everything else gets a checkbox (ticked by default). A
+      // non-forwardable field keeps a same-width spacer so labels stay aligned.
+      const forwardable=(f)=>{ const L=String(f.label||'').toLowerCase().trim(); return L!=='created'&&L!=='status'; };
+      const lead=(f)=>forwardable(f)?`<input type="checkbox" class="dp-rp-chk" data-label="${esc(f.label)}" checked>`:'<span class="dp-rp-spacer" aria-hidden="true"></span>';
       const labVal=(f)=>`<div class="dp-rpt-celltext"><div class="dp-rpt-flabel">${esc(f.label)}</div><div class="dp-rpt-fval">${esc(prettyReportVal(f.value))}</div></div>`;
+      // Forwardable fields are clickable <label>s (toggle the checkbox); locked
+      // ones render as a plain <div>.
+      const wrap=(f,cls,inner)=>forwardable(f)?`<label class="dp-rpt-fieldwrap ${cls}">${lead(f)}${inner}</label>`:`<div class="${cls}">${lead(f)}${inner}</div>`;
       // Only show the app's own "Submitted" line when the report itself has no
       // Created field to avoid printing the same timestamp twice.
       const hasCreated=fields.some(f=>/^created$/i.test(String(f.label||'').trim()));
       const when=(!hasCreated&&r.createdAt)?`<div class="dp-rpt-when">Submitted ${esc(fmtReportWhen(r.createdAt))}</div>`:'';
-      const titleHtml=titleF?`<label class="dp-rpt-fieldwrap dp-rpt-title">${chk(titleF)}<span class="dp-rpt-titletext">${esc(prettyReportVal(titleF.value))}</span></label>`:'';
+      const titleHtml=titleF?wrap(titleF,'dp-rpt-title',`<span class="dp-rpt-titletext">${esc(prettyReportVal(titleF.value))}</span>`):'';
       let statusHtml='';
-      if(statusF){ const sv=String(statusF.value||''); const done=/complete|done|finish/i.test(sv); statusHtml=`<div class="dp-rpt-meta"><label class="dp-rpt-fieldwrap dp-rpt-statuswrap">${chk(statusF)}<span class="dp-rpt-status${done?' is-done':''}">${done?'✓ ':''}${esc(sv)}</span></label></div>`; }
+      if(statusF){ const sv=String(statusF.value||''); const done=/complete|done|finish/i.test(sv); statusHtml=`<div class="dp-rpt-meta"><span class="dp-rpt-status${done?' is-done':''}">${done?'✓ ':''}${esc(sv)}</span></div>`; }
       const hint='<div class="dp-rpt-hint">Untick any field to leave it out when forwarding. <a href="#" data-rp="all">All</a> · <a href="#" data-rp="none">None</a></div>';
       // A short field whose value is a bit long (e.g. an address) spans the full
       // grid width so it doesn't get cramped in a half-column.
       const isFull=(f)=>String(prettyReportVal(f.value)).length>44;
-      const gridHtml=shorts.length?`<div class="dp-rpt-grid">${shorts.map(f=>`<label class="dp-rpt-fieldwrap dp-rpt-cell${isFull(f)?' dp-rpt-cell-full':''}">${chk(f)}${labVal(f)}</label>`).join('')}</div>`:'';
-      const longsHtml=longs.map(f=>`<label class="dp-rpt-fieldwrap dp-rpt-long">${chk(f)}${labVal(f)}</label>`).join('');
+      const gridHtml=shorts.length?`<div class="dp-rpt-grid">${shorts.map(f=>wrap(f,`dp-rpt-cell${isFull(f)?' dp-rpt-cell-full':''}`,labVal(f))).join('')}</div>`:'';
+      const longsHtml=longs.map(f=>wrap(f,'dp-rpt-long',labVal(f))).join('');
       body.innerHTML=when+titleHtml+statusHtml+hint+gridHtml+longsHtml;
       const fwd=ov.querySelector('[data-rp="fwd"]'); if(fwd) fwd.style.display='';
     }catch(e){ console.error('report load failed',e); body.innerHTML='<div style="color:var(--red)">Could not load the report. Please try again.</div>'; }
