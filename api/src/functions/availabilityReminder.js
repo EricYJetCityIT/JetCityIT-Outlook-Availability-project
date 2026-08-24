@@ -35,14 +35,41 @@ function weekLabel(mon) {
   return `${fmt(mon)} – ${fmt(fri)}`;
 }
 
-async function submittedNameSet(weekKey) {
+// Normalizes a name to a first-name + last-initial key ("dylan|m") so an
+// abbreviated roster name ("Dylan M") matches the full display name people
+// actually submit availability under ("Dylan McCormack"). Mirrors
+// normNameKey() in index.html so the reminder agrees with the dispatch view.
+function normNameKey(s) {
+  const t = String(s || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return t.length > 1 ? `${t[0]}|${t[1][0]}` : t[0] || '';
+}
+
+async function submittedNames(weekKey) {
   const { resources } = await getContainer(AVAILABILITY_CONTAINER).items
     .query({
       query: 'SELECT c.name FROM c WHERE c.weekKey = @weekKey',
       parameters: [{ name: '@weekKey', value: weekKey }],
     })
     .fetchAll();
-  return new Set(resources.map((r) => r.name.trim().toLowerCase()));
+  return resources.map((r) => r.name);
+}
+
+// Returns a predicate "did this roster name submit?" that tolerates the
+// abbreviated-vs-full-name mismatch that otherwise flags nearly everyone as
+// missing. A worker counts as submitted if their name matches a submission
+// exactly, or unambiguously by first-name + last-initial -- exactly one
+// submitter shares the key. The unambiguous guard mirrors resolveAvailName()
+// in index.html so a Jason Martin / Jason Miller style collision never marks
+// the wrong person done (in that case we fall through to reminding both).
+function submissionLookup(names) {
+  const exact = new Set(names.map((n) => n.trim().toLowerCase()));
+  const keyCounts = new Map();
+  names.forEach((n) => {
+    const k = normNameKey(n);
+    keyCounts.set(k, (keyCounts.get(k) || 0) + 1);
+  });
+  return (workerName) =>
+    exact.has(workerName.trim().toLowerCase()) || keyCounts.get(normNameKey(workerName)) === 1;
 }
 
 async function activeWorkerNames() {
@@ -81,7 +108,7 @@ function matchDirectoryUser(name, directoryUsers) {
 // Checks this week and next week for missing availability submissions among
 // the active roster, and emails anyone missing either one -- one combined
 // email per person naming which week(s), not one email per missing week.
-async function runReminder(context) {
+async function runReminder(context, { dryRun = false } = {}) {
   const now = new Date();
   const thisMonday = mondayOf(now);
   const nextMonday = new Date(thisMonday);
@@ -93,14 +120,14 @@ async function runReminder(context) {
 
   const [workers, submittedByWeek] = await Promise.all([
     activeWorkerNames(),
-    Promise.all(weeks.map((w) => submittedNameSet(w.key))),
+    Promise.all(weeks.map((w) => submittedNames(w.key))),
   ]);
+  const hasSubmitted = submittedByWeek.map((names) => submissionLookup(names));
 
   // name -> [missing week labels]
   const missing = new Map();
   workers.forEach((name) => {
-    const key = name.trim().toLowerCase();
-    const missingWeeks = weeks.filter((w, i) => !submittedByWeek[i].has(key)).map((w) => w.label);
+    const missingWeeks = weeks.filter((w, i) => !hasSubmitted[i](name)).map((w) => w.label);
     if (missingWeeks.length) missing.set(name, missingWeeks);
   });
 
@@ -136,6 +163,10 @@ async function runReminder(context) {
   // Application Insights isn't enabled on this app -- those calls have
   // nowhere to land, so this is the only way to see why someone was skipped.
   const skippedDetail = [];
+  // In a dry run, the list of who WOULD be emailed (and for which weeks) is
+  // returned instead of anything being sent -- lets us verify the name
+  // matching without spamming the team.
+  const wouldSend = [];
   for (const [name, missingWeeks] of missing) {
     let email = nameToEmail.get(name);
     if (!email) {
@@ -144,6 +175,10 @@ async function runReminder(context) {
     if (!email) {
       skipped++;
       skippedDetail.push({ name, reason: 'no-email-on-file', directoryError: directoryError || undefined });
+      continue;
+    }
+    if (dryRun) {
+      wouldSend.push({ name, email, weeks: missingWeeks });
       continue;
     }
     const weeksHtml = missingWeeks.map((label) => `<li>${label}</li>`).join('');
@@ -161,6 +196,9 @@ async function runReminder(context) {
     }
   }
 
+  if (dryRun) {
+    return { dryRun: true, wouldSend, skipped, skippedDetail, weeks: weeks.map((w) => w.key) };
+  }
   audit(context, null, 'availability.reminder.sent', { weeks: weeks.map((w) => w.key), sent, skipped });
   return { sent, skipped, skippedDetail, weeks: weeks.map((w) => w.key) };
 }
@@ -180,7 +218,11 @@ app.http('availabilityReminder', {
     }
 
     try {
-      const result = await runReminder(context);
+      // ?dry=1 (or ?dryRun=true) computes and returns who would be emailed
+      // without sending anything -- safe way to verify the name matching.
+      const dryParam = (request.query.get('dry') || request.query.get('dryRun') || '').toLowerCase();
+      const dryRun = dryParam === '1' || dryParam === 'true';
+      const result = await runReminder(context, { dryRun });
       return { jsonBody: result };
     } catch (e) {
       // Application Insights isn't enabled on this app, so context.error has

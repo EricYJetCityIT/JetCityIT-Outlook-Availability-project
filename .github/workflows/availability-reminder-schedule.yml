@@ -10,6 +10,11 @@ on:
   schedule:
     - cron: '0 15 * * 1'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — report who WOULD be emailed, send nothing'
+        type: boolean
+        default: false
 
 jobs:
   remind:
@@ -17,6 +22,15 @@ jobs:
     steps:
       - name: Call availability-reminder endpoint
         run: |
+          URL="https://crew-calendar.jetcityit.com/api/availability-reminder"
+          # inputs.dry_run is only set on manual dispatch; empty on the cron
+          # schedule, so scheduled runs always send for real.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            URL="$URL?dry=1"
+            echo "DRY RUN — no emails will be sent"
+          fi
+          echo "POST $URL"
           curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
-            -X POST "https://crew-calendar.jetcityit.com/api/availability-reminder" \
+            -X POST "$URL" \
             -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"
+          echo
