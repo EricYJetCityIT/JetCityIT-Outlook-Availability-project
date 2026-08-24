@@ -399,6 +399,26 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-rpt-fields{display:flex;flex-direction:column;gap:12px}
 .dp-rpt-flabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--text3);margin-bottom:2px}
 .dp-rpt-fval{font-size:14px;color:var(--text);white-space:pre-wrap;word-break:break-word}
+.dp-rp-chk{width:14px;height:14px;flex:0 0 14px;margin-top:2px;accent-color:var(--green);cursor:pointer}
+.dp-rpt-fieldwrap{cursor:pointer}
+.dp-rpt-field-off{opacity:.42}
+.dp-rpt-celltext{flex:1;min-width:0}
+.dp-rpt-when{font-size:12px;color:var(--text3);margin-bottom:8px}
+.dp-rpt-hint{font-size:12px;color:var(--text3);margin:0 0 12px}
+.dp-rpt-hint a{color:var(--green);text-decoration:none}
+.dp-rpt-title{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}
+.dp-rpt-title .dp-rp-chk{margin-top:5px}
+.dp-rpt-titletext{font-size:16px;font-weight:600;color:var(--text);line-height:1.35;word-break:break-word}
+.dp-rpt-meta{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px 24px}
+.dp-rpt-statuswrap{display:inline-flex;align-items:center;gap:7px}
+.dp-rpt-status{font-size:12px;font-weight:600;color:var(--text2);background:var(--bg);padding:3px 11px;border-radius:999px}
+.dp-rpt-status.is-done{color:#0B7A5E;background:var(--green-light)}
+:root[data-theme="dark"] .dp-rpt-status.is-done{color:var(--green)}
+.dp-rpt-grid{display:grid;grid-template-columns:1fr 1fr;grid-auto-flow:dense;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:0 0 14px}
+.dp-rpt-cell{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;background:var(--surface)}
+.dp-rpt-cell-full{grid-column:1 / -1}
+.dp-rpt-long{display:flex;gap:10px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--border)}
+@media(max-width:520px){.dp-rpt-grid{grid-template-columns:1fr}.dp-rpt-meta{margin-left:0}}
 .dp-add-job{width:100%;padding:8px;border:1px dashed var(--border2);border-radius:10px;background:transparent;color:var(--text3);font-size:12px;cursor:pointer;font-family:inherit}
 .dp-add-job:hover{border-color:var(--green);color:var(--green)}
 .dp-wk-day{margin-bottom:14px}
@@ -2041,6 +2061,16 @@ const JCITDispatch=(function(){
     if(!res.ok) throw new Error('HTTP '+res.status);
     return res.json();
   }
+  // Formats a Smartsheet report field value for DISPLAY only (the forwarded
+  // email is rebuilt server-side from the raw values, so this never changes
+  // what's sent). Only touches ISO timestamps; every other value is verbatim.
+  function fmtReportWhen(v){ try{ return new Date(v).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',timeZone:'UTC'})+' UTC'; }catch(_){ return String(v).replace('T',' ').replace('Z',' UTC'); } }
+  function prettyReportVal(v){ const s=String(v==null?'':v); return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)?fmtReportWhen(s):s; }
+  // Buckets a field by its Smartsheet label (labels themselves are left
+  // untouched): the project name becomes the modal title, Status becomes a
+  // pill, narrative write-ups span full width, and the short facts go in the
+  // 2-column grid. Unrecognized labels fall back to length (long value → full).
+  function reportFieldClass(label,value){ const L=String(label||'').toLowerCase().trim(); if(/project name/.test(L)) return 'title'; if(L==='status') return 'status'; const long=/work detail|added scope|remaining|forecast|scope|note|description|issue|delay|resolved|comment/.test(L)||String(value||'').length>60||/\n/.test(String(value||'')); return long?'long':'short'; }
   async function viewReport(j){
     const ov=document.createElement('div'); ov.className='dp-overlay';
     ov.innerHTML='<div class="dp-modal" style="max-width:640px;width:94vw"><div class="dp-modal-hd"><span class="dp-modal-title">Project report</span><button class="dp-close" data-rp="close">✕</button></div><div class="dp-modal-bd" data-rp-body style="min-height:120px">Loading…</div><div class="dp-modal-ft"><button class="btn btn-primary btn-sm" data-rp="fwd" style="display:none">✉ Forward to POC</button><button class="btn btn-sm" data-rp="close">Close</button></div></div>';
@@ -2051,17 +2081,38 @@ const JCITDispatch=(function(){
     let fields=null;
     ov.addEventListener('click',(e)=>{ const c=e.target.closest('[data-rp]'); if(!c){ if(e.target===ov) cleanup(); return; } const a=c.getAttribute('data-rp');
       if(a==='close'){ cleanup(); return; }
-      if(a==='all'||a==='none'){ ov.querySelectorAll('.dp-rp-chk').forEach(cb=>{cb.checked=(a==='all');}); return; }
+      if(a==='all'||a==='none'){ ov.querySelectorAll('.dp-rp-chk').forEach(cb=>{cb.checked=(a==='all'); const w=cb.closest('.dp-rpt-fieldwrap'); if(w) w.classList.toggle('dp-rpt-field-off',!cb.checked);}); return; }
       if(a==='fwd'){ const inc=[...ov.querySelectorAll('.dp-rp-chk:checked')].map(cb=>cb.getAttribute('data-label')); if(!inc.length){ alert('Select at least one field to include.'); return; } forwardReport(j,fields,inc); }
     });
+    // Dim a field the moment it's unticked, so what's excluded from the forward
+    // is obvious at a glance.
+    ov.addEventListener('change',(e)=>{ const cb=e.target.closest('.dp-rp-chk'); if(!cb) return; const w=cb.closest('.dp-rpt-fieldwrap'); if(w) w.classList.toggle('dp-rpt-field-off',!cb.checked); });
     const body=ov.querySelector('[data-rp-body]');
     try{
       const r=await fetchReport(j.id);
       if(!r||!r.found){ body.innerHTML='<div style="color:var(--text3);padding:8px 0">No submitted report is linked to this job yet.<br><span style="font-size:12px">Only reports filed through the app’s “📝 Daily report” button get linked.</span></div>'; return; }
       fields=r.fields||[];
-      const when=r.createdAt?('<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Submitted '+esc(String(r.createdAt).replace('T',' ').replace('Z',' UTC'))+'</div>'):'';
-      const hint='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Untick any fields you don’t want included when forwarding. <a href="#" data-rp="all" style="color:var(--green)">All</a> · <a href="#" data-rp="none" style="color:var(--green)">None</a></div>';
-      body.innerHTML=when+hint+'<div class="dp-rpt-fields">'+fields.map(f=>`<label class="dp-rpt-field" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" class="dp-rp-chk" data-label="${esc(f.label)}" checked style="width:16px;height:16px;flex:0 0 16px;margin-top:3px"><span style="flex:1;min-width:0"><span class="dp-rpt-flabel" style="display:block">${esc(f.label)}</span><span class="dp-rpt-fval" style="display:block">${esc(f.value)}</span></span></label>`).join('')+'</div>';
+      const cls=(f)=>reportFieldClass(f.label,f.value);
+      const titleF=fields.find(f=>cls(f)==='title');
+      const statusF=fields.find(f=>cls(f)==='status');
+      const shorts=fields.filter(f=>f!==titleF&&f!==statusF&&cls(f)==='short');
+      const longs=fields.filter(f=>f!==titleF&&f!==statusF&&cls(f)==='long');
+      const chk=(f)=>`<input type="checkbox" class="dp-rp-chk" data-label="${esc(f.label)}" checked>`;
+      const labVal=(f)=>`<div class="dp-rpt-celltext"><div class="dp-rpt-flabel">${esc(f.label)}</div><div class="dp-rpt-fval">${esc(prettyReportVal(f.value))}</div></div>`;
+      // Only show the app's own "Submitted" line when the report itself has no
+      // Created field to avoid printing the same timestamp twice.
+      const hasCreated=fields.some(f=>/^created$/i.test(String(f.label||'').trim()));
+      const when=(!hasCreated&&r.createdAt)?`<div class="dp-rpt-when">Submitted ${esc(fmtReportWhen(r.createdAt))}</div>`:'';
+      const titleHtml=titleF?`<label class="dp-rpt-fieldwrap dp-rpt-title">${chk(titleF)}<span class="dp-rpt-titletext">${esc(prettyReportVal(titleF.value))}</span></label>`:'';
+      let statusHtml='';
+      if(statusF){ const sv=String(statusF.value||''); const done=/complete|done|finish/i.test(sv); statusHtml=`<div class="dp-rpt-meta"><label class="dp-rpt-fieldwrap dp-rpt-statuswrap">${chk(statusF)}<span class="dp-rpt-status${done?' is-done':''}">${done?'✓ ':''}${esc(sv)}</span></label></div>`; }
+      const hint='<div class="dp-rpt-hint">Untick any field to leave it out when forwarding. <a href="#" data-rp="all">All</a> · <a href="#" data-rp="none">None</a></div>';
+      // A short field whose value is a bit long (e.g. an address) spans the full
+      // grid width so it doesn't get cramped in a half-column.
+      const isFull=(f)=>String(prettyReportVal(f.value)).length>44;
+      const gridHtml=shorts.length?`<div class="dp-rpt-grid">${shorts.map(f=>`<label class="dp-rpt-fieldwrap dp-rpt-cell${isFull(f)?' dp-rpt-cell-full':''}">${chk(f)}${labVal(f)}</label>`).join('')}</div>`:'';
+      const longsHtml=longs.map(f=>`<label class="dp-rpt-fieldwrap dp-rpt-long">${chk(f)}${labVal(f)}</label>`).join('');
+      body.innerHTML=when+titleHtml+statusHtml+hint+gridHtml+longsHtml;
       const fwd=ov.querySelector('[data-rp="fwd"]'); if(fwd) fwd.style.display='';
     }catch(e){ console.error('report load failed',e); body.innerHTML='<div style="color:var(--red)">Could not load the report. Please try again.</div>'; }
   }
