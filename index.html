@@ -102,10 +102,10 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .info-link svg{flex:none;color:var(--text3)}
 .info-link .il-sub{display:block;font-size:11px;color:var(--text3);margin-top:1px}
 .svc-map-sub{font-size:12px;color:var(--text3);margin:-4px 0 6px}
-.svc-map svg{width:100%;max-width:420px;display:block;margin:0 auto}
-.svc-ring{fill:none;stroke:var(--text3);stroke-width:1.4;stroke-dasharray:5 4;opacity:.75}
-.svc-ringfill{fill:var(--green);opacity:.06}
-.svc-city{font-size:11px;font-weight:600}
+.svc-map svg{width:100%;max-width:440px;display:block;margin:0 auto;border-radius:12px;border:1px solid var(--border)}
+.svc-mk{stroke:#fff;stroke-width:1.5}
+.svc-lbl{font-size:11px;font-weight:700;paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round}
+.svc-ring{fill:#16A37F;fill-opacity:.09;stroke:#0B7A5E;stroke-width:2;stroke-dasharray:6 5}
 .svc-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:12px;color:var(--text2)}
 .svc-legend span{display:inline-flex;align-items:center;gap:6px}
 .svc-lg-dot{width:11px;height:11px;border-radius:50%;flex:none}
@@ -2551,33 +2551,40 @@ function applyZoom(z){
 function changeZoom(dir){ var z=Math.round((jcZoom+dir*0.1)*10)/10; z=Math.max(0.8,Math.min(1.5,z)); try{ localStorage.setItem('jc-zoom', z); }catch(e){} applyZoom(z); }
 function toggleSettingsMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('settings-menu'); if(m) m.classList.toggle('open'); var i=document.getElementById('info-menu'); if(i) i.classList.remove('open'); }
 function toggleInfoMenu(e){ if(e) e.stopPropagation(); var m=document.getElementById('info-menu'); if(m) m.classList.toggle('open'); var s=document.getElementById('settings-menu'); if(s) s.classList.remove('open'); }
-// Self-contained SVG map of the JCIT service area + 20-mile commute radius
-// (from the Employee Handbook). City dots are plotted by real relative
-// geography (equirectangular projection centred on Seattle); no external map
-// tiles, so it needs no CSP change and works offline + in dark mode.
+// Service-area map: the JCIT office + a 20-mile commute radius (from the
+// Employee Handbook) drawn over a real OpenStreetMap basemap. The basemap is
+// 8 self-hosted OSM tiles (assets/map/, zoom 9) placed as same-origin SVG
+// <image>s — no external map tiles/JS, so no CSP change, no API key, works
+// offline. City dots + the ring are projected into the tile pixel grid via
+// Web Mercator so they land on the real cities. Overlay colours are fixed
+// (map is always light) with white text halos for legibility.
 function openServiceMap(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
-  var svg='<div class="svc-map"><svg viewBox="0 0 380 545" role="img" aria-label="JCIT service area: 20-mile radius around Seattle with standard and outside-area cities">'
-    +'<circle class="svc-ringfill" cx="200" cy="280" r="120"/><circle class="svc-ring" cx="200" cy="280" r="120"/>'
-    +'<text x="200" y="164" text-anchor="middle" font-size="10.5" fill="var(--text3)">20-mile radius</text>'
-    +'<g fill="#E0952A"><circle cx="236.4" cy="125.6" r="5"/><circle cx="283.8" cy="311.5" r="5"/><circle cx="205.5" cy="397.6" r="5"/><circle cx="168.6" cy="426.3" r="5"/><circle cx="41.1" cy="515.4" r="5"/></g>'
-    +'<g class="svc-city" fill="var(--text2)"><text x="245" y="129">Everett</text><text x="277" y="315" text-anchor="end">Issaquah</text><text x="197" y="401" text-anchor="end">Federal Way</text><text x="161" y="430" text-anchor="end">Tacoma</text><text x="50" y="519">Olympia</text></g>'
-    +'<g fill="var(--green)"><circle cx="204.7" cy="191" r="5"/><circle cx="197.4" cy="218.1" r="5"/><circle cx="258.9" cy="251.9" r="5"/><circle cx="236.5" cy="278.4" r="5"/><circle cx="232.2" cy="331.1" r="5"/><circle cx="227.2" cy="373.4" r="5"/></g>'
-    +'<g class="svc-city" fill="var(--green-dark)"><text x="213" y="188">Lynnwood</text><text x="190" y="222" text-anchor="end">Shoreline</text><text x="267" y="255">Redmond</text><text x="245" y="282">Bellevue</text><text x="241" y="335">Renton</text><text x="236" y="377">Kent</text></g>'
-    +'<circle cx="200" cy="280" r="7" fill="var(--text)"/><circle cx="200" cy="280" r="3" fill="var(--surface)"/>'
-    +'<text x="200" y="266" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--text)">Seattle</text>'
+  var tiles=[['9_81_177',0,0],['9_82_177',256,0],['9_81_178',0,256],['9_82_178',256,256],['9_81_179',0,512],['9_82_179',256,512],['9_81_180',0,768],['9_82_180',256,768]];
+  var tileHtml=tiles.map(function(t){ return '<image href="/assets/map/'+t[0]+'.png" x="'+t[1]+'" y="'+t[2]+'" width="256" height="256"/>'; }).join('');
+  var svg='<div class="svc-map"><svg viewBox="0 0 512 1024" role="img" aria-label="Map of the JCIT service area: a 20-mile radius around the Seattle office with standard and outside-area cities">'
+    +'<g>'+tileHtml+'</g>'
+    +'<circle class="svc-ring" cx="261.9" cy="442.5" r="156.3"/>'
+    +'<text class="svc-lbl" x="261.9" y="292" text-anchor="middle" fill="#0B5E49">20-mile radius</text>'
+    +'<g class="svc-mk" fill="#E0952A"><circle cx="369.3" cy="505" r="5.5"/><circle cx="307.6" cy="261.9" r="5.5"/><circle cx="267.3" cy="616.9" r="5.5"/><circle cx="219.4" cy="654.1" r="5.5"/><circle cx="53.2" cy="769.2" r="5.5"/></g>'
+    +'<g class="svc-lbl" fill="#8a5a00"><text x="377" y="509">Issaquah</text><text x="316" y="266">Everett</text><text x="259" y="621" text-anchor="end">Federal Way</text><text x="211" y="658" text-anchor="end">Tacoma</text><text x="61" y="773">Olympia</text></g>'
+    +'<g class="svc-mk" fill="#16A37F"><circle cx="266.4" cy="347.8" r="5.5"/><circle cx="256.8" cy="383.1" r="5.5"/><circle cx="336.9" cy="427.3" r="5.5"/><circle cx="307.8" cy="461.9" r="5.5"/><circle cx="302.1" cy="530.5" r="5.5"/><circle cx="295.7" cy="585.4" r="5.5"/></g>'
+    +'<g class="svc-lbl" fill="#0B5E49"><text x="274" y="352">Lynnwood</text><text x="249" y="387" text-anchor="end">Shoreline</text><text x="345" y="431">Redmond</text><text x="316" y="466">Bellevue</text><text x="310" y="535">Renton</text><text x="304" y="589">Kent</text></g>'
+    +'<circle cx="261.9" cy="442.5" r="8" fill="#D6353F" stroke="#fff" stroke-width="2"/><circle cx="261.9" cy="442.5" r="3" fill="#fff"/>'
+    +'<text class="svc-lbl" x="261.9" y="428" text-anchor="middle" fill="#1a2230" font-size="12">JCIT Office</text>'
+    +'<text x="506" y="1017" text-anchor="end" font-size="9" fill="#333" paint-order="stroke" stroke="#fff" stroke-width="2.5">© OpenStreetMap contributors</text>'
     +'</svg></div>';
   var legend='<div class="svc-legend">'
-    +'<span><span class="svc-lg-dot" style="background:var(--green)"></span>Standard service area</span>'
+    +'<span><span class="svc-lg-dot" style="background:#16A37F"></span>Standard service area</span>'
     +'<span><span class="svc-lg-dot" style="background:#E0952A"></span>Outside standard area (commute compensable)</span>'
-    +'<span><span class="svc-lg-dot" style="background:transparent;border:1.4px dashed var(--text3)"></span>20-mile radius</span>'
+    +'<span><span class="svc-lg-dot" style="background:transparent;border:1.6px dashed #0B7A5E"></span>20-mile radius</span>'
     +'</div>';
-  var note='<div class="svc-note">Commute time within the 20-mile radius isn’t paid without prior approval from the managing partners. Note: Issaquah and Federal Way sit inside the 20-mile ring but are treated as outside the standard service area per the handbook.</div>';
+  var note='<div class="svc-note">Commute time within the 20-mile radius isn’t paid without prior approval from the managing partners. Note: Issaquah sits inside the 20-mile ring but is treated as outside the standard service area per the handbook.</div>';
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:560px;width:94vw">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title">Service area &amp; commute radius</span><button class="dp-close" data-sm="close">✕</button></div>'
-    +'<div class="dp-modal-bd"><div class="svc-map-sub">20-mile radius from Seattle · from the JCIT Employee Handbook</div>'+svg+legend+note+'</div>'
+    +'<div class="dp-modal-bd"><div class="svc-map-sub">20-mile radius from the JCIT office (2811 Fairview Ave E, Seattle) · from the Employee Handbook</div>'+svg+legend+note+'</div>'
     +'<div class="dp-modal-ft"><span></span><button class="btn btn-sm" data-sm="close">Close</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
