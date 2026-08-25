@@ -116,8 +116,10 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .pk-name{font-size:14px;color:var(--text);font-weight:500;display:block}
 .pk-sub{font-size:12px;color:var(--text3);margin-top:1px;display:block;text-transform:capitalize}
 .pk-dist{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
-.pk-map{margin-bottom:12px}
-.pk-map svg{width:100%;display:block;border-radius:12px;border:1px solid var(--border);background:var(--surface2)}
+.pk-map{height:340px;margin-bottom:12px;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface2)}
+.pk-map .leaflet-container{height:100%;width:100%;font:inherit;background:var(--surface2)}
+.pk-map .leaflet-popup-content{font-size:13px;line-height:1.5}
+.pk-map .leaflet-popup-content a{color:var(--green)}
 .settings-row{margin-bottom:16px}
 .settings-row:last-child{margin-bottom:0}
 .settings-row h4{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:8px}
@@ -2604,42 +2606,49 @@ function openServiceMap(e){
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-sm="close"]'))) cleanup(); });
 }
-// Web Mercator global-pixel helpers (match the service-area map) for placing
-// the site + parking pins on the tile grid at a given zoom.
-function pkLon2gx(lon,Z){ return (lon+180)/360*256*Math.pow(2,Z); }
-function pkLat2gy(lat,Z){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*256*Math.pow(2,Z); }
-// Builds the parking map SVG (basemap tiles as <image> placeholders + parking
-// pins + a red site pin), centred on the geocoded site. Tiles get href'd later
-// by loadParkingTiles() from the authenticated /api/maptile proxy.
-function parkingMapHtml(data){
-  var Z=15, W=440, H=360, s=data.point;
-  var sGX=pkLon2gx(s.lon,Z), sGY=pkLat2gy(s.lat,Z), oX=sGX-W/2, oY=sGY-H/2, n=Math.pow(2,Z);
-  var tileHtml='';
-  for(var tx=Math.floor(oX/256); tx<=Math.floor((oX+W)/256); tx++){
-    for(var ty=Math.floor(oY/256); ty<=Math.floor((oY+H)/256); ty++){
-      if(tx<0||ty<0||tx>=n||ty>=n) continue;
-      tileHtml+='<image data-z="'+Z+'" data-x="'+tx+'" data-y="'+ty+'" x="'+(tx*256-oX).toFixed(1)+'" y="'+(ty*256-oY).toFixed(1)+'" width="256" height="256"/>';
-    }
-  }
-  var pinHtml=(data.parking||[]).map(function(p){
-    var px=pkLon2gx(p.lon,Z)-oX, py=pkLat2gy(p.lat,Z)-oY;
-    if(px<-8||py<-8||px>W+8||py>H+8) return '';
-    return '<circle class="svc-mk" fill="#E0952A" cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5"/>';
-  }).join('');
-  return '<div class="pk-map"><svg viewBox="0 0 '+W+' '+H+'"><g>'+tileHtml+'</g>'+pinHtml
-    +'<circle cx="'+(W/2)+'" cy="'+(H/2)+'" r="7" fill="#D6353F" stroke="#fff" stroke-width="2"/><circle cx="'+(W/2)+'" cy="'+(H/2)+'" r="3" fill="#fff"/>'
-    +'<text x="'+(W-5)+'" y="'+(H-6)+'" text-anchor="end" font-size="9" fill="#333" paint-order="stroke" stroke="#fff" stroke-width="2.5">© OpenStreetMap contributors</text>'
-    +'</svg></div>';
-}
-// Fetches each basemap tile through the authenticated proxy and swaps it into
-// the SVG as a blob URL (tracked so it can be revoked when the modal closes).
-function loadParkingTiles(root, token, blobUrls){
-  root.querySelectorAll('image[data-z]').forEach(function(img){
-    fetch('/api/maptile?z='+img.getAttribute('data-z')+'&x='+img.getAttribute('data-x')+'&y='+img.getAttribute('data-y'),{headers:{'X-Jetcity-Authorization':'Bearer '+token}})
-      .then(function(r){ return r.ok?r.blob():null; })
-      .then(function(b){ if(!b) return; var u=URL.createObjectURL(b); blobUrls.push(u); img.setAttribute('href',u); img.setAttributeNS('http://www.w3.org/1999/xlink','href',u); })
-      .catch(function(){});
+// Leaflet (self-hosted, lazy-loaded like pdf.js) powers the interactive parking
+// map — real pan/zoom + tappable pins. Basemap tiles come from the
+// authenticated /api/maptile proxy via a custom tile layer that fetches each
+// tile with the bearer header and shows it as a blob URL, so the browser makes
+// no external calls and the endpoint stays authenticated (never an open proxy).
+let leafletPromise=null;
+function ensureLeaflet(){
+  if(window.L) return Promise.resolve(window.L);
+  if(leafletPromise) return leafletPromise;
+  leafletPromise=new Promise(function(resolve,reject){
+    var link=document.createElement('link'); link.rel='stylesheet'; link.href='/vendor/leaflet-1.9.4.min.css'; document.head.appendChild(link);
+    var s=document.createElement('script'); s.src='/vendor/leaflet-1.9.4.min.js';
+    s.onload=function(){ if(window.L) resolve(window.L); else { leafletPromise=null; reject(new Error('Leaflet unavailable')); } };
+    s.onerror=function(){ leafletPromise=null; reject(new Error('Failed to load map library')); };
+    document.head.appendChild(s);
   });
+  return leafletPromise;
+}
+async function renderParkingMap(container, data, token, address, blobUrls){
+  var L=await ensureLeaflet();
+  var site=data.point;
+  var map=L.map(container,{center:[site.lat,site.lon],zoom:15,zoomControl:true,scrollWheelZoom:true});
+  var Auth=L.TileLayer.extend({ createTile:function(coords,done){
+    var img=document.createElement('img'); img.alt='';
+    fetch('/api/maptile?z='+coords.z+'&x='+coords.x+'&y='+coords.y,{headers:{'X-Jetcity-Authorization':'Bearer '+token}})
+      .then(function(r){ return r.ok?r.blob():Promise.reject(); })
+      .then(function(b){ var u=URL.createObjectURL(b); blobUrls.push(u); img.onload=function(){ done(null,img); }; img.onerror=function(){ done(new Error('tile'),img); }; img.src=u; })
+      .catch(function(){ done(new Error('tile'),img); });
+    return img;
+  }});
+  new Auth('',{minZoom:12,maxZoom:18,tileSize:256,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  function fmtDist(mi){ return mi<0.1?Math.round(mi*5280)+' ft':mi.toFixed(1)+' mi'; }
+  L.circleMarker([site.lat,site.lon],{radius:7,weight:2,color:'#fff',fillColor:'#D6353F',fillOpacity:1}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
+  (data.parking||[]).forEach(function(p){
+    var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
+    var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
+    var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+'<br><a href="'+esc(dir)+'" target="_blank" rel="noopener">Walking directions ↗</a>';
+    L.circleMarker([p.lat,p.lon],{radius:6,weight:1.5,color:'#fff',fillColor:'#E0952A',fillOpacity:1}).addTo(map).bindPopup(html);
+  });
+  var pts=[[site.lat,site.lon]].concat((data.parking||[]).map(function(p){ return [p.lat,p.lon]; }));
+  if(pts.length>1){ try{ map.fitBounds(pts,{padding:[30,30],maxZoom:16}); }catch(e){} }
+  setTimeout(function(){ try{ map.invalidateSize(); }catch(e){} },60);
+  return map;
 }
 // Shows an in-app map + list of parking near an address, each with its
 // straight-line distance from the site (nearest first), from the free-OSM
@@ -2650,7 +2659,7 @@ async function openParkingList(address){
   address=(address||'').trim(); if(!address) return;
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
   var gmaps='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('parking near '+address);
-  var blobUrls=[];
+  var blobUrls=[]; var pkMap=null;
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title">Parking near the site</span><button class="dp-close" data-pk="close">✕</button></div>'
@@ -2658,7 +2667,7 @@ async function openParkingList(address){
     +'<div class="dp-modal-ft"><a class="btn btn-sm" href="'+esc(gmaps)+'" target="_blank" rel="noopener">Open in Google Maps</a><button class="btn btn-sm" data-pk="close">Close</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
-  function cleanup(){ blobUrls.forEach(function(u){ try{ URL.revokeObjectURL(u); }catch(e){} }); ov.remove(); document.removeEventListener('keydown',onKey); }
+  function cleanup(){ if(pkMap){ try{ pkMap.remove(); }catch(e){} pkMap=null; } blobUrls.forEach(function(u){ try{ URL.revokeObjectURL(u); }catch(e){} }); ov.remove(); document.removeEventListener('keydown',onKey); }
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-pk="close"]'))) cleanup(); });
   var body=ov.querySelector('[data-pk-body]');
@@ -2669,7 +2678,7 @@ async function openParkingList(address){
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(data.error){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error)+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
-    var mapHtml=data.point?parkingMapHtml(data):'';
+    var mapHtml=data.point?'<div class="pk-map" data-pk-mapc></div>':'';
     var list=data.parking||[];
     var listHtml;
     if(!list.length){
@@ -2683,7 +2692,7 @@ async function openParkingList(address){
       listHtml='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Straight-line distance from the site · nearest first. Tap one for walking directions.</div><div class="pk-list">'+rows+'</div><div style="font-size:11px;color:var(--text3);margin-top:8px">Parking data from OpenStreetMap — not every lot is listed.</div>';
     }
     body.innerHTML=mapHtml+listHtml;
-    if(data.point) loadParkingTiles(body, token, blobUrls);
+    if(data.point){ renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load — the list below still works.</div>'; } }); }
   }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
 }
 // Info-tab "Find parking": type any address, then show the in-app parking list.
