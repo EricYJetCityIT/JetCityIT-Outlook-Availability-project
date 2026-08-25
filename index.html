@@ -112,6 +112,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .svc-note{font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.5}
 .pk-map{height:min(62vh,440px);margin-bottom:10px;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface2)}
 .pk-map .leaflet-container{height:100%;width:100%;font:inherit;background:var(--surface2)}
+.pk-map .pk-site-icon{background:transparent;border:none}
+.pk-map .pk-site-icon svg{filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
 .pk-map .leaflet-popup-content{font-size:13px;line-height:1.5}
 .pk-map .leaflet-popup-content a{color:var(--green)}
 .settings-row{margin-bottom:16px}
@@ -2636,7 +2638,9 @@ async function renderParkingMap(container, data, token, address, blobUrls){
   // Maps on iPhone/iPad, Google Maps everywhere else (origin = current location).
   var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent||'') || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
   function driveUrl(lat,lon){ return isIOS ? 'https://maps.apple.com/?daddr='+lat+','+lon+'&dirflg=d' : 'https://www.google.com/maps/dir/?api=1&destination='+lat+','+lon+'&travelmode=driving'; }
-  L.circleMarker([site.lat,site.lon],{radius:7,weight:2,color:'#fff',fillColor:'#D6353F',fillOpacity:1}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
+  var siteIcon=L.divIcon({className:'pk-site-icon',iconSize:[32,42],iconAnchor:[16,41],popupAnchor:[0,-36],
+    html:'<svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg"><path d="M16 1C8.3 1 2 7.3 2 15c0 9.6 14 26 14 26s14-16.4 14-26C30 7.3 23.7 1 16 1z" fill="#D6353F" stroke="#fff" stroke-width="2.5"/><circle cx="16" cy="15" r="5.5" fill="#fff"/></svg>'});
+  L.marker([site.lat,site.lon],{icon:siteIcon,zIndexOffset:1000,keyboard:false}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
   (data.parking||[]).forEach(function(p){
     var prominent=p.source==='seattle'||/multi-storey|underground/.test(p.type||'')||/garage/i.test(p.name||'');
     var sub=[p.stalls?p.stalls+' stalls':'', p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
