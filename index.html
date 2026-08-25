@@ -2641,10 +2641,17 @@ async function renderParkingMap(container, data, token, address, blobUrls){
   var siteIcon=L.divIcon({className:'pk-site-icon',iconSize:[32,42],iconAnchor:[16,41],popupAnchor:[0,-36],
     html:'<svg width="32" height="42" viewBox="0 0 32 42" xmlns="http://www.w3.org/2000/svg"><path d="M16 1C8.3 1 2 7.3 2 15c0 9.6 14 26 14 26s14-16.4 14-26C30 7.3 23.7 1 16 1z" fill="#D6353F" stroke="#fff" stroke-width="2.5"/><circle cx="16" cy="15" r="5.5" fill="#fff"/></svg>'});
   L.marker([site.lat,site.lon],{icon:siteIcon,zIndexOffset:1000,keyboard:false}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
+  function fmtRate(v){ v=String(v==null?'':v).trim(); return v?(/^\d/.test(v)?'$'+v:v):''; }
   (data.parking||[]).forEach(function(p){
     var prominent=p.source==='seattle'||/multi-storey|underground/.test(p.type||'')||/garage/i.test(p.name||'');
     var sub=[p.stalls?p.stalls+' stalls':'', p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
-    var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+'<br><a href="'+esc(driveUrl(p.lat,p.lon))+'" target="_blank" rel="noopener">Driving directions ↗</a>';
+    var extra='';
+    var r1=fmtRate(p.rate1), ra=fmtRate(p.rateAll), rparts=[];
+    if(r1) rparts.push(/^\$/.test(r1)?r1+'/hr':r1);
+    if(ra && /^\$/.test(ra)) rparts.push(ra+' all day');
+    if(rparts.length) extra+='<br>💲 '+esc(rparts.join(' · '));
+    if(p.hours && /(am|pm)/i.test(p.hours)) extra+='<br>🕒 '+esc(p.hours);
+    var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+extra+'<br><a href="'+esc(driveUrl(p.lat,p.lon))+'" target="_blank" rel="noopener">Driving directions ↗</a>';
     L.circleMarker([p.lat,p.lon],{radius:prominent?8:6,weight:1.5,color:'#fff',fillColor:prominent?'#2563EB':'#E0952A',fillOpacity:1}).addTo(map).bindPopup(html);
   });
   var pts=[[site.lat,site.lon]].concat((data.parking||[]).map(function(p){ return [p.lat,p.lon]; }));

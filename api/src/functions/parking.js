@@ -16,7 +16,7 @@ const CACHE_CONTAINER = 'dispatch';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 // Bump whenever the parking result shape/sources/logic change, so old cached
 // entries are treated as stale instead of masking the change for 30 days.
-const CACHE_VERSION = 2; // 2 = OSM + City of Seattle
+const CACHE_VERSION = 3; // 2 = OSM + City of Seattle; 3 = + Seattle rates/hours
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 // Seattle's official Public Garages and Parking Lots layer (ArcGIS
@@ -98,7 +98,7 @@ async function findParking(lat, lon) {
 async function seattleParking(lat, lon) {
   const params = new URLSearchParams({
     f: 'geojson', where: '1=1',
-    outFields: 'DEA_FACILITY_NAME,FAC_NAME,DEA_STALLS,FAC_TYPE',
+    outFields: 'DEA_FACILITY_NAME,FAC_NAME,DEA_STALLS,FAC_TYPE,RTE_1HR,RTE_ALLDAY,HRS_MONFRI',
     geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
     distance: String(RADIUS_M), units: 'esriSRUnit_Meter',
     spatialRel: 'esriSpatialRelIntersects', outSR: '4326', returnGeometry: 'true',
@@ -120,6 +120,9 @@ async function seattleParking(lat, lon) {
       distanceMi: Math.round(haversineMi(lat, lon, plat, plon) * 100) / 100,
       type: p.FAC_TYPE || '',
       stalls: Number(p.DEA_STALLS) || null,
+      rate1: p.RTE_1HR || null,
+      rateAll: p.RTE_ALLDAY || null,
+      hours: p.HRS_MONFRI || null,
       source: 'seattle',
     });
   }
