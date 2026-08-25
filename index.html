@@ -116,6 +116,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .pk-name{font-size:14px;color:var(--text);font-weight:500;display:block}
 .pk-sub{font-size:12px;color:var(--text3);margin-top:1px;display:block;text-transform:capitalize}
 .pk-dist{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
+.pk-map{margin-bottom:12px}
+.pk-map svg{width:100%;display:block;border-radius:12px;border:1px solid var(--border);background:var(--surface2)}
 .settings-row{margin-bottom:16px}
 .settings-row:last-child{margin-bottom:0}
 .settings-row h4{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:8px}
@@ -2602,14 +2604,53 @@ function openServiceMap(e){
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-sm="close"]'))) cleanup(); });
 }
-// Shows an in-app list of parking near an address, each with its straight-line
-// distance from the site (nearest first), from the free-OSM /api/parking
-// endpoint. Rows link to walking directions from that lot to the site; a
-// Google Maps fallback covers lots OSM doesn't list.
+// Web Mercator global-pixel helpers (match the service-area map) for placing
+// the site + parking pins on the tile grid at a given zoom.
+function pkLon2gx(lon,Z){ return (lon+180)/360*256*Math.pow(2,Z); }
+function pkLat2gy(lat,Z){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*256*Math.pow(2,Z); }
+// Builds the parking map SVG (basemap tiles as <image> placeholders + parking
+// pins + a red site pin), centred on the geocoded site. Tiles get href'd later
+// by loadParkingTiles() from the authenticated /api/maptile proxy.
+function parkingMapHtml(data){
+  var Z=15, W=440, H=360, s=data.point;
+  var sGX=pkLon2gx(s.lon,Z), sGY=pkLat2gy(s.lat,Z), oX=sGX-W/2, oY=sGY-H/2, n=Math.pow(2,Z);
+  var tileHtml='';
+  for(var tx=Math.floor(oX/256); tx<=Math.floor((oX+W)/256); tx++){
+    for(var ty=Math.floor(oY/256); ty<=Math.floor((oY+H)/256); ty++){
+      if(tx<0||ty<0||tx>=n||ty>=n) continue;
+      tileHtml+='<image data-z="'+Z+'" data-x="'+tx+'" data-y="'+ty+'" x="'+(tx*256-oX).toFixed(1)+'" y="'+(ty*256-oY).toFixed(1)+'" width="256" height="256"/>';
+    }
+  }
+  var pinHtml=(data.parking||[]).map(function(p){
+    var px=pkLon2gx(p.lon,Z)-oX, py=pkLat2gy(p.lat,Z)-oY;
+    if(px<-8||py<-8||px>W+8||py>H+8) return '';
+    return '<circle class="svc-mk" fill="#E0952A" cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="5"/>';
+  }).join('');
+  return '<div class="pk-map"><svg viewBox="0 0 '+W+' '+H+'"><g>'+tileHtml+'</g>'+pinHtml
+    +'<circle cx="'+(W/2)+'" cy="'+(H/2)+'" r="7" fill="#D6353F" stroke="#fff" stroke-width="2"/><circle cx="'+(W/2)+'" cy="'+(H/2)+'" r="3" fill="#fff"/>'
+    +'<text x="'+(W-5)+'" y="'+(H-6)+'" text-anchor="end" font-size="9" fill="#333" paint-order="stroke" stroke="#fff" stroke-width="2.5">© OpenStreetMap contributors</text>'
+    +'</svg></div>';
+}
+// Fetches each basemap tile through the authenticated proxy and swaps it into
+// the SVG as a blob URL (tracked so it can be revoked when the modal closes).
+function loadParkingTiles(root, token, blobUrls){
+  root.querySelectorAll('image[data-z]').forEach(function(img){
+    fetch('/api/maptile?z='+img.getAttribute('data-z')+'&x='+img.getAttribute('data-x')+'&y='+img.getAttribute('data-y'),{headers:{'X-Jetcity-Authorization':'Bearer '+token}})
+      .then(function(r){ return r.ok?r.blob():null; })
+      .then(function(b){ if(!b) return; var u=URL.createObjectURL(b); blobUrls.push(u); img.setAttribute('href',u); img.setAttributeNS('http://www.w3.org/1999/xlink','href',u); })
+      .catch(function(){});
+  });
+}
+// Shows an in-app map + list of parking near an address, each with its
+// straight-line distance from the site (nearest first), from the free-OSM
+// /api/parking endpoint. Rows link to walking directions from that lot to the
+// site; a Google Maps fallback covers lots OSM doesn't list. The basemap comes
+// from the /api/maptile proxy so the browser makes no external calls.
 async function openParkingList(address){
   address=(address||'').trim(); if(!address) return;
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
   var gmaps='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('parking near '+address);
+  var blobUrls=[];
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title">Parking near the site</span><button class="dp-close" data-pk="close">✕</button></div>'
@@ -2617,7 +2658,7 @@ async function openParkingList(address){
     +'<div class="dp-modal-ft"><a class="btn btn-sm" href="'+esc(gmaps)+'" target="_blank" rel="noopener">Open in Google Maps</a><button class="btn btn-sm" data-pk="close">Close</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
-  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  function cleanup(){ blobUrls.forEach(function(u){ try{ URL.revokeObjectURL(u); }catch(e){} }); ov.remove(); document.removeEventListener('keydown',onKey); }
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-pk="close"]'))) cleanup(); });
   var body=ov.querySelector('[data-pk-body]');
@@ -2628,14 +2669,21 @@ async function openParkingList(address){
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(data.error){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error)+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
+    var mapHtml=data.point?parkingMapHtml(data):'';
     var list=data.parking||[];
-    if(!list.length){ body.innerHTML='<div style="color:var(--text2)">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data.</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">OpenStreetMap doesn’t list every lot — “Open in Google Maps” may show more.</div>'; return; }
-    var rows=list.map(function(p){
-      var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
-      var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
-      return '<a class="pk-row" href="'+esc(dir)+'" target="_blank" rel="noopener"><span style="min-width:0"><span class="pk-name">'+esc(p.name)+'</span>'+(sub?'<span class="pk-sub">'+esc(sub)+'</span>':'')+'</span><span class="pk-dist">'+fmtDist(p.distanceMi)+'</span></a>';
-    }).join('');
-    body.innerHTML='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Straight-line distance from the site · nearest first. Tap one for walking directions.</div><div class="pk-list">'+rows+'</div><div style="font-size:11px;color:var(--text3);margin-top:8px">Parking data from OpenStreetMap — not every lot is listed.</div>';
+    var listHtml;
+    if(!list.length){
+      listHtml='<div style="color:var(--text2)">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data.</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">OpenStreetMap doesn’t list every lot — “Open in Google Maps” may show more.</div>';
+    } else {
+      var rows=list.map(function(p){
+        var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
+        var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
+        return '<a class="pk-row" href="'+esc(dir)+'" target="_blank" rel="noopener"><span style="min-width:0"><span class="pk-name">'+esc(p.name)+'</span>'+(sub?'<span class="pk-sub">'+esc(sub)+'</span>':'')+'</span><span class="pk-dist">'+fmtDist(p.distanceMi)+'</span></a>';
+      }).join('');
+      listHtml='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Straight-line distance from the site · nearest first. Tap one for walking directions.</div><div class="pk-list">'+rows+'</div><div style="font-size:11px;color:var(--text3);margin-top:8px">Parking data from OpenStreetMap — not every lot is listed.</div>';
+    }
+    body.innerHTML=mapHtml+listHtml;
+    if(data.point) loadParkingTiles(body, token, blobUrls);
   }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
 }
 // Info-tab "Find parking": type any address, then show the in-app parking list.
