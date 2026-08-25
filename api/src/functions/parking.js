@@ -16,6 +16,9 @@ const CACHE_CONTAINER = 'dispatch';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
+// Seattle's official Public Garages and Parking Lots layer (ArcGIS
+// FeatureServer, free, no key) — augments OSM with garages it misses.
+const SEATTLE_GARAGES = 'https://services.arcgis.com/ZOyb2t4B0UYuYNYH/arcgis/rest/services/Public_Garages_and_Parking_Lots/FeatureServer/1/query';
 const UA = 'JCIT-crew-calendar/1.0 (dylanm@jetcityit.com; internal parking lookup)';
 const RADIUS_M = 800; // ~0.5 mi
 const MAX_RESULTS = 40; // map view — show many; dense areas have 100+ lots
@@ -79,16 +82,45 @@ async function findParking(lat, lon) {
       type: t.parking || '',
       access: t.access || '',
       fee: t.fee || '',
+      source: 'osm',
     });
   }
   out.sort((a, b) => a.distanceMi - b.distanceMi);
-  // In dense areas the nearest lots are tiny private surface lots, so parking
-  // garages (multi-storey / underground / named "garage") — usually the actual
-  // usable option — can fall outside the nearest N. Always keep those too.
-  const isGarage = (p) => /multi-storey|underground/.test(p.type) || /garage/i.test(p.name);
-  const nearest = out.slice(0, MAX_RESULTS);
-  const extraGarages = out.slice(MAX_RESULTS).filter(isGarage);
-  return nearest.concat(extraGarages);
+  return out;
+}
+
+// Seattle's official garages/lots (ArcGIS FeatureServer). Has garages OSM
+// misses (e.g. building garages like Amazon's) plus stall counts. Seattle-city
+// only — returns [] elsewhere or on error, so it purely augments OSM.
+async function seattleParking(lat, lon) {
+  const params = new URLSearchParams({
+    f: 'geojson', where: '1=1',
+    outFields: 'DEA_FACILITY_NAME,FAC_NAME,DEA_STALLS,FAC_TYPE',
+    geometry: `${lon},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
+    distance: String(RADIUS_M), units: 'esriSRUnit_Meter',
+    spatialRel: 'esriSpatialRelIntersects', outSR: '4326', returnGeometry: 'true',
+  });
+  const res = await fetch(`${SEATTLE_GARAGES}?${params.toString()}`, { headers: { 'User-Agent': UA } });
+  if (!res.ok) throw new Error('seattle HTTP ' + res.status);
+  const data = await res.json();
+  const out = [];
+  for (const f of data.features || []) {
+    const c = f.geometry && f.geometry.coordinates;
+    if (!c || c.length < 2) continue;
+    const plon = c[0], plat = c[1];
+    const p = f.properties || {};
+    const name = String(p.DEA_FACILITY_NAME || p.FAC_NAME || 'Public parking').trim().replace(/\s+LOT\s+\d+$/i, '');
+    out.push({
+      name,
+      lat: plat,
+      lon: plon,
+      distanceMi: Math.round(haversineMi(lat, lon, plat, plon) * 100) / 100,
+      type: p.FAC_TYPE || '',
+      stalls: Number(p.DEA_STALLS) || null,
+      source: 'seattle',
+    });
+  }
+  return out;
 }
 
 app.http('parking', {
@@ -117,7 +149,21 @@ app.http('parking', {
       if (!geo) {
         return { jsonBody: { address, point: null, parking: [], error: 'Could not locate that address.' } };
       }
-      const parking = await findParking(geo.lat, geo.lon);
+      const [osm, seattle] = await Promise.all([
+        findParking(geo.lat, geo.lon).catch((e) => { context.log('osm parking failed: ' + e.message); return []; }),
+        seattleParking(geo.lat, geo.lon).catch((e) => { context.log('seattle parking failed: ' + e.message); return []; }),
+      ]);
+      // Seattle facilities are vetted/richer, so drop any OSM lot that duplicates
+      // one within ~40m (0.025mi), then merge and rank by distance from the site.
+      const dupOfSeattle = (o) => seattle.some((s) => haversineMi(o.lat, o.lon, s.lat, s.lon) < 0.025);
+      const mergedAll = seattle.concat(osm.filter((o) => !dupOfSeattle(o)));
+      mergedAll.sort((a, b) => a.distanceMi - b.distanceMi);
+      // Keep the nearest MAX_RESULTS, but always include garages / large lots
+      // even if farther (they're the usable option past the nearest tiny lots).
+      const isKeeper = (p) => /multi-storey|underground/.test(p.type || '') || /garage/i.test(p.name || '') || (p.stalls && p.stalls >= 200);
+      const nearest = mergedAll.slice(0, MAX_RESULTS);
+      const extras = mergedAll.slice(MAX_RESULTS).filter(isKeeper);
+      const parking = nearest.concat(extras);
       const data = {
         address,
         point: { lat: geo.lat, lon: geo.lon },

@@ -2638,10 +2638,10 @@ async function renderParkingMap(container, data, token, address, blobUrls){
   function driveUrl(lat,lon){ return isIOS ? 'https://maps.apple.com/?daddr='+lat+','+lon+'&dirflg=d' : 'https://www.google.com/maps/dir/?api=1&destination='+lat+','+lon+'&travelmode=driving'; }
   L.circleMarker([site.lat,site.lon],{radius:7,weight:2,color:'#fff',fillColor:'#D6353F',fillOpacity:1}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
   (data.parking||[]).forEach(function(p){
-    var garage=/multi-storey|underground/.test(p.type||'')||/garage/i.test(p.name||'');
-    var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
+    var prominent=p.source==='seattle'||/multi-storey|underground/.test(p.type||'')||/garage/i.test(p.name||'');
+    var sub=[p.stalls?p.stalls+' stalls':'', p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
     var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+'<br><a href="'+esc(driveUrl(p.lat,p.lon))+'" target="_blank" rel="noopener">Driving directions ↗</a>';
-    L.circleMarker([p.lat,p.lon],{radius:garage?8:6,weight:1.5,color:'#fff',fillColor:garage?'#2563EB':'#E0952A',fillOpacity:1}).addTo(map).bindPopup(html);
+    L.circleMarker([p.lat,p.lon],{radius:prominent?8:6,weight:1.5,color:'#fff',fillColor:prominent?'#2563EB':'#E0952A',fillOpacity:1}).addTo(map).bindPopup(html);
   });
   var pts=[[site.lat,site.lon]].concat((data.parking||[]).map(function(p){ return [p.lat,p.lon]; }));
   if(pts.length>1){ try{ map.fitBounds(pts,{padding:[30,30],maxZoom:16}); }catch(e){} }
@@ -2677,7 +2677,7 @@ async function openParkingList(address){
     if(data.error){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error)+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
     if(!data.point){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error||'Could not locate that address.')+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
     var note=(data.parking||[]).length
-      ? '<div class="svc-note" style="margin-top:0">Tap a pin for its distance from the site and driving directions · <b style="color:#2563EB">blue</b> = garage, <b style="color:#E0952A">orange</b> = surface lot · parking data from OpenStreetMap (not every lot is listed).</div>'
+      ? '<div class="svc-note" style="margin-top:0">Tap a pin for its distance from the site and driving directions · <b style="color:#2563EB">blue</b> = garage / public lot, <b style="color:#E0952A">orange</b> = other lot · data from OpenStreetMap + City of Seattle (not every lot is listed).</div>'
       : '<div class="svc-note" style="margin-top:0">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data — “Open in Google Maps” below may show more.</div>';
     body.innerHTML='<div class="pk-map" data-pk-mapc></div>'+note;
     renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load. Try “Open in Google Maps” below.</div>'; } });
