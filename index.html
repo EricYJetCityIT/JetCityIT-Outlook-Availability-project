@@ -2632,11 +2632,14 @@ async function renderParkingMap(container, data, token, address, blobUrls){
   }});
   new Auth('',{minZoom:12,maxZoom:18,tileSize:256,attribution:'© OpenStreetMap contributors'}).addTo(map);
   function fmtDist(mi){ return mi<0.1?Math.round(mi*5280)+' ft':mi.toFixed(1)+' mi'; }
+  // Driving directions TO the lot, opening the phone's default maps app: Apple
+  // Maps on iPhone/iPad, Google Maps everywhere else (origin = current location).
+  var isIOS=/iP(hone|ad|od)/.test(navigator.userAgent||'') || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+  function driveUrl(lat,lon){ return isIOS ? 'https://maps.apple.com/?daddr='+lat+','+lon+'&dirflg=d' : 'https://www.google.com/maps/dir/?api=1&destination='+lat+','+lon+'&travelmode=driving'; }
   L.circleMarker([site.lat,site.lon],{radius:7,weight:2,color:'#fff',fillColor:'#D6353F',fillOpacity:1}).addTo(map).bindPopup('<b>Site</b><br>'+esc(address));
   (data.parking||[]).forEach(function(p){
-    var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
     var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
-    var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+'<br><a href="'+esc(dir)+'" target="_blank" rel="noopener">Walking directions ↗</a>';
+    var html='<b>'+esc(p.name)+'</b><br>'+fmtDist(p.distanceMi)+' from site'+(sub?'<br><span style="color:#777;text-transform:capitalize">'+esc(sub)+'</span>':'')+'<br><a href="'+esc(driveUrl(p.lat,p.lon))+'" target="_blank" rel="noopener">Driving directions ↗</a>';
     L.circleMarker([p.lat,p.lon],{radius:6,weight:1.5,color:'#fff',fillColor:'#E0952A',fillOpacity:1}).addTo(map).bindPopup(html);
   });
   var pts=[[site.lat,site.lon]].concat((data.parking||[]).map(function(p){ return [p.lat,p.lon]; }));
