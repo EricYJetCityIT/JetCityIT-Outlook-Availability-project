@@ -110,13 +110,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .svc-legend span{display:inline-flex;align-items:center;gap:6px}
 .svc-lg-dot{width:11px;height:11px;border-radius:50%;flex:none}
 .svc-note{font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.5}
-.pk-list{display:flex;flex-direction:column;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:4px}
-.pk-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:var(--surface);text-decoration:none}
-.pk-row:hover{background:var(--surface2)}
-.pk-name{font-size:14px;color:var(--text);font-weight:500;display:block}
-.pk-sub{font-size:12px;color:var(--text3);margin-top:1px;display:block;text-transform:capitalize}
-.pk-dist{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
-.pk-map{height:340px;margin-bottom:12px;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface2)}
+.pk-map{height:min(62vh,440px);margin-bottom:10px;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--surface2)}
 .pk-map .leaflet-container{height:100%;width:100%;font:inherit;background:var(--surface2)}
 .pk-map .leaflet-popup-content{font-size:13px;line-height:1.5}
 .pk-map .leaflet-popup-content a{color:var(--green)}
@@ -2671,28 +2665,18 @@ async function openParkingList(address){
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-pk="close"]'))) cleanup(); });
   var body=ov.querySelector('[data-pk-body]');
-  function fmtDist(mi){ return mi<0.1 ? Math.round(mi*5280)+' ft' : mi.toFixed(1)+' mi'; }
   try{
     var token=await getApiToken();
     var res=await fetch('/api/parking?address='+encodeURIComponent(address),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
     if(!res.ok) throw new Error('HTTP '+res.status);
     var data=await res.json();
     if(data.error){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error)+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
-    var mapHtml=data.point?'<div class="pk-map" data-pk-mapc></div>':'';
-    var list=data.parking||[];
-    var listHtml;
-    if(!list.length){
-      listHtml='<div style="color:var(--text2)">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data.</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">OpenStreetMap doesn’t list every lot — “Open in Google Maps” may show more.</div>';
-    } else {
-      var rows=list.map(function(p){
-        var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
-        var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
-        return '<a class="pk-row" href="'+esc(dir)+'" target="_blank" rel="noopener"><span style="min-width:0"><span class="pk-name">'+esc(p.name)+'</span>'+(sub?'<span class="pk-sub">'+esc(sub)+'</span>':'')+'</span><span class="pk-dist">'+fmtDist(p.distanceMi)+'</span></a>';
-      }).join('');
-      listHtml='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Straight-line distance from the site · nearest first. Tap one for walking directions.</div><div class="pk-list">'+rows+'</div><div style="font-size:11px;color:var(--text3);margin-top:8px">Parking data from OpenStreetMap — not every lot is listed.</div>';
-    }
-    body.innerHTML=mapHtml+listHtml;
-    if(data.point){ renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load — the list below still works.</div>'; } }); }
+    if(!data.point){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error||'Could not locate that address.')+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
+    var note=(data.parking||[]).length
+      ? '<div class="svc-note" style="margin-top:0">Tap a pin for its distance from the site and walking directions · parking data from OpenStreetMap (not every lot is listed).</div>'
+      : '<div class="svc-note" style="margin-top:0">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data — “Open in Google Maps” below may show more.</div>';
+    body.innerHTML='<div class="pk-map" data-pk-mapc></div>'+note;
+    renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load. Try “Open in Google Maps” below.</div>'; } });
   }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
 }
 // Info-tab "Find parking": type any address, then show the in-app parking list.
