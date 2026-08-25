@@ -110,6 +110,12 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .svc-legend span{display:inline-flex;align-items:center;gap:6px}
 .svc-lg-dot{width:11px;height:11px;border-radius:50%;flex:none}
 .svc-note{font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.5}
+.pk-list{display:flex;flex-direction:column;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-top:4px}
+.pk-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;background:var(--surface);text-decoration:none}
+.pk-row:hover{background:var(--surface2)}
+.pk-name{font-size:14px;color:var(--text);font-weight:500;display:block}
+.pk-sub{font-size:12px;color:var(--text3);margin-top:1px;display:block;text-transform:capitalize}
+.pk-dist{font-size:13px;font-weight:700;color:var(--green);white-space:nowrap}
 .settings-row{margin-bottom:16px}
 .settings-row:last-child{margin-bottom:0}
 .settings-row h4{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:8px}
@@ -2340,9 +2346,6 @@ const JCITDispatch=(function(){
       .map(function(p){return encodeURIComponent(p[0])+'='+encodeURIComponent(p[1]);})
       .join('&');
     const reportUrl='https://app.smartsheet.com/b/form/6ef33a83770a4907b87c360c5ba89b63'+(rptQuery?'?'+rptQuery:'');
-    // Opens the viewer's own maps app with a parking search near the job's
-    // address (no API key / CSP change — it's a normal new-tab link).
-    const parkingUrl=j.address?('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('parking near '+j.address)):'';
     return overlay(j.project,
       `${j.cancelled?`<div style="display:inline-block;background:var(--red);color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 10px;border-radius:6px;margin-bottom:10px">🚫 Cancelled</div>`:''}
       <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
@@ -2352,7 +2355,7 @@ const JCITDispatch=(function(){
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${parkingUrl?`<a class="btn btn-sm" href="${esc(parkingUrl)}" target="_blank" rel="noopener">🅿️ Parking</a>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${j.address?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2599,8 +2602,43 @@ function openServiceMap(e){
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-sm="close"]'))) cleanup(); });
 }
-// Info-tab "Find parking": type any address, opens the viewer's own maps app
-// with a parking search near it (new tab — no API key / CSP change).
+// Shows an in-app list of parking near an address, each with its straight-line
+// distance from the site (nearest first), from the free-OSM /api/parking
+// endpoint. Rows link to walking directions from that lot to the site; a
+// Google Maps fallback covers lots OSM doesn't list.
+async function openParkingList(address){
+  address=(address||'').trim(); if(!address) return;
+  var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
+  var gmaps='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('parking near '+address);
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Parking near the site</span><button class="dp-close" data-pk="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><div class="svc-map-sub">📍 '+esc(address)+'</div><div data-pk-body style="min-height:70px;color:var(--text3);font-size:13px;padding:8px 0">Finding parking…</div></div>'
+    +'<div class="dp-modal-ft"><a class="btn btn-sm" href="'+esc(gmaps)+'" target="_blank" rel="noopener">Open in Google Maps</a><button class="btn btn-sm" data-pk="close">Close</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  ov.addEventListener('click',function(ev){ if(ev.target===ov || (ev.target.closest && ev.target.closest('[data-pk="close"]'))) cleanup(); });
+  var body=ov.querySelector('[data-pk-body]');
+  function fmtDist(mi){ return mi<0.1 ? Math.round(mi*5280)+' ft' : mi.toFixed(1)+' mi'; }
+  try{
+    var token=await getApiToken();
+    var res=await fetch('/api/parking?address='+encodeURIComponent(address),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    if(data.error){ body.innerHTML='<div style="color:var(--text2)">'+esc(data.error)+'</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">Try “Open in Google Maps” below.</div>'; return; }
+    var list=data.parking||[];
+    if(!list.length){ body.innerHTML='<div style="color:var(--text2)">No parking found within '+(data.radiusMi||0.5)+' mi in OpenStreetMap data.</div><div style="margin-top:6px;font-size:12px;color:var(--text3)">OpenStreetMap doesn’t list every lot — “Open in Google Maps” may show more.</div>'; return; }
+    var rows=list.map(function(p){
+      var dir='https://www.google.com/maps/dir/?api=1&origin='+p.lat+','+p.lon+'&destination='+encodeURIComponent(address)+'&travelmode=walking';
+      var sub=[p.type&&p.type.replace(/_/g,' '), p.fee==='yes'?'paid':(p.fee==='no'?'free':''), (p.access&&p.access!=='yes')?p.access:''].filter(Boolean).join(' · ');
+      return '<a class="pk-row" href="'+esc(dir)+'" target="_blank" rel="noopener"><span style="min-width:0"><span class="pk-name">'+esc(p.name)+'</span>'+(sub?'<span class="pk-sub">'+esc(sub)+'</span>':'')+'</span><span class="pk-dist">'+fmtDist(p.distanceMi)+'</span></a>';
+    }).join('');
+    body.innerHTML='<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Straight-line distance from the site · nearest first. Tap one for walking directions.</div><div class="pk-list">'+rows+'</div><div style="font-size:11px;color:var(--text3);margin-top:8px">Parking data from OpenStreetMap — not every lot is listed.</div>';
+  }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
+}
+// Info-tab "Find parking": type any address, then show the in-app parking list.
 function openParkingFinder(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
@@ -2609,7 +2647,7 @@ function openParkingFinder(e){
     +'<div class="dp-modal-hd"><span class="dp-modal-title">Find parking</span><button class="dp-close" data-pk="close">✕</button></div>'
     +'<div class="dp-modal-bd"><label class="dp-fld">Address or place</label>'
     +'<input id="pk-addr" type="text" autocomplete="off" placeholder="e.g. 12920 SE 38th St, Bellevue WA"/>'
-    +'<div id="pk-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Opens your maps app with parking near this address. For a specific job, use the 🅿️ Parking button on the job.</div></div>'
+    +'<div id="pk-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Shows nearby parking with the distance from this address. For a specific job, use the 🅿️ Parking button on the job.</div></div>'
     +'<div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-pk="go">🅿️ Find parking</button></div></div>';
   document.body.appendChild(ov);
   var input=ov.querySelector('#pk-addr'), msg=ov.querySelector('#pk-msg');
@@ -2618,8 +2656,8 @@ function openParkingFinder(e){
   function go(){
     var a=(input.value||'').trim();
     if(!a){ msg.textContent='Enter an address first.'; msg.style.color='var(--red)'; input.focus(); return; }
-    window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('parking near '+a),'_blank','noopener');
     cleanup();
+    openParkingList(a);
   }
   document.addEventListener('keydown',onKey);
   ov.addEventListener('click',function(ev){ var c=ev.target.closest&&ev.target.closest('[data-pk]'); if(!c){ if(ev.target===ov) cleanup(); return; } var a=c.getAttribute('data-pk'); if(a==='close') cleanup(); else if(a==='go') go(); });
