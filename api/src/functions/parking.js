@@ -16,7 +16,7 @@ const CACHE_CONTAINER = 'dispatch';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 // Bump whenever the parking result shape/sources/logic change, so old cached
 // entries are treated as stale instead of masking the change for 30 days.
-const CACHE_VERSION = 3; // 2 = OSM + City of Seattle; 3 = + Seattle rates/hours
+const CACHE_VERSION = 4; // 2 = +Seattle; 3 = +rates/hours; 4 = drop permit-only
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 // Seattle's official Public Garages and Parking Lots layer (ArcGIS
@@ -72,6 +72,7 @@ async function findParking(lat, lon) {
     const plon = el.lon != null ? el.lon : el.center && el.center.lon;
     if (plat == null || plon == null) continue;
     const t = el.tags || {};
+    if (/permit/i.test(t.access || '')) continue; // permit-only — crews can't use it
     const name = t.name || (t.parking ? t.parking.replace(/_/g, ' ') + ' parking' : 'Parking');
     // Dedupe lots that appear as both a node and an enclosing way.
     const key = (t.name || '') + '|' + plat.toFixed(4) + '|' + plon.toFixed(4);
@@ -112,6 +113,9 @@ async function seattleParking(lat, lon) {
     if (!c || c.length < 2) continue;
     const plon = c[0], plat = c[1];
     const p = f.properties || {};
+    // Drop permit-only facilities (reserved for permit holders — crews can't use them).
+    const permit = /permit only/i;
+    if (permit.test(String(p.RTE_1HR || '')) || permit.test(String(p.RTE_ALLDAY || '')) || permit.test(String(p.HRS_MONFRI || ''))) continue;
     const name = String(p.DEA_FACILITY_NAME || p.FAC_NAME || 'Public parking').trim().replace(/\s+LOT\s+\d+$/i, '');
     out.push({
       name,
