@@ -18,7 +18,7 @@ const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 const UA = 'JCIT-crew-calendar/1.0 (dylanm@jetcityit.com; internal parking lookup)';
 const RADIUS_M = 800; // ~0.5 mi
-const MAX_RESULTS = 8;
+const MAX_RESULTS = 40; // map view — show many; dense areas have 100+ lots
 
 function normAddr(a) {
   return String(a).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -82,7 +82,13 @@ async function findParking(lat, lon) {
     });
   }
   out.sort((a, b) => a.distanceMi - b.distanceMi);
-  return out.slice(0, MAX_RESULTS);
+  // In dense areas the nearest lots are tiny private surface lots, so parking
+  // garages (multi-storey / underground / named "garage") — usually the actual
+  // usable option — can fall outside the nearest N. Always keep those too.
+  const isGarage = (p) => /multi-storey|underground/.test(p.type) || /garage/i.test(p.name);
+  const nearest = out.slice(0, MAX_RESULTS);
+  const extraGarages = out.slice(MAX_RESULTS).filter(isGarage);
+  return nearest.concat(extraGarages);
 }
 
 app.http('parking', {
