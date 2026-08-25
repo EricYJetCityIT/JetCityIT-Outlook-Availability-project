@@ -27,6 +27,15 @@ const EDITOR_UPNS = (process.env.EDITOR_UPNS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// The "financial" group — a separate, smaller access group (e.g. for the
+// Invoice tab), independent of editor status. Comma-separated @jetcityit.com
+// emails in the FINANCE_UPNS app setting. Empty/unset => nobody is in it.
+const FINANCE_UPNS = (process.env.FINANCE_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
   cache: true,
@@ -98,14 +107,22 @@ async function requireUser(request) {
 
   const roles = Array.isArray(decoded.roles) ? decoded.roles : [];
   const isEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
+  const isFinance = FINANCE_UPNS.includes(upn);
 
-  return { name: decoded.name || upn, upn, roles, isEditor };
+  return { name: decoded.name || upn, upn, roles, isEditor, isFinance };
 }
 
 // Gate for write/change operations. Reads never call this; writes do.
 function requireEditor(user) {
   if (!user || !user.isEditor) {
     throw new AuthError(403, 'You do not have permission to change this data.');
+  }
+}
+
+// Gate for the financial group (Invoice tab and any invoice data endpoints).
+function requireFinance(user) {
+  if (!user || !user.isFinance) {
+    throw new AuthError(403, 'You do not have permission to view this.');
   }
 }
 
@@ -129,4 +146,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, AuthError, authErrorResponse };

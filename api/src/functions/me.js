@@ -11,7 +11,7 @@ app.http('me', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      return { jsonBody: { upn: user.upn, name: user.name, isEditor: user.isEditor } };
+      return { jsonBody: { upn: user.upn, name: user.name, isEditor: user.isEditor, isFinance: user.isFinance } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
