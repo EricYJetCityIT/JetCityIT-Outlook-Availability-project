@@ -1490,7 +1490,7 @@ async function renderManager(){
   if(mgrMode==='dispatch'){
     subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
-    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(false)}`;
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.boardHtml(false,undefined,currentUserIsEditor)}`;
     return;
   }
 
@@ -1730,6 +1730,14 @@ const JCITDispatch=(function(){
     const r=await res.json().catch(()=>({}));
     await reloadDispatch();
     return { changed: r.synced===true || syncMeta.updatedAt!==before };
+  }
+  // Creates a new job by writing a row to Smartsheet (editor-gated endpoint),
+  // which re-syncs server-side; the caller then reloadDispatch()es to pull it.
+  async function createJob(fields){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs',{method:'POST',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify(fields)});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
   }
   function save(){
     (async()=>{
@@ -2038,25 +2046,34 @@ const JCITDispatch=(function(){
     const dt=new Date(syncMeta.updatedAt);
     return 'Synced automatically from Smartsheet · last updated '+dt.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   }
-  function boardHtml(editable,colorMode){
+  // canAdd = show the in-app "Add job" affordances (a "+ New job" toolbar
+  // button + per-day "+ Add job") WITHOUT enabling full editable mode (drag
+  // roster, inline card edit). Used only by the Manager Dispatch view for
+  // editors; the Crew calendar and Project-reports views pass it false, so the
+  // add buttons never appear there. Creating a job writes a new Smartsheet row
+  // via /api/dispatch/jobs (editor-gated server-side too).
+  function boardHtml(editable,colorMode,canAdd){
     const dates=weekDates(); const weekIso=dates.map(toISO);
     const rosterStrip=editable?rosterStripHtml(weekIso):'';
+    const showAdd=editable||canAdd;
     const cols=dates.map((d,i)=>{
       const iso=toISO(d);
       const jobsHtml=jobsForDate(iso).map(j=>jobCardHtml(j,editable,colorMode)).join('');
-      const addBtn=editable?`<button class="dp-add-job" data-dpact="new" data-date="${iso}">+ Add job</button>`:'';
+      const addBtn=showAdd?`<button class="dp-add-job js-editor-only" data-dpact="new" data-date="${iso}">+ Add job</button>`:'';
       const emptyMsg=(!editable&&!jobsHtml)?'<div style="text-align:center;font-size:11px;color:var(--text3);padding:8px 0">No jobs</div>':'';
       return `<div class="dp-day-col${isTodayISO(iso)?' dp-day-col-today':''}" data-dpact="daycol" data-date="${iso}">
         <div class="dp-day-head"><div class="dp-day-dow">${DAYS[i]}</div><div class="dp-day-num${isTodayISO(iso)?' dp-today':''}">${d.getDate()}</div></div>
         ${jobsHtml}${emptyMsg}${addBtn}
       </div>`;
     }).join('');
+    const refreshBtn=colorMode==='report'?'':'<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>';
+    const newJobBtn=canAdd?`<button class="btn btn-primary btn-sm js-editor-only" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>`:'';
     const toolbar=editable?`<div class="dp-toolbar"><div class="dp-actions">
         <button class="btn btn-ghost btn-sm" data-dpact="roster">Team</button>
         <button class="btn btn-ghost btn-sm" data-dpact="data">Data</button>
       </div>
       <button class="btn btn-primary btn-sm" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>
-    </div>`:`<div class="dp-toolbar"><div class="dp-sync">${colorMode==='report'?'':'<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>'}<span class="dp-sync-text">${syncStatusHtml()}</span></div></div>`;
+    </div>`:`<div class="dp-toolbar"><div class="dp-sync">${refreshBtn}<span class="dp-sync-text">${syncStatusHtml()}</span></div>${newJobBtn}</div>`;
     return `${toolbar}${rosterStrip}<div class="dp-board-wrap"><div class="dp-board">${cols}</div></div>`;
   }
 
@@ -2449,8 +2466,27 @@ const JCITDispatch=(function(){
       if(!data.project){ alert('Project is required.'); return; }
       if(!data.date){ alert('Date is required.'); return; }
       const cur=modal.job;
-      if(cur.id){ Object.assign(cur,data); } else { state.jobs.push(Object.assign({id:uid(),lead:[],technicians:[]},data)); }
-      save(); modal=null; renderModalRoot(); refreshActiveView(); return;
+      if(cur.id){
+        // Editing an existing job is not reachable from the read-only Dispatch
+        // board (cards open a detail popup, not this form), so this path is
+        // effectively unused — kept as the prior local behavior for safety.
+        Object.assign(cur,data); save(); modal=null; renderModalRoot(); refreshActiveView(); return;
+      }
+      // New job → write a Smartsheet row via the editor-gated endpoint, then
+      // re-pull so the board shows it (no full page reload).
+      const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent='Adding…';
+      (async()=>{
+        try{
+          await createJob(data);
+          await reloadDispatch();
+          modal=null; renderModalRoot(); refreshActiveView();
+        }catch(err){
+          console.error('create job failed',err);
+          btn.disabled=false; btn.textContent=orig;
+          alert('Could not add the job: '+String(err.message||err).slice(0,180));
+        }
+      })();
+      return;
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='assign-open'){ const jj=jobById(el.getAttribute('data-id')); modal={type:'assign',id:el.getAttribute('data-id'),orig:jj?{lead:(jj.lead||[]).slice(),technicians:(jj.technicians||[]).slice()}:{lead:[],technicians:[]}}; renderModalRoot(); return; }

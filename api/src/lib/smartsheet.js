@@ -296,6 +296,51 @@ async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames,
   return res.json();
 }
 
+// Creates a brand-new job row at the bottom of the sheet from the in-app
+// "Add job" form (editors only, enforced at the endpoint). Deliberately does
+// NOT set crew (JCIT Lead/Technicians) — crew is assigned afterward via the
+// existing updateJobCrew path, which already handles email resolution. New
+// form rows appending at the bottom matches how Smartsheet's own web form adds
+// them (the sheet isn't auto-sorted). `strict: false` on the picklist-ish
+// cells (Client, Status) lets values through even if the column has validation,
+// mirroring what a person typing in the sheet can do.
+async function addJobRow(fields) {
+  const sheet = await fetchSheet();
+  const { COLUMNS } = resolveColumns(sheet);
+
+  const cells = [];
+  const put = (col, value, extra) => {
+    if (value === undefined || value === null || value === '') return;
+    cells.push({ columnId: col.id, value, ...(extra || {}) });
+  };
+
+  put(COLUMNS.project, fields.project);
+  put(COLUMNS.date, fields.date); // 'YYYY-MM-DD' — Smartsheet DATE columns take ISO
+  put(COLUMNS.address, fields.address);
+  put(COLUMNS.startTime, fields.startTime);
+  put(COLUMNS.duration, fields.duration);
+  put(COLUMNS.poc, fields.poc);
+  put(COLUMNS.notes, fields.notes);
+  put(COLUMNS.client, fields.client, { strict: false });
+  if (fields.crewSize !== undefined && fields.crewSize !== null && fields.crewSize !== '') {
+    const n = Number(fields.crewSize);
+    if (!Number.isNaN(n) && n > 0) put(COLUMNS.crewSize, n);
+  }
+  if (fields.status) put(COLUMNS.status, fields.status, { strict: false });
+
+  const body = { toBottom: true, cells };
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet add row error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
@@ -481,6 +526,7 @@ module.exports = {
   transformSheetToDispatch,
   resolveColumns,
   updateJobCrew,
+  addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,
 };
