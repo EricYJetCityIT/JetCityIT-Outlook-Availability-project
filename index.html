@@ -361,6 +361,13 @@ input[type=text]::placeholder{color:var(--text3)}
 /* ── Crew calendar / Dispatch board ── */
 .dp-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px}
 .dp-actions{display:flex;gap:8px}
+.dp-sync{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text3)}
+.dp-refresh{border:1px solid var(--border2);background:var(--surface);color:var(--text2);border-radius:6px;width:26px;height:26px;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:15px;line-height:1;flex-shrink:0}
+.dp-refresh:hover{background:var(--surface2);color:var(--text)}
+.dp-refresh:disabled{cursor:default;opacity:.65}
+.dp-refresh .dp-refresh-ic{display:inline-block}
+.dp-refresh.is-spinning .dp-refresh-ic{animation:dp-spin .8s linear infinite}
+@keyframes dp-spin{to{transform:rotate(360deg)}}
 .dp-roster-strip{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px}
 .dp-roster-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .dp-chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -1688,6 +1695,32 @@ const JCITDispatch=(function(){
     })();
     return dispatchLoadPromise;
   }
+  // Unconditional re-pull of the shared dispatch state (unlike ensureLoaded,
+  // which fetches once per session). Used by the manual Refresh button so an
+  // open tab picks up sheet edits without a full page reload.
+  async function reloadDispatch(){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    state.workers=data.workers||[];
+    state.jobs=data.jobs||[];
+    syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
+    dispatchLoaded=true;
+  }
+  // Triggers a fresh Smartsheet -> Cosmos sync (user-authed endpoint), then
+  // re-pulls the board. Returns { changed } — whether the sheet had actually
+  // changed since the last sync (drives the "updated" vs "already up to date"
+  // confirmation).
+  async function refreshFromSmartsheet(){
+    const token=await getApiToken();
+    const before=syncMeta.updatedAt;
+    const res=await fetch('/api/dispatch/refresh',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const r=await res.json().catch(()=>({}));
+    await reloadDispatch();
+    return { changed: r.synced===true || syncMeta.updatedAt!==before };
+  }
   function save(){
     (async()=>{
       try{
@@ -2013,7 +2046,7 @@ const JCITDispatch=(function(){
         <button class="btn btn-ghost btn-sm" data-dpact="data">Data</button>
       </div>
       <button class="btn btn-primary btn-sm" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>
-    </div>`:`<div class="dp-toolbar"><div style="font-size:12px;color:var(--text3)">${syncStatusHtml()}</div></div>`;
+    </div>`:`<div class="dp-toolbar"><div class="dp-sync">${colorMode==='report'?'':'<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>'}<span class="dp-sync-text">${syncStatusHtml()}</span></div></div>`;
     return `${toolbar}${rosterStrip}<div class="dp-board-wrap"><div class="dp-board">${cols}</div></div>`;
   }
 
@@ -2427,6 +2460,35 @@ const JCITDispatch=(function(){
           if(un.length){ const j=jobById(id); if(j){ j.lead=(j.lead||[]).filter(n=>un.indexOf(n)<0); j.technicians=(j.technicians||[]).filter(n=>un.indexOf(n)<0); } if(modal) modal.orig={lead:(jobById(id).lead||[]).slice(),technicians:(jobById(id).technicians||[]).slice()}; renderModalRoot(); refreshActiveView(); const m2=document.getElementById('dp-assign-msg'); if(m2){ m2.style.color='var(--red)'; m2.textContent='No email on file for: '+un.join(', ')+' — couldn’t add. Others saved.'; } return; }
           modal=null; renderModalRoot(); refreshActiveView();
         }catch(err){ console.error('save crew failed',err); btn.disabled=false; btn.textContent=orig; if(msg){ msg.style.color='var(--red)'; msg.textContent='Could not save — '+String(err.message||err).slice(0,140); } }
+      })();
+      return;
+    }
+    if(act==='refresh'){
+      const btn=el.closest('.dp-refresh')||el;
+      if(btn.classList.contains('is-spinning')) return; // ignore double-taps
+      const wrap=btn.closest('.dp-sync'); const txt=wrap?wrap.querySelector('.dp-sync-text'):null;
+      const prev=txt?txt.textContent:'';
+      btn.classList.add('is-spinning'); btn.disabled=true;
+      if(txt){ txt.style.color=''; txt.textContent='Checking Smartsheet…'; }
+      (async()=>{
+        try{
+          const {changed}=await refreshFromSmartsheet();
+          // Re-render rebuilds the toolbar (fresh timestamp + a new non-spinning
+          // button), so we then tag a brief confirmation onto the new text.
+          // Also clear the original button explicitly, in case the active view
+          // isn't one refreshActiveView re-renders (defensive — the button only
+          // ships on the Dispatch/Crew boards, which it does re-render).
+          btn.classList.remove('is-spinning'); btn.disabled=false;
+          refreshActiveView();
+          const t2=document.querySelector('.view.active .dp-sync .dp-sync-text');
+          if(t2){ const base=t2.textContent; t2.textContent=base+(changed?'  ✓ updated':'  ✓ already up to date');
+            setTimeout(()=>{ const t3=document.querySelector('.view.active .dp-sync .dp-sync-text'); if(t3&&t3.textContent.indexOf('✓')>=0) t3.textContent=base; },2500); }
+        }catch(err){
+          console.error('refresh failed',err);
+          btn.classList.remove('is-spinning'); btn.disabled=false;
+          if(txt){ txt.style.color='var(--red)'; txt.textContent='Couldn’t refresh — try again';
+            setTimeout(()=>{ if(txt){ txt.style.color=''; txt.textContent=prev; } },3000); }
+        }
       })();
       return;
     }

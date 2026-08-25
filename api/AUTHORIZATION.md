@@ -8,6 +8,7 @@ administer it.
 | Capability | Who |
 |---|---|
 | **Read** availability, crew calendar, and dispatch — **including client phone numbers** | Any signed-in `@jetcityit.com` user (techs need this to call/text on site) |
+| **Refresh** the board from Smartsheet on demand (`POST /api/dispatch/refresh`) | Any signed-in `@jetcityit.com` user (read-only pull; runs the same sync the cron uses, guarded by the per-user rate limit) |
 | **Submit / edit own** availability | Any signed-in tech (own record only) |
 | **Reassign crew** on a job (`PUT /api/dispatch/jobs/{id}/crew`) | **Editors only** |
 | **Clear a whole week's** availability (`DELETE /api/availability/{week}`) | **Editors only** |
