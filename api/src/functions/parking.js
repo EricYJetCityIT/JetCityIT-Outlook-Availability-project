@@ -14,6 +14,9 @@ const { getContainer } = require('../lib/cosmos');
 
 const CACHE_CONTAINER = 'dispatch';
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Bump whenever the parking result shape/sources/logic change, so old cached
+// entries are treated as stale instead of masking the change for 30 days.
+const CACHE_VERSION = 2; // 2 = OSM + City of Seattle
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
 // Seattle's official Public Garages and Parking Lots layer (ArcGIS
@@ -138,7 +141,7 @@ app.http('parking', {
 
       try {
         const { resource } = await container.item(id, id).read();
-        if (resource && resource.cachedAt && Date.now() - resource.cachedAt < CACHE_TTL_MS) {
+        if (resource && resource.version === CACHE_VERSION && resource.cachedAt && Date.now() - resource.cachedAt < CACHE_TTL_MS) {
           return { jsonBody: { ...resource.data, cached: true } };
         }
       } catch (e) {
@@ -172,7 +175,7 @@ app.http('parking', {
       };
 
       try {
-        await container.items.upsert({ id, cachedAt: Date.now(), data });
+        await container.items.upsert({ id, version: CACHE_VERSION, cachedAt: Date.now(), data });
       } catch (e) {
         context.log('parking cache write failed: ' + e.message);
       }
