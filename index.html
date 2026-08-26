@@ -368,6 +368,9 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-refresh .dp-refresh-ic{display:inline-block}
 .dp-refresh.is-spinning .dp-refresh-ic{animation:dp-spin .8s linear infinite}
 @keyframes dp-spin{to{transform:rotate(360deg)}}
+.dp-notes-edit-wrap{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.dp-notes-ta{width:100%;box-sizing:border-box;font-family:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;resize:vertical}
+.dp-notes-ta:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 2px var(--green-light)}
 .dp-roster-strip{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px}
 .dp-roster-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .dp-chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -1739,6 +1742,14 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Saves the job's "Work Order Notes" back to Smartsheet (editor-gated endpoint,
+  // which re-syncs server-side). Two-way with the sheet's notes column.
+  async function saveNotes(jobId,text){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/notes',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({notes:text})});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   function save(){
     (async()=>{
       try{
@@ -2427,7 +2438,16 @@ const JCITDispatch=(function(){
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
-      ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
+      ${isManagerView
+        ? `<div class="dp-notes-edit-wrap">
+            <label class="dp-fld" style="margin:0 0 4px">📝 Notes <span style="font-weight:400;color:var(--text3)">· synced to Smartsheet</span></label>
+            <textarea id="dp-notes-edit" class="dp-notes-ta" rows="3" placeholder="Add a note for the crew…">${esc(j.notes||'')}</textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+              <button class="btn btn-primary btn-sm" data-dpact="notes-save" data-id="${j.id}">Save notes</button>
+              <span id="dp-notes-msg" style="font-size:12px;color:var(--text3)"></span>
+            </div>
+          </div>`
+        : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
       `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
@@ -2490,6 +2510,25 @@ const JCITDispatch=(function(){
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='assign-open'){ const jj=jobById(el.getAttribute('data-id')); modal={type:'assign',id:el.getAttribute('data-id'),orig:jj?{lead:(jj.lead||[]).slice(),technicians:(jj.technicians||[]).slice()}:{lead:[],technicians:[]}}; renderModalRoot(); return; }
+    if(act==='notes-save'){
+      const id=el.getAttribute('data-id'); const ta=document.getElementById('dp-notes-edit'); if(!ta) return;
+      const text=ta.value; const btn=el; const orig=btn.textContent; const msg=document.getElementById('dp-notes-msg');
+      btn.disabled=true; btn.textContent='Saving…'; if(msg){ msg.style.color='var(--text3)'; msg.textContent=''; }
+      (async()=>{
+        try{
+          await saveNotes(id,text);
+          const j=jobById(id); if(j){ j.notes=text; if(modal&&modal.type==='detail') modal.job=j; }
+          refreshActiveView(); // update the board behind; modal (separate root) stays open
+          btn.disabled=false; btn.textContent=orig;
+          const m=document.getElementById('dp-notes-msg'); if(m){ m.style.color='var(--green-dark)'; m.textContent='Saved ✓ synced to Smartsheet'; }
+        }catch(err){
+          console.error('save notes failed',err);
+          btn.disabled=false; btn.textContent=orig;
+          const m=document.getElementById('dp-notes-msg'); if(m){ m.style.color='var(--red)'; m.textContent='Could not save — '+String(err.message||err).slice(0,120); }
+        }
+      })();
+      return;
+    }
     // Toggles update the pending crew locally and re-render the modal only —
     // nothing is written until "Save crew" (avoids a Smartsheet re-sync on every
     // tap, and lets the user cancel).

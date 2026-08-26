@@ -296,6 +296,28 @@ async function updateJobCrew(rowId, leadColumnId, technicianColumnId, leadNames,
   return res.json();
 }
 
+// Updates the "Work Order Notes" cell on one job row — the two-way notes field
+// edited from the app's job detail popup (editors only, enforced at the
+// endpoint). A plain text column: value:'' would leave an empty string, so we
+// send value:null to clear when the note is emptied (mirrors updateJobCrew's
+// clear-with-null gotcha).
+async function updateJobNotes(rowId, notesColumnId, text) {
+  const trimmed = (text == null ? '' : String(text));
+  const body = [
+    { id: rowId, cells: [{ columnId: notesColumnId, value: trimmed.length ? trimmed : null }] },
+  ];
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet notes update error ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
 // Creates a brand-new job row at the bottom of the sheet from the in-app
 // "Add job" form (editors only, enforced at the endpoint). Deliberately does
 // NOT set crew (JCIT Lead/Technicians) — crew is assigned afterward via the
@@ -526,6 +548,7 @@ module.exports = {
   transformSheetToDispatch,
   resolveColumns,
   updateJobCrew,
+  updateJobNotes,
   addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,
