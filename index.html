@@ -371,6 +371,8 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-notes-edit-wrap{margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
 .dp-notes-ta{width:100%;box-sizing:border-box;font-family:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;resize:vertical}
 .dp-notes-ta:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 2px var(--green-light)}
+.dp-btn-cancel{border-color:var(--unavail-border);color:var(--unavail-text)}
+.dp-btn-cancel:hover{background:var(--unavail-bg)}
 .dp-roster-strip{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px}
 .dp-roster-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .dp-chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -1750,6 +1752,14 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Sets a job's Status in Smartsheet (editor-gated). Used by the Cancel/Restore
+  // button: 'Cancelled' to cancel, '' to restore. Server re-syncs.
+  async function setJobStatus(jobId,status){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/status',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({status:status})});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   function save(){
     (async()=>{
       try{
@@ -2449,7 +2459,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>${j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`}`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2510,6 +2520,24 @@ const JCITDispatch=(function(){
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='assign-open'){ const jj=jobById(el.getAttribute('data-id')); modal={type:'assign',id:el.getAttribute('data-id'),orig:jj?{lead:(jj.lead||[]).slice(),technicians:(jj.technicians||[]).slice()}:{lead:[],technicians:[]}}; renderModalRoot(); return; }
+    if(act==='cancel-job'){
+      const id=el.getAttribute('data-id'); const target=el.getAttribute('data-status'); const cancelling=(target==='Cancelled');
+      if(cancelling && !confirm('Cancel this job? It will show as cancelled (struck through) for everyone, and sync to Smartsheet.')) return;
+      const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent=cancelling?'Cancelling…':'Restoring…';
+      (async()=>{
+        try{
+          await setJobStatus(id,target);
+          const j=jobById(id); if(j){ j.status=target; j.cancelled=cancelling; if(modal&&modal.type==='detail') modal.job=j; }
+          renderModalRoot();      // re-render popup: badge + button flip
+          refreshActiveView();    // board behind reflects the cancel (dim/strike)
+        }catch(err){
+          console.error('cancel job failed',err);
+          btn.disabled=false; btn.textContent=orig;
+          alert('Could not update the job: '+String(err.message||err).slice(0,160));
+        }
+      })();
+      return;
+    }
     if(act==='notes-save'){
       const id=el.getAttribute('data-id'); const ta=document.getElementById('dp-notes-edit'); if(!ta) return;
       const text=ta.value; const btn=el; const orig=btn.textContent; const msg=document.getElementById('dp-notes-msg');

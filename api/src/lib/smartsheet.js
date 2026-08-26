@@ -322,6 +322,28 @@ async function updateJobNotes(rowId, notesColumnId, text) {
   return res.json();
 }
 
+// Sets the "Status" cell on one job row — used by the app's Cancel/Restore
+// button (editors only, enforced at the endpoint). Passing '' clears it back to
+// blank ("Scheduled"). strict:false lets the value through the picklist without
+// tripping validation. Note: this sets the Status FIELD; it does not apply the
+// manual strikethrough some rows use — the transform treats Status "Cancelled"
+// as cancelled so the app still shows it struck through.
+async function updateJobStatus(rowId, statusColumnId, status) {
+  const val = status && String(status).trim() ? String(status).trim() : null;
+  const cell = val === null ? { columnId: statusColumnId, value: null } : { columnId: statusColumnId, value: val, strict: false };
+  const body = [{ id: rowId, cells: [cell] }];
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet status update error ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
 // Creates a brand-new job row at the bottom of the sheet from the in-app
 // "Add job" form (editors only, enforced at the endpoint). Deliberately does
 // NOT set crew (JCIT Lead/Technicians) — crew is assigned afterward via the
@@ -419,7 +441,9 @@ function transformSheetToDispatch(sheet) {
     // confirmed against the real cancelled rows. Check the Project cell, which
     // gets struck when the whole row is.
     const projFmt = (cellFor(row, COLUMNS.project) || {}).format || '';
-    const cancelled = projFmt.split(',')[5] === '1';
+    // Cancelled = the row is struck through (manual strikethrough, format index
+    // 5) OR the Status field is "Cancelled" (set by the app's Cancel button).
+    const cancelled = projFmt.split(',')[5] === '1' || status === 'Cancelled';
 
     // "Proj Rpt Rec'd" checkbox: a checked box has cell.value === true; an
     // unchecked one usually has no cell entry at all, so absent === false.
@@ -553,6 +577,7 @@ module.exports = {
   resolveColumns,
   updateJobCrew,
   updateJobNotes,
+  updateJobStatus,
   addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,
