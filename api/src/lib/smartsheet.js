@@ -146,10 +146,14 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // wrong/inconsistent, so the app shows one name everywhere (crew, roster, and
 // name-matching) without rewriting Smartsheet data. Add more as `email: name`.
 // Also keyed by the bad name itself for the rare cell that has a name but no
-// email. e.g. jason@jetcityit.com is labeled "Jason M" in Smartsheet but is
-// Jason Pletschette — standardized to "Jason P" (JCIT roster convention).
-const NAME_OVERRIDES_BY_EMAIL = { 'jason@jetcityit.com': 'Jason P' };
-const NAME_ALIASES = { 'jason m': 'Jason P' };
+// email.
+//   - jason@jetcityit.com is labeled "Jason M" in Smartsheet but is Jason
+//     Pletschette — standardized to "Jason P" (JCIT roster convention).
+//   - shinnt@jetcityit.com (Shinn Thant Wunna) is labeled BOTH "Shinn T" and
+//     "Shinn W" across rows — the same person, two labels. Standardized to
+//     "Shinn W" so the roster/assign list shows one entry, not a dup.
+const NAME_OVERRIDES_BY_EMAIL = { 'jason@jetcityit.com': 'Jason P', 'shinnt@jetcityit.com': 'Shinn W' };
+const NAME_ALIASES = { 'jason m': 'Jason P', 'shinn t': 'Shinn W' };
 function canonicalName(email, name) {
   const e = String(email || '').toLowerCase();
   if (NAME_OVERRIDES_BY_EMAIL[e]) return NAME_OVERRIDES_BY_EMAIL[e];
