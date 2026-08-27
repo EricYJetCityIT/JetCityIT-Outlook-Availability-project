@@ -2514,6 +2514,10 @@ const JCITDispatch=(function(){
       if(!data.project){ alert('Project is required.'); return; }
       if(!data.date){ alert('Date is required.'); return; }
       const cur=modal.job;
+      if(!cur.id && !data.address && !data.startTime){
+        alert('Address or start time is required — the board treats jobs with neither as calendar notes (like holidays) and hides them.');
+        return;
+      }
       if(cur.id){
         // Editing an existing job is not reachable from the read-only Dispatch
         // board (cards open a detail popup, not this form), so this path is

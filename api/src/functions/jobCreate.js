@@ -28,6 +28,16 @@ app.http('jobCreate', {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         return { status: 400, jsonBody: { error: 'A valid date (YYYY-MM-DD) is required' } };
       }
+      const addressRaw = String(body.address || '').trim();
+      const startTimeRaw = String(body.startTime || '').trim();
+      if (!addressRaw && !startTimeRaw) {
+        // transformSheetToDispatch (smartsheet.js) treats any row with neither
+        // field as a non-job calendar note (holidays, reminders, quarter
+        // headers already live in this sheet that way) and drops it from the
+        // board — so a job created with both blank would write successfully
+        // to Smartsheet and then silently never appear anywhere in the app.
+        return { status: 400, jsonBody: { error: 'Address or start time is required so this job shows up on the board.' } };
+      }
       const statusRaw = String(body.status || '').trim();
       const status = STATUS_VALUES.has(statusRaw) ? statusRaw : ''; // '' = "Scheduled" (blank in the sheet)
 
