@@ -375,6 +375,32 @@ async function updateReportReceived(rowId, colId, received) {
 // form submitted, clearing (value:null) any the user emptied. Deliberately does
 // NOT touch crew (JCIT Lead/Technicians) — that's the Assign crew flow — so the
 // edit form never drops assignments.
+// Extracts a YYYY-MM-DD from a Smartsheet Date cell value/displayValue (or '').
+function isoDateOf(s) {
+  const m = String(s == null ? '' : s).match(/\d{4}-\d{2}-\d{2}/);
+  return m ? m[0] : '';
+}
+
+// Computes where to place a row so the sheet stays in ascending date order:
+// ABOVE the first row (top-down) whose Date is later than `newDate`, skipping
+// undated/older rows and the row being moved (`excludeRowId`). Returns a
+// Smartsheet location object ({siblingId,above} or {toBottom}). Falls back to
+// the bottom if there's no later-dated row or the layout can't be read.
+function datePositionLocation(sheet, dateColId, newDate, excludeRowId) {
+  try {
+    const nd = isoDateOf(newDate);
+    if (nd && Array.isArray(sheet.rows)) {
+      for (const row of sheet.rows) {
+        if (excludeRowId && String(row.id) === String(excludeRowId)) continue;
+        const dc = (row.cells || []).find((c) => c.columnId === dateColId);
+        const rowDate = isoDateOf(dc && (dc.value != null ? dc.value : dc.displayValue));
+        if (rowDate && rowDate > nd) return { siblingId: row.id, above: true };
+      }
+    }
+  } catch (e) { /* fall through to bottom */ }
+  return { toBottom: true };
+}
+
 async function updateJobFields(rowId, fields) {
   const sheet = await fetchSheet();
   const { COLUMNS } = resolveColumns(sheet);
@@ -407,7 +433,21 @@ async function updateJobFields(rowId, fields) {
   const status = (fields.status && String(fields.status).trim()) ? String(fields.status).trim() : null;
   cells.push({ columnId: COLUMNS.status.id, value: status, strict: false });
 
-  const body = [{ id: rowId, cells }];
+  // If the DATE changed, move the row to its new date slot (Smartsheet doesn't
+  // re-order a row just because you edit its date cell). Same-date edits leave
+  // the row where it is. The move rides along in the same row-update PUT.
+  let location = null;
+  try {
+    const curRow = (sheet.rows || []).find((r) => String(r.id) === String(rowId));
+    const curDateCell = curRow && (curRow.cells || []).find((c) => c.columnId === COLUMNS.date.id);
+    const curDate = isoDateOf(curDateCell && (curDateCell.value != null ? curDateCell.value : curDateCell.displayValue));
+    const newDate = isoDateOf(fields.date);
+    if (newDate && newDate !== curDate) {
+      location = datePositionLocation(sheet, COLUMNS.date.id, newDate, rowId);
+    }
+  } catch (e) { location = null; }
+
+  const body = [location ? { id: rowId, cells, ...location } : { id: rowId, cells }];
   const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
@@ -460,28 +500,9 @@ async function addJobRow(fields) {
   }
   if (fields.status) put(COLUMNS.status, fields.status, { strict: false });
 
-  // Position the new row in date order instead of dumping it at the bottom of
-  // the sheet: insert ABOVE the first row (top-down) whose Date is later than
-  // this job's date. The sheet is maintained in ascending date order, so this
-  // drops the row into its chronological slot next to same-week jobs. Rows with
-  // no/older date are skipped; falls back to the bottom if there's no later-dated
-  // row (a job past the end of the sheet) or the layout can't be read — never let
-  // positioning break the create.
-  const isoDate = (s) => { const m = String(s == null ? '' : s).match(/\d{4}-\d{2}-\d{2}/); return m ? m[0] : ''; };
-  let location = { toBottom: true };
-  try {
-    const newDate = isoDate(fields.date);
-    const dateColId = COLUMNS.date.id;
-    if (newDate && Array.isArray(sheet.rows)) {
-      for (const row of sheet.rows) {
-        const dc = (row.cells || []).find((c) => c.columnId === dateColId);
-        const rowDate = isoDate(dc && (dc.value != null ? dc.value : dc.displayValue));
-        if (rowDate && rowDate > newDate) { location = { siblingId: row.id, above: true }; break; }
-      }
-    }
-  } catch (e) {
-    location = { toBottom: true };
-  }
+  // Position the new row in date order (see datePositionLocation) instead of
+  // dumping it at the bottom of the sheet.
+  const location = datePositionLocation(sheet, COLUMNS.date.id, fields.date, null);
 
   const body = { ...location, cells };
   const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
