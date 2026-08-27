@@ -2490,11 +2490,15 @@ const JCITDispatch=(function(){
     return{project:v('dpf-project').trim(),client:v('dpf-client').trim(),status:v('dpf-status'),address:v('dpf-address').trim(),date:v('dpf-date'),startTime:v('dpf-start').trim(),duration:v('dpf-dur').trim(),crewSize:(crew>0?crew:null),poc:v('dpf-poc').trim(),notes:v('dpf-notes').trim()};
   }
 
-  // Re-render whichever tab (Manager Dispatch or Crew calendar) is currently visible.
+  // Re-render whichever tab (Manager Dispatch, Project reports, or Crew
+  // calendar) is currently visible, so an edit's effect shows immediately.
+  // Both the Dispatch board and the Project-reports board are rendered by
+  // renderManager() (keyed on mgrMode) — reports was previously omitted, which
+  // is why marking/unmarking a report didn't recolor its card.
   function refreshActiveView(){
     const mgrView=document.getElementById('view-manager');
     const crewView=document.getElementById('view-crew');
-    if(mgrView&&mgrView.classList.contains('active')&&mgrMode==='dispatch') renderManager();
+    if(mgrView&&mgrView.classList.contains('active')&&(mgrMode==='dispatch'||mgrMode==='reports')) renderManager();
     else if(crewView&&crewView.classList.contains('active')) renderCrewView();
   }
 
