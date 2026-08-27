@@ -2555,7 +2555,17 @@ const JCITDispatch=(function(){
           }catch(err){
             console.error('update job failed',err);
             btn.disabled=false; btn.textContent=orig;
-            alert('Could not save the job: '+String(err.message||err).slice(0,180));
+            const m=String(err.message||err);
+            if(/40[34]|Not Found|1006/.test(m)){
+              // The row was deleted in Smartsheet since this tab loaded — the
+              // job is a stale ghost. Tell the user plainly and refresh it away.
+              alert('This job no longer exists in Smartsheet — it was likely deleted. Refreshing the board.');
+              modal=null; renderModalRoot();
+              try{ await refreshFromSmartsheet(); }catch(_){}
+              refreshActiveView();
+            } else {
+              alert('Could not save the job: '+m.slice(0,180));
+            }
           }
         })();
         return;
