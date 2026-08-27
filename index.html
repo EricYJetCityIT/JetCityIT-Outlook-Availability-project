@@ -1688,6 +1688,10 @@ const JCITDispatch=(function(){
   let dragName=null;
   let dispatchLoaded=false;
   let dispatchLoadPromise=null;
+  // Live Client dropdown options, delivered with the dispatch data from the
+  // Smartsheet sync — so the Add/Edit "Client" field always reflects the sheet's
+  // current picklist without a hardcoded copy. Falls back to JCIT_CLIENTS.
+  let syncClientOptions=[];
 
   // Fetches the shared dispatch state from Cosmos DB once per session. That
   // data is now maintained entirely by the server-side Smartsheet sync
@@ -1707,6 +1711,7 @@ const JCITDispatch=(function(){
           state.workers=data.workers||[];
           state.jobs=data.jobs||[];
           syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
+          if(Array.isArray(data.clientOptions)) syncClientOptions=data.clientOptions;
           dispatchLoaded=true;
         }
       }catch(e){console.error('Failed to load dispatch data:',e)}
@@ -2404,16 +2409,13 @@ const JCITDispatch=(function(){
     return `<div class="dp-overlay" data-dpact="overlay"><div class="dp-modal"><div class="dp-modal-hd"><span class="dp-modal-title">${esc(title)}</span><button class="dp-close" data-dpact="close">✕</button></div><div class="dp-modal-bd">${body}</div><div class="dp-modal-ft">${footer}</div></div></div>`;
   }
   function statusOptions(sel){return '<option value="">Scheduled</option>'+STATUSES.map(s=>`<option${s===sel?' selected':''}>${esc(s)}</option>`).join('')}
-  // Client list mirrors the Smartsheet "Client" picklist options (kept in sync by
-  // hand). If a job's current client isn't in the list (a legacy or multi-value
-  // like "Amazon, KP"), it's preserved as a selected option so editing never
-  // drops it.
+  // Fallback client list, used only if the live options from the sync haven't
+  // loaded yet. The Client field is a type-or-pick input (datalist), so you can
+  // choose a known client OR type a brand-new one (saved with strict:false).
   const JCIT_CLIENTS=['Adaptive BioTech','AECOM','AGWest Farm Credit','Amazon','Apex','Brooks','Catalyst','City of Bellevue','Docusign','Emerald Blue','Enterprise','FHCC','Hansen Bros','Hauser PM','Hildrup','Inside Source','KP','Legacy Group','Lile','Move NW (Bekins)','N/A','Newmark','Nintendo','Olympic M&S','OpenAI','PSE','Recon Mgmt','ReForm Consulting','RH2','SanMar','Seattle Childrens Hospital','Singlestore','Stripe','T-Mobile','Westlake Consulting'];
-  function clientOptions(sel){
-    const s=String(sel||''); let out='<option value="">—</option>';
-    if(s&&JCIT_CLIENTS.indexOf(s)<0) out+=`<option value="${esc(s)}" selected>${esc(s)}</option>`;
-    out+=JCIT_CLIENTS.map(c=>`<option${c===s?' selected':''}>${esc(c)}</option>`).join('');
-    return out;
+  function clientDatalistOptions(){
+    const list=(syncClientOptions&&syncClientOptions.length)?syncClientOptions:JCIT_CLIENTS;
+    return list.map(c=>`<option value="${esc(c)}"></option>`).join('');
   }
   function crewSizeOptions(sel){
     const s=sel?String(sel):''; let out='<option value="">—</option>';
@@ -2424,7 +2426,7 @@ const JCITDispatch=(function(){
     const isNew=!j.id;
     return overlay(isNew?'New job':'Edit job',
       `<label class="dp-fld">Project</label><input id="dpf-project" value="${esc(j.project||'')}" placeholder="Network install"/>
-      <div class="dp-row2"><div><label class="dp-fld">Client</label><select id="dpf-client">${clientOptions(j.client||'')}</select></div><div><label class="dp-fld">Status</label><select id="dpf-status">${statusOptions(j.status||'')}</select></div></div>
+      <div class="dp-row2"><div><label class="dp-fld">Client</label><input id="dpf-client" list="dpf-client-list" value="${esc(j.client||'')}" placeholder="Pick or type a client" autocomplete="off"/><datalist id="dpf-client-list">${clientDatalistOptions()}</datalist></div><div><label class="dp-fld">Status</label><select id="dpf-status">${statusOptions(j.status||'')}</select></div></div>
       <label class="dp-fld">Address</label><input id="dpf-address" value="${esc(j.address||'')}" placeholder="100 Main St, Seattle"/>
       <div class="dp-row3"><div><label class="dp-fld">Date</label><input id="dpf-date" type="date" value="${esc(j.date||'')}"/></div><div><label class="dp-fld">Start time</label><input id="dpf-start" value="${esc(j.startTime||'')}" placeholder="9:00AM"/></div><div><label class="dp-fld">Duration (hrs)</label><input id="dpf-dur" value="${esc(j.duration||'')}" placeholder="4.0"/></div></div>
       <div class="dp-row2"><div><label class="dp-fld">Crew size (optional)</label><select id="dpf-crew">${crewSizeOptions(j.crewSize||'')}</select></div><div><label class="dp-fld">POC</label><input id="dpf-poc" value="${esc(j.poc||'')}" placeholder="Contact name + phone"/></div></div>

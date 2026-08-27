@@ -603,7 +603,12 @@ function transformSheetToDispatch(sheet) {
     .sort()
     .map((name) => ({ name, active: true }));
 
-  return { workers, jobs };
+  // The Client column's dropdown options, passed through so the app's Add/Edit
+  // job "Client" field always offers the current list (no hardcoded copy to keep
+  // in sync). Empty array if the column has no options.
+  const clientOptions = Array.isArray(COLUMNS.client.options) ? COLUMNS.client.options.slice() : [];
+
+  return { workers, jobs, clientOptions };
 }
 
 // Fetches the submitted Daily Project Report row(s) for one job from the report

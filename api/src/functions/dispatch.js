@@ -24,11 +24,11 @@ app.http('dispatch', {
           const { resource } = await container.item(DOC_ID, DOC_ID).read();
           return {
             jsonBody: resource
-              ? { workers: resource.workers, jobs: resource.jobs, updatedAt: resource.updatedAt || null, source: resource.source || null }
-              : { workers: [], jobs: [], updatedAt: null, source: null },
+              ? { workers: resource.workers, jobs: resource.jobs, clientOptions: resource.clientOptions || [], updatedAt: resource.updatedAt || null, source: resource.source || null }
+              : { workers: [], jobs: [], clientOptions: [], updatedAt: null, source: null },
           };
         } catch (e) {
-          if (e.code === 404) return { jsonBody: { workers: [], jobs: [], updatedAt: null, source: null } };
+          if (e.code === 404) return { jsonBody: { workers: [], jobs: [], clientOptions: [], updatedAt: null, source: null } };
           throw e;
         }
       }

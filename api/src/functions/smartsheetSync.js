@@ -37,12 +37,13 @@ async function runSync(context, force) {
     return { synced: false, jobCount: syncState.jobCount, workerCount: syncState.workerCount };
   }
 
-  const { workers, jobs } = transformSheetToDispatch(sheet);
+  const { workers, jobs, clientOptions } = transformSheetToDispatch(sheet);
 
   await container.items.upsert({
     id: STATE_DOC_ID,
     workers,
     jobs,
+    clientOptions: clientOptions || [],
     updatedBy: 'smartsheet-sync',
     updatedAt: now,
     source: 'smartsheet',
