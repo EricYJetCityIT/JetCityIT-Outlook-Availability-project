@@ -389,7 +389,9 @@ async function updateJobFields(rowId, fields) {
   setCell(COLUMNS.address, fields.address);
   setCell(COLUMNS.startTime, fields.startTime);
   setCell(COLUMNS.duration, fields.duration);
-  setCell(COLUMNS.poc, fields.poc);
+  // POC and Client are (multi)picklist columns; strict:false lets a free-typed
+  // value through like a person typing into the dropdown (else Smartsheet 400s).
+  setCell(COLUMNS.poc, fields.poc, { strict: false });
   setCell(COLUMNS.notes, fields.notes);
   setCell(COLUMNS.client, fields.client, { strict: false });
 
@@ -398,7 +400,9 @@ async function updateJobFields(rowId, fields) {
     const n = Number(fields.crewSize);
     if (!Number.isNaN(n) && n > 0) cs = n;
   }
-  cells.push({ columnId: COLUMNS.crewSize.id, value: cs });
+  // Crew Size is a picklist ("1".."20"); strict:false so a numeric value is
+  // accepted without a validation error.
+  cells.push({ columnId: COLUMNS.crewSize.id, value: cs, strict: false });
 
   const status = (fields.status && String(fields.status).trim()) ? String(fields.status).trim() : null;
   cells.push({ columnId: COLUMNS.status.id, value: status, strict: false });
@@ -431,12 +435,14 @@ async function addJobRow(fields) {
   put(COLUMNS.address, fields.address);
   put(COLUMNS.startTime, fields.startTime);
   put(COLUMNS.duration, fields.duration);
-  put(COLUMNS.poc, fields.poc);
+  // POC/Client are (multi)picklist columns; strict:false accepts a free-typed
+  // value like a person typing into the dropdown (else Smartsheet 400s).
+  put(COLUMNS.poc, fields.poc, { strict: false });
   put(COLUMNS.notes, fields.notes);
   put(COLUMNS.client, fields.client, { strict: false });
   if (fields.crewSize !== undefined && fields.crewSize !== null && fields.crewSize !== '') {
     const n = Number(fields.crewSize);
-    if (!Number.isNaN(n) && n > 0) put(COLUMNS.crewSize, n);
+    if (!Number.isNaN(n) && n > 0) put(COLUMNS.crewSize, n, { strict: false }); // picklist "1".."20"
   }
   if (fields.status) put(COLUMNS.status, fields.status, { strict: false });
 
