@@ -1746,6 +1746,14 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Updates an existing job's editable fields in Smartsheet (editor-gated); crew
+  // is left untouched (Assign crew handles that). Server re-syncs.
+  async function updateJob(jobId,fields){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId),{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify(fields)});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   // Saves the job's "Work Order Notes" back to Smartsheet (editor-gated endpoint,
   // which re-syncs server-side). Two-way with the sheet's notes column.
   async function saveNotes(jobId,text){
@@ -2397,7 +2405,7 @@ const JCITDispatch=(function(){
       <div class="dp-row2"><div><label class="dp-fld">Crew size (optional)</label><input id="dpf-crew" type="number" min="1" value="${j.crewSize||''}"/></div><div><label class="dp-fld">POC</label><input id="dpf-poc" value="${esc(j.poc||'')}" placeholder="Contact name + phone"/></div></div>
       <label class="dp-fld">Notes</label><textarea id="dpf-notes" rows="2">${esc(j.notes||'')}</textarea>
       ${isNew?'':`<div style="margin-top:16px"><button class="btn btn-ghost btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew (${crewOf(j).length})</button></div>`}`,
-      (isNew?'<span></span>':`<button class="btn btn-danger btn-sm" data-dpact="delete" data-id="${j.id}">Delete</button>`)
+      '<span></span>'
       +`<div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="save">${isNew?'Create job':'Save'}</button></div>`);
   }
   function assignModal(id){
@@ -2473,7 +2481,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2514,15 +2522,27 @@ const JCITDispatch=(function(){
       if(!data.project){ alert('Project is required.'); return; }
       if(!data.date){ alert('Date is required.'); return; }
       const cur=modal.job;
-      if(!cur.id && !data.address && !data.startTime){
+      if(!data.address && !data.startTime){
         alert('Address or start time is required — the board treats jobs with neither as calendar notes (like holidays) and hides them.');
         return;
       }
       if(cur.id){
-        // Editing an existing job is not reachable from the read-only Dispatch
-        // board (cards open a detail popup, not this form), so this path is
-        // effectively unused — kept as the prior local behavior for safety.
-        Object.assign(cur,data); save(); modal=null; renderModalRoot(); refreshActiveView(); return;
+        // Edit an existing job → write the changed fields back to Smartsheet
+        // (editor-gated), then re-pull so the board reflects them (and cancelled/
+        // status flags recompute). Crew is untouched here (use Assign crew).
+        const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent='Saving…';
+        (async()=>{
+          try{
+            await updateJob(cur.id,data);
+            await reloadDispatch();
+            modal=null; renderModalRoot(); refreshActiveView();
+          }catch(err){
+            console.error('update job failed',err);
+            btn.disabled=false; btn.textContent=orig;
+            alert('Could not save the job: '+String(err.message||err).slice(0,180));
+          }
+        })();
+        return;
       }
       // New job → write a Smartsheet row via the editor-gated endpoint, then
       // re-pull so the board shows it (no full page reload).

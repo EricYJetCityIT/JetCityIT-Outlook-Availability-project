@@ -369,6 +369,53 @@ async function updateReportReceived(rowId, colId, received) {
 // them (the sheet isn't auto-sorted). `strict: false` on the picklist-ish
 // cells (Client, Status) lets values through even if the column has validation,
 // mirroring what a person typing in the sheet can do.
+//
+// Updates an existing job row's editable fields from the in-app "Edit job" form
+// (editors only, enforced at the endpoint). Sets every editable cell to what the
+// form submitted, clearing (value:null) any the user emptied. Deliberately does
+// NOT touch crew (JCIT Lead/Technicians) — that's the Assign crew flow — so the
+// edit form never drops assignments.
+async function updateJobFields(rowId, fields) {
+  const sheet = await fetchSheet();
+  const { COLUMNS } = resolveColumns(sheet);
+
+  const cells = [];
+  const setCell = (col, value, extra) => {
+    const v = (value === undefined || value === null || value === '') ? null : value;
+    cells.push({ columnId: col.id, value: v, ...(extra || {}) });
+  };
+  setCell(COLUMNS.project, fields.project);
+  setCell(COLUMNS.date, fields.date); // 'YYYY-MM-DD'
+  setCell(COLUMNS.address, fields.address);
+  setCell(COLUMNS.startTime, fields.startTime);
+  setCell(COLUMNS.duration, fields.duration);
+  setCell(COLUMNS.poc, fields.poc);
+  setCell(COLUMNS.notes, fields.notes);
+  setCell(COLUMNS.client, fields.client, { strict: false });
+
+  let cs = null;
+  if (fields.crewSize !== undefined && fields.crewSize !== null && fields.crewSize !== '') {
+    const n = Number(fields.crewSize);
+    if (!Number.isNaN(n) && n > 0) cs = n;
+  }
+  cells.push({ columnId: COLUMNS.crewSize.id, value: cs });
+
+  const status = (fields.status && String(fields.status).trim()) ? String(fields.status).trim() : null;
+  cells.push({ columnId: COLUMNS.status.id, value: status, strict: false });
+
+  const body = [{ id: rowId, cells }];
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet row update error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 async function addJobRow(fields) {
   const sheet = await fetchSheet();
   const { COLUMNS } = resolveColumns(sheet);
@@ -596,6 +643,7 @@ module.exports = {
   updateJobNotes,
   updateJobStatus,
   updateReportReceived,
+  updateJobFields,
   addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,
