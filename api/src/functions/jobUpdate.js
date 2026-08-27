@@ -57,7 +57,12 @@ app.http('jobUpdate', {
       const result = await runSync(context, true);
       return { jsonBody: { ...result, updated: true } };
     } catch (e) {
-      return authErrorResponse(e, context);
+      // Auth/rate-limit errors carry a .status — keep their normal handling.
+      if (e && e.status) return authErrorResponse(e, context);
+      // Otherwise surface the real underlying error (e.g. the Smartsheet API
+      // message) so the UI shows what actually failed, not a generic 500.
+      context.error('jobUpdate failed:', e);
+      return { status: 500, jsonBody: { error: String((e && e.message) || e).slice(0, 400) } };
     }
   },
 });
