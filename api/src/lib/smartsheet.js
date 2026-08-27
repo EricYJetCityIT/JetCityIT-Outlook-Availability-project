@@ -344,6 +344,23 @@ async function updateJobStatus(rowId, statusColumnId, status) {
   return res.json();
 }
 
+// Checks/unchecks the "Proj Rpt Rec'd" checkbox on one job row — the app's
+// "Mark report complete" button in the Project-reports popup (editors only,
+// enforced at the endpoint). A CHECKBOX column: true checks it, false clears it.
+async function updateReportReceived(rowId, colId, received) {
+  const body = [{ id: rowId, cells: [{ columnId: colId, value: !!received }] }];
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet report-received update error ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
 // Creates a brand-new job row at the bottom of the sheet from the in-app
 // "Add job" form (editors only, enforced at the endpoint). Deliberately does
 // NOT set crew (JCIT Lead/Technicians) — crew is assigned afterward via the
@@ -578,6 +595,7 @@ module.exports = {
   updateJobCrew,
   updateJobNotes,
   updateJobStatus,
+  updateReportReceived,
   addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,

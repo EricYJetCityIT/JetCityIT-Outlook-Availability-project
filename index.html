@@ -373,6 +373,8 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-notes-ta:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 2px var(--green-light)}
 .dp-btn-cancel{border-color:var(--unavail-border);color:var(--unavail-text)}
 .dp-btn-cancel:hover{background:var(--unavail-bg)}
+.dp-btn-rpt-done{border-color:var(--green);color:var(--green-dark)}
+.dp-btn-rpt-done:hover{background:var(--green-light)}
 .dp-roster-strip{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px}
 .dp-roster-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .dp-chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -1760,6 +1762,14 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Checks/unchecks the "Proj Rpt Rec'd" box in Smartsheet (editor-gated). Used
+  // by the Project-reports popup's "Mark report complete" button. Server re-syncs.
+  async function setReportReceived(jobId,received){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId)+'/report-received',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({received:received})});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   function save(){
     (async()=>{
       try{
@@ -2437,6 +2447,10 @@ const JCITDispatch=(function(){
     // is actually active, same check refreshActiveView() already uses.
     const mgrViewEl=document.getElementById('view-manager');
     const isManagerView=!!(mgrViewEl&&mgrViewEl.classList.contains('active'));
+    // Sub-tab within Manager view: Cancel job is a Dispatch action; the
+    // report-complete checkmark is a Project-reports action.
+    const isDispatch=isManagerView&&mgrMode==='dispatch';
+    const isReports=isManagerView&&mgrMode==='reports';
     const crew=crewOf(j);
     const crewLine=crew.length?crew.map(c=>esc(c.name)+(c.lead?' (lead)':'')).join(', '):'Unassigned';
     const mapUrl='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(j.address||j.project);
@@ -2459,7 +2473,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>${j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`}`:''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isManagerView?`<button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2534,6 +2548,23 @@ const JCITDispatch=(function(){
           console.error('cancel job failed',err);
           btn.disabled=false; btn.textContent=orig;
           alert('Could not update the job: '+String(err.message||err).slice(0,160));
+        }
+      })();
+      return;
+    }
+    if(act==='report-received'){
+      const id=el.getAttribute('data-id'); const target=el.getAttribute('data-received')==='1';
+      const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent=target?'Marking…':'Updating…';
+      (async()=>{
+        try{
+          await setReportReceived(id,target);
+          const j=jobById(id); if(j){ j.reportReceived=target; if(modal&&modal.type==='detail') modal.job=j; }
+          renderModalRoot();      // popup: button flips, "View report" appears
+          refreshActiveView();    // reports board + pie recompute (green/red)
+        }catch(err){
+          console.error('report-received failed',err);
+          btn.disabled=false; btn.textContent=orig;
+          alert('Could not update the report status: '+String(err.message||err).slice(0,160));
         }
       })();
       return;
