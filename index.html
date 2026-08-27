@@ -2537,36 +2537,34 @@ const JCITDispatch=(function(){
     if(act==='cancel-job'){
       const id=el.getAttribute('data-id'); const target=el.getAttribute('data-status'); const cancelling=(target==='Cancelled');
       if(cancelling && !confirm('Cancel this job? It will show as cancelled (struck through) for everyone, and sync to Smartsheet.')) return;
-      const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent=cancelling?'Cancelling…':'Restoring…';
-      (async()=>{
-        try{
-          await setJobStatus(id,target);
-          const j=jobById(id); if(j){ j.status=target; j.cancelled=cancelling; if(modal&&modal.type==='detail') modal.job=j; }
-          renderModalRoot();      // re-render popup: badge + button flip
-          refreshActiveView();    // board behind reflects the cancel (dim/strike)
-        }catch(err){
-          console.error('cancel job failed',err);
-          btn.disabled=false; btn.textContent=orig;
-          alert('Could not update the job: '+String(err.message||err).slice(0,160));
-        }
-      })();
+      const j=jobById(id); if(!j) return;
+      // Optimistic: flip now so the card dims/strikes instantly; persist in the
+      // background and revert if it fails.
+      const prevStatus=j.status, prevCancelled=j.cancelled;
+      j.status=target; j.cancelled=cancelling; if(modal&&modal.type==='detail') modal.job=j;
+      renderModalRoot(); refreshActiveView();
+      setJobStatus(id,target).catch(err=>{
+        console.error('cancel job failed',err);
+        j.status=prevStatus; j.cancelled=prevCancelled; if(modal&&modal.type==='detail') modal.job=j;
+        renderModalRoot(); refreshActiveView();
+        alert('Could not update the job — change reverted.\n'+String(err.message||err).slice(0,140));
+      });
       return;
     }
     if(act==='report-received'){
       const id=el.getAttribute('data-id'); const target=el.getAttribute('data-received')==='1';
-      const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent=target?'Marking…':'Updating…';
-      (async()=>{
-        try{
-          await setReportReceived(id,target);
-          const j=jobById(id); if(j){ j.reportReceived=target; if(modal&&modal.type==='detail') modal.job=j; }
-          renderModalRoot();      // popup: button flips, "View report" appears
-          refreshActiveView();    // reports board + pie recompute (green/red)
-        }catch(err){
-          console.error('report-received failed',err);
-          btn.disabled=false; btn.textContent=orig;
-          alert('Could not update the report status: '+String(err.message||err).slice(0,160));
-        }
-      })();
+      const j=jobById(id); if(!j) return;
+      // Optimistic: flip the flag and re-render NOW so the card colour, pill and
+      // pie change instantly; persist in the background and revert if it fails.
+      const prev=j.reportReceived;
+      j.reportReceived=target; if(modal&&modal.type==='detail') modal.job=j;
+      renderModalRoot(); refreshActiveView();
+      setReportReceived(id,target).catch(err=>{
+        console.error('report-received failed',err);
+        j.reportReceived=prev; if(modal&&modal.type==='detail') modal.job=j;
+        renderModalRoot(); refreshActiveView();
+        alert('Could not update the report status — change reverted.\n'+String(err.message||err).slice(0,140));
+      });
       return;
     }
     if(act==='notes-save'){
