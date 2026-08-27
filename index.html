@@ -2395,14 +2395,30 @@ const JCITDispatch=(function(){
     return `<div class="dp-overlay" data-dpact="overlay"><div class="dp-modal"><div class="dp-modal-hd"><span class="dp-modal-title">${esc(title)}</span><button class="dp-close" data-dpact="close">✕</button></div><div class="dp-modal-bd">${body}</div><div class="dp-modal-ft">${footer}</div></div></div>`;
   }
   function statusOptions(sel){return '<option value="">Scheduled</option>'+STATUSES.map(s=>`<option${s===sel?' selected':''}>${esc(s)}</option>`).join('')}
+  // Client list mirrors the Smartsheet "Client" picklist options (kept in sync by
+  // hand). If a job's current client isn't in the list (a legacy or multi-value
+  // like "Amazon, KP"), it's preserved as a selected option so editing never
+  // drops it.
+  const JCIT_CLIENTS=['Adaptive BioTech','AECOM','AGWest Farm Credit','Amazon','Apex','Brooks','Catalyst','City of Bellevue','Docusign','Emerald Blue','Enterprise','FHCC','Hansen Bros','Hauser PM','Hildrup','Inside Source','KP','Legacy Group','Lile','Move NW (Bekins)','N/A','Newmark','Nintendo','Olympic M&S','OpenAI','PSE','Recon Mgmt','ReForm Consulting','RH2','SanMar','Seattle Childrens Hospital','Singlestore','Stripe','T-Mobile','Westlake Consulting'];
+  function clientOptions(sel){
+    const s=String(sel||''); let out='<option value="">—</option>';
+    if(s&&JCIT_CLIENTS.indexOf(s)<0) out+=`<option value="${esc(s)}" selected>${esc(s)}</option>`;
+    out+=JCIT_CLIENTS.map(c=>`<option${c===s?' selected':''}>${esc(c)}</option>`).join('');
+    return out;
+  }
+  function crewSizeOptions(sel){
+    const s=sel?String(sel):''; let out='<option value="">—</option>';
+    for(let i=1;i<=20;i++) out+=`<option${String(i)===s?' selected':''}>${i}</option>`;
+    return out;
+  }
   function jobModal(j){
     const isNew=!j.id;
     return overlay(isNew?'New job':'Edit job',
       `<label class="dp-fld">Project</label><input id="dpf-project" value="${esc(j.project||'')}" placeholder="Network install"/>
-      <div class="dp-row2"><div><label class="dp-fld">Client</label><input id="dpf-client" value="${esc(j.client||'')}" placeholder="Acme Corp"/></div><div><label class="dp-fld">Status</label><select id="dpf-status">${statusOptions(j.status||'')}</select></div></div>
+      <div class="dp-row2"><div><label class="dp-fld">Client</label><select id="dpf-client">${clientOptions(j.client||'')}</select></div><div><label class="dp-fld">Status</label><select id="dpf-status">${statusOptions(j.status||'')}</select></div></div>
       <label class="dp-fld">Address</label><input id="dpf-address" value="${esc(j.address||'')}" placeholder="100 Main St, Seattle"/>
       <div class="dp-row3"><div><label class="dp-fld">Date</label><input id="dpf-date" type="date" value="${esc(j.date||'')}"/></div><div><label class="dp-fld">Start time</label><input id="dpf-start" value="${esc(j.startTime||'')}" placeholder="9:00AM"/></div><div><label class="dp-fld">Duration (hrs)</label><input id="dpf-dur" value="${esc(j.duration||'')}" placeholder="4.0"/></div></div>
-      <div class="dp-row2"><div><label class="dp-fld">Crew size (optional)</label><input id="dpf-crew" type="number" min="1" value="${j.crewSize||''}"/></div><div><label class="dp-fld">POC</label><input id="dpf-poc" value="${esc(j.poc||'')}" placeholder="Contact name + phone"/></div></div>
+      <div class="dp-row2"><div><label class="dp-fld">Crew size (optional)</label><select id="dpf-crew">${crewSizeOptions(j.crewSize||'')}</select></div><div><label class="dp-fld">POC</label><input id="dpf-poc" value="${esc(j.poc||'')}" placeholder="Contact name + phone"/></div></div>
       <label class="dp-fld">Notes</label><textarea id="dpf-notes" rows="2">${esc(j.notes||'')}</textarea>
       ${isNew?'':`<div style="margin-top:16px"><button class="btn btn-ghost btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew (${crewOf(j).length})</button></div>`}`,
       '<span></span>'
