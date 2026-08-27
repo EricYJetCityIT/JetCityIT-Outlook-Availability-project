@@ -375,6 +375,8 @@ input[type=text]::placeholder{color:var(--text3)}
 .dp-btn-cancel:hover{background:var(--unavail-bg)}
 .dp-btn-rpt-done{border-color:var(--green);color:var(--green-dark)}
 .dp-btn-rpt-done:hover{background:var(--green-light)}
+.dp-btn-danger{background:var(--red);border-color:var(--red);color:#fff}
+.dp-btn-danger:hover{filter:brightness(.93);background:var(--red)}
 .dp-roster-strip{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px}
 .dp-roster-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
 .dp-chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -1754,6 +1756,13 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Permanently deletes a job's Smartsheet row (editor-gated). Server re-syncs.
+  async function deleteJob(jobId){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(jobId),{method:'DELETE',headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   // Saves the job's "Work Order Notes" back to Smartsheet (editor-gated endpoint,
   // which re-syncs server-side). Two-way with the sheet's notes column.
   async function saveNotes(jobId,text){
@@ -2424,6 +2433,13 @@ const JCITDispatch=(function(){
       '<span></span>'
       +`<div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="save">${isNew?'Create job':'Save'}</button></div>`);
   }
+  // Yes/No confirmation before permanently deleting a job. "No" returns to the
+  // detail popup; "Yes, delete" removes the Smartsheet row.
+  function confirmDeleteModal(j){
+    return overlay('Delete job?',
+      `<div style="font-size:14px;color:var(--text2);line-height:1.55">Permanently delete <b>${esc(j.project||'this job')}</b>${j.date?` (${esc(j.date)})`:''}?<br><span style="color:var(--text3);font-size:13px">This removes the row from Smartsheet and can’t be undone.</span></div>`,
+      `<span></span><div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="delete-cancel" data-id="${j.id}">No, keep it</button><button class="btn btn-sm dp-btn-danger" data-dpact="delete-confirm" data-id="${j.id}">Yes, delete</button></div>`);
+  }
   function assignModal(id){
     const j=jobById(id); if(!j) return '';
     const dayLabel=(function(){ const di=dayIndexOfDate(j.date); return di>=0&&di<=6?DAYS[di]:''; })();
@@ -2497,7 +2513,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(j.address)}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -2507,6 +2523,7 @@ const JCITDispatch=(function(){
     else if(modal.type==='roster') root.innerHTML=rosterModal();
     else if(modal.type==='data') root.innerHTML=dataModal();
     else if(modal.type==='detail') root.innerHTML=detailModal(modal.job);
+    else if(modal.type==='confirmdelete') root.innerHTML=confirmDeleteModal(modal.job);
   }
   function readJobForm(){
     const v=id=>{const el=document.getElementById(id);return el?el.value:''};
@@ -2588,6 +2605,31 @@ const JCITDispatch=(function(){
     }
     if(act==='delete'){ if(!confirm('Delete this job?')) return; const did=el.getAttribute('data-id'); state.jobs=state.jobs.filter(j=>j.id!==did); save(); modal=null; renderModalRoot(); refreshActiveView(); return; }
     if(act==='assign-open'){ const jj=jobById(el.getAttribute('data-id')); modal={type:'assign',id:el.getAttribute('data-id'),orig:jj?{lead:(jj.lead||[]).slice(),technicians:(jj.technicians||[]).slice()}:{lead:[],technicians:[]}}; renderModalRoot(); return; }
+    if(act==='delete-open'){ const j=jobById(el.getAttribute('data-id')); if(j){ modal={type:'confirmdelete',job:j}; renderModalRoot(); } return; }
+    if(act==='delete-cancel'){ const j=jobById(el.getAttribute('data-id')); modal={type:'detail',job:j}; renderModalRoot(); return; }
+    if(act==='delete-confirm'){
+      const id=el.getAttribute('data-id'); const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent='Deleting…';
+      (async()=>{
+        try{
+          await deleteJob(id);
+          state.jobs=state.jobs.filter(j=>j.id!==id); // drop it from the board now
+          modal=null; renderModalRoot(); refreshActiveView();
+        }catch(err){
+          console.error('delete job failed',err);
+          const m=String(err.message||err);
+          if(/40[34]|Not Found|1006/.test(m)){
+            // Row was already gone in Smartsheet — treat as deleted.
+            state.jobs=state.jobs.filter(j=>j.id!==id);
+            modal=null; renderModalRoot(); refreshActiveView();
+            alert('That job was already removed from Smartsheet.');
+          } else {
+            btn.disabled=false; btn.textContent=orig;
+            alert('Could not delete the job: '+m.slice(0,180));
+          }
+        }
+      })();
+      return;
+    }
     if(act==='cancel-job'){
       const id=el.getAttribute('data-id'); const target=el.getAttribute('data-status'); const cancelling=(target==='Cancelled');
       if(cancelling && !confirm('Cancel this job? It will show as cancelled (struck through) for everyone, and sync to Smartsheet.')) return;

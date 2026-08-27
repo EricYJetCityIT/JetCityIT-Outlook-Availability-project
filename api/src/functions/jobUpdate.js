@@ -1,16 +1,16 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
-const { updateJobFields } = require('../lib/smartsheet');
+const { updateJobFields, deleteJobRow } = require('../lib/smartsheet');
 const { runSync } = require('./smartsheetSync');
 const { audit } = require('../lib/audit');
 
-// In-app "Edit job" — updates an existing job row's editable fields (project,
-// client, status, address, date, time, duration, crew size, POC, notes) in the
-// "JCIT 2026 Crew Calendar" Smartsheet, then re-syncs. Editors only. Crew is
-// left untouched (assigned via the separate Assign crew flow). Sixth write
-// carve-out alongside jobCrew/jobCreate/jobNotes/jobStatus/jobReport.
+// In-app "Edit job" (PUT) — updates an existing job row's editable fields
+// (project, client, status, address, date, time, duration, crew size, POC,
+// notes) in the "JCIT 2026 Crew Calendar" Smartsheet, then re-syncs. Also
+// handles "Delete job" (DELETE) — permanently removes the row. Both editors
+// only; crew is left untouched (assigned via the separate Assign crew flow).
 app.http('jobUpdate', {
-  methods: ['PUT'],
+  methods: ['PUT', 'DELETE'],
   authLevel: 'anonymous',
   route: 'dispatch/jobs/{jobId}',
   handler: async (request, context) => {
@@ -22,6 +22,14 @@ app.http('jobUpdate', {
       if (!/^\d{6,}$/.test(rowId)) {
         return { status: 400, jsonBody: { error: 'Invalid job id' } };
       }
+
+      if (request.method === 'DELETE') {
+        await deleteJobRow(rowId);
+        audit(context, user, 'dispatch.job.delete', { jobId: rowId });
+        const result = await runSync(context, true);
+        return { jsonBody: { ...result, deleted: true } };
+      }
+
       const body = await request.json().catch(() => ({}));
       const project = String(body.project || '').trim();
       const date = String(body.date || '').trim();

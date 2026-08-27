@@ -420,6 +420,20 @@ async function updateJobFields(rowId, fields) {
   return res.json();
 }
 
+// Permanently deletes one job row from the sheet — the app's "Delete job"
+// button (editors only, enforced at the endpoint). Cannot be undone.
+async function deleteJobRow(rowId) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows?ids=${encodeURIComponent(rowId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet row delete error ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
 async function addJobRow(fields) {
   const sheet = await fetchSheet();
   const { COLUMNS } = resolveColumns(sheet);
@@ -673,6 +687,7 @@ module.exports = {
   updateJobStatus,
   updateReportReceived,
   updateJobFields,
+  deleteJobRow,
   addJobRow,
   fetchReportByJobId,
   fetchAttachmentBytes,
