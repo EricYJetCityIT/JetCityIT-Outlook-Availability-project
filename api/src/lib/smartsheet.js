@@ -361,13 +361,13 @@ async function updateReportReceived(rowId, colId, received) {
   return res.json();
 }
 
-// Creates a brand-new job row at the bottom of the sheet from the in-app
-// "Add job" form (editors only, enforced at the endpoint). Deliberately does
-// NOT set crew (JCIT Lead/Technicians) — crew is assigned afterward via the
-// existing updateJobCrew path, which already handles email resolution. New
-// form rows appending at the bottom matches how Smartsheet's own web form adds
-// them (the sheet isn't auto-sorted). `strict: false` on the picklist-ish
-// cells (Client, Status) lets values through even if the column has validation,
+// Creates a brand-new job row from the in-app "Add job" form (editors only,
+// enforced at the endpoint), inserted in DATE ORDER (see the positioning logic
+// below) so it lands next to same-week jobs instead of at the bottom of the
+// sheet. Deliberately does NOT set crew (JCIT Lead/Technicians) — crew is
+// assigned afterward via the existing updateJobCrew path, which already handles
+// email resolution. `strict: false` on the picklist-ish cells (Client, POC,
+// Crew Size, Status) lets values through even if the column has validation,
 // mirroring what a person typing in the sheet can do.
 //
 // Updates an existing job row's editable fields from the in-app "Edit job" form
@@ -446,7 +446,30 @@ async function addJobRow(fields) {
   }
   if (fields.status) put(COLUMNS.status, fields.status, { strict: false });
 
-  const body = { toBottom: true, cells };
+  // Position the new row in date order instead of dumping it at the bottom of
+  // the sheet: insert ABOVE the first row (top-down) whose Date is later than
+  // this job's date. The sheet is maintained in ascending date order, so this
+  // drops the row into its chronological slot next to same-week jobs. Rows with
+  // no/older date are skipped; falls back to the bottom if there's no later-dated
+  // row (a job past the end of the sheet) or the layout can't be read — never let
+  // positioning break the create.
+  const isoDate = (s) => { const m = String(s == null ? '' : s).match(/\d{4}-\d{2}-\d{2}/); return m ? m[0] : ''; };
+  let location = { toBottom: true };
+  try {
+    const newDate = isoDate(fields.date);
+    const dateColId = COLUMNS.date.id;
+    if (newDate && Array.isArray(sheet.rows)) {
+      for (const row of sheet.rows) {
+        const dc = (row.cells || []).find((c) => c.columnId === dateColId);
+        const rowDate = isoDate(dc && (dc.value != null ? dc.value : dc.displayValue));
+        if (rowDate && rowDate > newDate) { location = { siblingId: row.id, above: true }; break; }
+      }
+    }
+  } catch (e) {
+    location = { toBottom: true };
+  }
+
+  const body = { ...location, cells };
   const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
