@@ -2573,21 +2573,18 @@ const JCITDispatch=(function(){
     }
     if(act==='notes-save'){
       const id=el.getAttribute('data-id'); const ta=document.getElementById('dp-notes-edit'); if(!ta) return;
-      const text=ta.value; const btn=el; const orig=btn.textContent; const msg=document.getElementById('dp-notes-msg');
-      btn.disabled=true; btn.textContent='Saving…'; if(msg){ msg.style.color='var(--text3)'; msg.textContent=''; }
-      (async()=>{
-        try{
-          await saveNotes(id,text);
-          const j=jobById(id); if(j){ j.notes=text; if(modal&&modal.type==='detail') modal.job=j; }
-          refreshActiveView(); // update the board behind; modal (separate root) stays open
-          btn.disabled=false; btn.textContent=orig;
-          const m=document.getElementById('dp-notes-msg'); if(m){ m.style.color='var(--green-dark)'; m.textContent='Saved ✓ synced to Smartsheet'; }
-        }catch(err){
-          console.error('save notes failed',err);
-          btn.disabled=false; btn.textContent=orig;
-          const m=document.getElementById('dp-notes-msg'); if(m){ m.style.color='var(--red)'; m.textContent='Could not save — '+String(err.message||err).slice(0,120); }
-        }
-      })();
+      const text=ta.value; const msg=document.getElementById('dp-notes-msg');
+      const j=jobById(id); const prev=j?j.notes:'';
+      // Optimistic: reflect the note locally and confirm instantly; persist in
+      // the background. On failure, revert the stored value (but leave the
+      // textarea as typed so it can be retried) and show an error.
+      if(j){ j.notes=text; if(modal&&modal.type==='detail') modal.job=j; }
+      if(msg){ msg.style.color='var(--green-dark)'; msg.textContent='Saved ✓ synced to Smartsheet'; }
+      saveNotes(id,text).catch(err=>{
+        console.error('save notes failed',err);
+        if(j){ j.notes=prev; if(modal&&modal.type==='detail') modal.job=j; }
+        const m=document.getElementById('dp-notes-msg'); if(m){ m.style.color='var(--red)'; m.textContent='Could not save — '+String(err.message||err).slice(0,120); }
+      });
       return;
     }
     // Toggles update the pending crew locally and re-render the modal only —
