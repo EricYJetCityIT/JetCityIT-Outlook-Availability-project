@@ -2119,7 +2119,7 @@ const JCITDispatch=(function(){
         ${jobsHtml}${emptyMsg}${addBtn}
       </div>`;
     }).join('');
-    const refreshBtn=colorMode==='report'?'':'<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>';
+    const refreshBtn='<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>';
     const newJobBtn=canAdd?`<button class="btn btn-primary btn-sm js-editor-only" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>`:'';
     const toolbar=editable?`<div class="dp-toolbar"><div class="dp-actions">
         <button class="btn btn-ghost btn-sm" data-dpact="roster">Team</button>
