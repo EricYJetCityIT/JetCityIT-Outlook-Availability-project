@@ -24,9 +24,12 @@ app.http('dispatchRefresh', {
   handler: async (request, context) => {
     try {
       await requireUser(request);
-      const result = await runSync(context, false);
-      // { synced: true } when the sheet had changed and we rewrote the doc;
-      // { synced: false } when it was already up to date.
+      // FORCE a full re-sync. This is a manual "refresh now" button, so the user
+      // expects the freshest data + an advanced timestamp every time — unlike the
+      // cron (runSync false), which skips the re-transform when the sheet's
+      // modifiedAt is unchanged. Forcing also means the button picks up
+      // transform-code changes immediately.
+      const result = await runSync(context, true);
       return { jsonBody: result };
     } catch (e) {
       return authErrorResponse(e, context);
