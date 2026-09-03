@@ -3036,10 +3036,11 @@ async function openParkingList(address){
     renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load. Try “Open in Google Maps” below.</div>'; } });
   }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
 }
-// Team contacts — opened from the header ℹ️ Company info menu. Any signed-in
-// user can VIEW (tap-to-call/email); editors get an Edit mode to maintain the
-// curated "Key numbers" list, stored server-side in Cosmos (never in the public
-// repo). Staff numbers come from Entra automatically via /api/contacts.
+// Team contacts — opened from the header ℹ️ Company info menu. One merged JCIT
+// crew list: numbers pulled from Entra plus any manually-added crew whose number
+// isn't in Entra. Any signed-in user can VIEW (tap-to-call/email); editors get an
+// Edit mode to add/fix/remove crew and to hide/restore Entra rows. Manually-added
+// contacts live server-side in Cosmos (never in the public repo).
 function openTeamContacts(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
@@ -3070,12 +3071,17 @@ function openTeamContacts(e){
       +(c.phone?'':'<div class="tc-nonum">No number on file</div>')+'</div><div class="tc-acts">'+actions+'</div></div>';
   }
   function renderView(){
-    var html='';
-    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(function(c,i){return contactRow(c,{idx:i});}).join('');
-    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(function(c){return contactRow(c,{staffKey:c.key});}).join('');
-    if(!state.custom.length && !state.staff.length) html='<div style="color:var(--text2);padding:8px 0">No contacts yet.'+(state.canEdit?' Tap “Edit key numbers” to add some.':'')+'</div>';
+    // One merged JCIT crew list: Entra staff (hideable) + manually-added crew
+    // (deletable), sorted together by name.
+    var items=[];
+    state.staff.forEach(function(c){ items.push({c:c,opts:{staffKey:c.key}}); });
+    state.custom.forEach(function(c,i){ items.push({c:c,opts:{idx:i}}); });
+    items.sort(function(a,b){ return String(a.c.name||'').toLowerCase().localeCompare(String(b.c.name||'').toLowerCase()); });
+    var html=items.length
+      ? '<div class="tc-sec-h">JCIT crew</div>'+items.map(function(it){ return contactRow(it.c,it.opts); }).join('')
+      : '<div style="color:var(--text2);padding:8px 0">No crew contacts yet.'+(state.canEdit?' Tap “Edit contacts” to add one.':'')+'</div>';
     body.innerHTML=html;
-    ft.innerHTML=(state.canEdit?'<button class="btn btn-sm" data-tc="edit">✏️ Edit key numbers</button>':'<span></span>')+'<button class="btn btn-sm" data-tc="close">Close</button>';
+    ft.innerHTML=(state.canEdit?'<button class="btn btn-sm" data-tc="edit">✏️ Edit contacts</button>':'<span></span>')+'<button class="btn btn-sm" data-tc="close">Close</button>';
   }
   // One PUT for every editor change — {contacts} replaces the curated list,
   // {hide}/{unhide} toggles a staff row's visibility. Returns the server's doc.
@@ -3103,9 +3109,9 @@ function openTeamContacts(e){
   }
   function renderEdit(){
     var rows=state.custom.length?state.custom:[{}];
-    body.innerHTML='<div class="tc-sec-h">Key numbers <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">· office line, on-call, vendors, or crew not in Entra</span></div>'
+    body.innerHTML='<div class="tc-sec-h">Add crew contacts <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">· a JCIT crew member whose number isn’t in Entra</span></div>'
       +'<div data-tc-rows>'+rows.map(editRow).join('')+'</div>'
-      +'<button class="btn btn-ghost btn-sm" data-tc="add" style="margin-top:2px">+ Add contact</button>'
+      +'<button class="btn btn-ghost btn-sm" data-tc="add" style="margin-top:2px">+ Add crew member</button>'
       +'<div data-tc-msg style="font-size:12px;color:var(--text3);margin-top:8px">These are saved securely and only shown to signed-in staff.</div>'
       +((state.hiddenStaff&&state.hiddenStaff.length)
         ? '<div class="tc-sec-h" style="margin-top:18px">Hidden crew</div><div style="font-size:12px;color:var(--text3);margin-bottom:4px">Pulled from Entra but hidden from the list — tap to restore.</div>'
@@ -3134,7 +3140,7 @@ function openTeamContacts(e){
     else if(act==='delete'){
       var idx=parseInt(b.getAttribute('data-idx'),10);
       var c=state.custom[idx]; if(!c) return;
-      if(!confirm('Delete '+(c.name||'this contact')+' from Key numbers?')) return;
+      if(!confirm('Delete '+(c.name||'this contact')+' from Team contacts?')) return;
       var next=state.custom.slice(); next.splice(idx,1);
       var prevC=state.custom;
       state.custom=next; renderView(); // optimistic
@@ -3144,7 +3150,7 @@ function openTeamContacts(e){
     else if(act==='hide'){
       var hkey=b.getAttribute('data-key');
       var sm=null; for(var i=0;i<state.staff.length;i++){ if(state.staff[i].key===hkey){ sm=state.staff[i]; break; } }
-      if(!confirm('Hide '+((sm&&sm.name)||'this contact')+' from Team contacts?\nYou can restore them from “Edit key numbers”.')) return;
+      if(!confirm('Hide '+((sm&&sm.name)||'this contact')+' from Team contacts?\nYou can restore them from “Edit contacts”.')) return;
       var prevS=state.staff.slice(), prevH=state.hiddenStaff.slice();
       state.staff=state.staff.filter(function(x){ return x.key!==hkey; });
       if(sm) state.hiddenStaff=state.hiddenStaff.concat([{name:sm.name,key:hkey}]);
