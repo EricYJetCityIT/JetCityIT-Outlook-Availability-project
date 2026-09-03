@@ -54,13 +54,17 @@ app.http('jobCreate', {
         status,
       };
 
-      await addJobRow(fields);
+      const added = await addJobRow(fields);
+      // Smartsheet's POST /rows returns { result: [{ id }] } — surface that new
+      // row id so the client can attach any staged files to this job before it
+      // re-pulls the board.
+      const rowId = added && added.result && added.result[0] && added.result[0].id;
       audit(context, user, 'dispatch.job.create', { project, date });
 
       // Re-sync immediately so the new row shows on the board right away
       // instead of waiting for the next scheduled poll.
       const result = await runSync(context, true);
-      return { jsonBody: { ...result, created: true } };
+      return { jsonBody: { ...result, created: true, rowId: rowId ? String(rowId) : null } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

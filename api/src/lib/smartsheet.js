@@ -517,6 +517,33 @@ async function addJobRow(fields) {
   return res.json();
 }
 
+// Attaches a file (photo, map, PDF, …) to an existing row using Smartsheet's
+// "simple upload" form: the raw bytes go in the body with the file's mime type
+// and a Content-Disposition naming it. Returns the created attachment's
+// metadata. Used by the in-app "Add attachment" affordance on New/Edit job.
+async function addRowAttachment(rowId, fileName, contentType, bytes) {
+  const safeName = String(fileName || 'file').replace(/["\r\n\\]/g, '_');
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  const res = await fetch(
+    `${SMARTSHEET_API_BASE}/sheets/${getSheetId()}/rows/${encodeURIComponent(rowId)}/attachments`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        'Content-Type': contentType || 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${safeName}"`,
+        'Content-Length': String(buf.length),
+      },
+      body: buf,
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet attach error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 // Maps the sheet's columns/rows onto the app's {workers, jobs} schema
 // (see JCITDispatch in index.html for the exact shape this must match).
 // Rows without a Project name or Date are treated as blank/placeholder
@@ -715,6 +742,7 @@ module.exports = {
   updateJobFields,
   deleteJobRow,
   addJobRow,
+  addRowAttachment,
   fetchReportByJobId,
   fetchAttachmentBytes,
 };

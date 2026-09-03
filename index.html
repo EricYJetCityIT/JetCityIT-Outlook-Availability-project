@@ -506,6 +506,11 @@ body.is-finance #tab-invoice{display:inline-block}
 .dp-modal label.dp-fld:first-child{margin-top:0}
 .dp-modal input,.dp-modal select,.dp-modal textarea{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;outline:none}
 .dp-modal input:focus,.dp-modal select:focus,.dp-modal textarea:focus{border-color:var(--green)}
+.dpf-att-list{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+.dpf-att-list:empty{margin:0}
+.dpf-att-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text2);background:var(--surface2,var(--surface));border:1px solid var(--border2);border-radius:14px;padding:3px 6px 3px 10px;max-width:100%}
+.dpf-att-x{border:none;background:transparent;color:var(--text3);cursor:pointer;font-size:12px;line-height:1;padding:2px 4px;border-radius:50%;width:auto}
+.dpf-att-x:hover{color:var(--red);background:transparent}
 .dp-row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .dp-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
 .dp-assign-list{display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto}
@@ -1753,6 +1758,17 @@ const JCITDispatch=(function(){
     if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
     return res.json();
   }
+  // Uploads staged files (photos/maps/PDFs) as Smartsheet row attachments for a
+  // job (editor-gated). Sent as multipart/form-data so the browser sets the
+  // boundary; the server re-syncs, so the caller just reloadDispatch()es after.
+  async function uploadAttachments(jobId,files){
+    const token=await getApiToken();
+    const fd=new FormData();
+    files.forEach((f,i)=>fd.append('file'+i,f,f.name));
+    const res=await fetch('/api/dispatch/jobs/'+encodeURIComponent(String(jobId))+'/attachments',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    return res.json();
+  }
   // Updates an existing job's editable fields in Smartsheet (editor-gated); crew
   // is left untouched (Assign crew handles that). Server re-syncs.
   async function updateJob(jobId,fields){
@@ -2422,8 +2438,22 @@ const JCITDispatch=(function(){
     for(let i=1;i<=20;i++) out+=`<option${String(i)===s?' selected':''}>${i}</option>`;
     return out;
   }
+  // Files staged in the New/Edit job modal but not yet uploaded. Kept in JS (not
+  // the DOM) so re-rendering just the pending list doesn't disturb the other
+  // typed-but-unsaved fields; flushed to Smartsheet on Save (see the 'save'
+  // handler) and cleared whenever a job modal opens/closes.
+  let pendingAtts=[];
+  function humanSize(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(0)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
+  // Renders the staged-file chips into #dpf-att-pending in place (called after
+  // picking/removing files) so we never re-render the whole form.
+  function renderPendingAtts(){
+    const box=document.getElementById('dpf-att-pending'); if(!box) return;
+    if(!pendingAtts.length){ box.innerHTML=''; return; }
+    box.innerHTML=pendingAtts.map((f,i)=>`<span class="dpf-att-chip">${attIcon(f.type)} ${esc(f.name)} <span style="color:var(--text3)">(${humanSize(f.size)})</span> <button type="button" class="dpf-att-x" data-dpact="att-remove" data-idx="${i}" title="Remove">✕</button></span>`).join('');
+  }
   function jobModal(j){
     const isNew=!j.id;
+    const existing=(!isNew&&j.attachments&&j.attachments.length)?`<div style="margin:2px 0 6px;font-size:13px">${attListHtml(j.attachments)}</div>`:'';
     return overlay(isNew?'New job':'Edit job',
       `<label class="dp-fld">Project</label><input id="dpf-project" value="${esc(j.project||'')}" placeholder="Network install"/>
       <div class="dp-row2"><div><label class="dp-fld">Client</label><input id="dpf-client" list="dpf-client-list" value="${esc(j.client||'')}" placeholder="Pick or type a client" autocomplete="off"/><datalist id="dpf-client-list">${clientDatalistOptions()}</datalist></div><div><label class="dp-fld">Status</label><select id="dpf-status">${statusOptions(j.status||'')}</select></div></div>
@@ -2431,6 +2461,11 @@ const JCITDispatch=(function(){
       <div class="dp-row3"><div><label class="dp-fld">Date</label><input id="dpf-date" type="date" value="${esc(j.date||'')}"/></div><div><label class="dp-fld">Start time</label><input id="dpf-start" value="${esc(j.startTime||'')}" placeholder="9:00AM"/></div><div><label class="dp-fld">Duration (hrs)</label><input id="dpf-dur" value="${esc(j.duration||'')}" placeholder="4.0"/></div></div>
       <div class="dp-row2"><div><label class="dp-fld">Crew size (optional)</label><select id="dpf-crew">${crewSizeOptions(j.crewSize||'')}</select></div><div><label class="dp-fld">POC</label><input id="dpf-poc" value="${esc(j.poc||'')}" placeholder="Contact name + phone"/></div></div>
       <label class="dp-fld">Notes</label><textarea id="dpf-notes" rows="2">${esc(j.notes||'')}</textarea>
+      <label class="dp-fld" style="margin-top:10px">Attachments <span style="font-weight:400;color:var(--text3)">· pictures, maps &amp; PDFs</span></label>
+      ${existing}
+      <div id="dpf-att-pending" class="dpf-att-list"></div>
+      <input id="dpf-file" type="file" accept="image/*,application/pdf" multiple style="display:none"/>
+      <button type="button" class="btn btn-ghost btn-sm" data-dpact="att-pick">📎 Add attachment</button>
       ${isNew?'':`<div style="margin-top:16px"><button class="btn btn-ghost btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew (${crewOf(j).length})</button></div>`}`,
       '<span></span>'
       +`<div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="save">${isNew?'Create job':'Save'}</button></div>`);
@@ -2520,7 +2555,7 @@ const JCITDispatch=(function(){
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
     if(!modal){ root.innerHTML=''; return; }
-    if(modal.type==='job') root.innerHTML=jobModal(modal.job);
+    if(modal.type==='job'){ root.innerHTML=jobModal(modal.job); renderPendingAtts(); }
     else if(modal.type==='assign') root.innerHTML=assignModal(modal.id);
     else if(modal.type==='roster') root.innerHTML=rosterModal();
     else if(modal.type==='data') root.innerHTML=dataModal();
@@ -2549,8 +2584,10 @@ const JCITDispatch=(function(){
   function onClick(e){
     const el=e.target.closest('[data-dpact]'); if(!el) return;
     const act=el.getAttribute('data-dpact');
-    if(act==='new'){ modal={type:'job',job:{date:el.getAttribute('data-date'),lead:[],technicians:[],status:''}}; renderModalRoot(); return; }
-    if(act==='edit'){ const j=jobById(el.getAttribute('data-id')); if(j){ modal={type:'job',job:j}; renderModalRoot(); } return; }
+    if(act==='new'){ pendingAtts=[]; modal={type:'job',job:{date:el.getAttribute('data-date'),lead:[],technicians:[],status:''}}; renderModalRoot(); return; }
+    if(act==='edit'){ const j=jobById(el.getAttribute('data-id')); if(j){ pendingAtts=[]; modal={type:'job',job:j}; renderModalRoot(); } return; }
+    if(act==='att-pick'){ const fi=document.getElementById('dpf-file'); if(fi) fi.click(); return; }
+    if(act==='att-remove'){ const i=parseInt(el.getAttribute('data-idx'),10); if(i>=0){ pendingAtts.splice(i,1); renderPendingAtts(); } return; }
     if(act==='detail'){ const j=jobById(el.getAttribute('data-id')); if(j){ modal={type:'detail',job:j}; renderModalRoot(); } return; }
     if(act==='save'){
       const data=readJobForm();
@@ -2561,6 +2598,7 @@ const JCITDispatch=(function(){
         alert('Address or start time is required — the board treats jobs with neither as calendar notes (like holidays) and hides them.');
         return;
       }
+      const atts=pendingAtts.slice();
       if(cur.id){
         // Edit an existing job → write the changed fields back to Smartsheet
         // (editor-gated), then re-pull so the board reflects them (and cancelled/
@@ -2569,6 +2607,8 @@ const JCITDispatch=(function(){
         (async()=>{
           try{
             await updateJob(cur.id,data);
+            if(atts.length){ btn.textContent='Uploading…'; await uploadAttachments(cur.id,atts); }
+            pendingAtts=[];
             await reloadDispatch();
             modal=null; renderModalRoot(); refreshActiveView();
           }catch(err){
@@ -2594,7 +2634,16 @@ const JCITDispatch=(function(){
       const btn=el; const orig=btn.textContent; btn.disabled=true; btn.textContent='Adding…';
       (async()=>{
         try{
-          await createJob(data);
+          const created=await createJob(data);
+          // Attach any staged files to the freshly created row (jobCreate returns
+          // its new rowId). If we somehow don't get an id back, the job is still
+          // saved — just tell the user the files didn't attach.
+          if(atts.length){
+            const newId=created&&created.rowId;
+            if(newId){ btn.textContent='Uploading…'; await uploadAttachments(newId,atts); }
+            else alert('Job created, but the attachments could not be added automatically — open the job and add them from Edit.');
+          }
+          pendingAtts=[];
           await reloadDispatch();
           modal=null; renderModalRoot(); refreshActiveView();
         }catch(err){
@@ -2742,9 +2791,24 @@ const JCITDispatch=(function(){
       // Closing the assign modal without saving reverts any pending crew edits
       // back to the last-saved state so they don't linger in the local view.
       if(modal&&modal.type==='assign'&&modal.orig){ const j=jobById(modal.id); if(j){ j.lead=modal.orig.lead.slice(); j.technicians=modal.orig.technicians.slice(); } }
-      modal=null; renderModalRoot(); return; }
+      pendingAtts=[]; modal=null; renderModalRoot(); return; }
   }
-  function onChange(e){ if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); } }
+  function onChange(e){
+    if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); return; }
+    if(e.target&&e.target.id==='dpf-file'){
+      const MAX=25*1024*1024; const rejected=[];
+      Array.from(e.target.files||[]).forEach(f=>{
+        const okType=/^image\//i.test(f.type)||f.type==='application/pdf'||/\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|pdf)$/i.test(f.name);
+        if(!okType){ rejected.push(f.name+' (only images & PDFs)'); return; }
+        if(f.size>MAX){ rejected.push(f.name+' (over 25 MB)'); return; }
+        pendingAtts.push(f);
+      });
+      e.target.value=''; // reset so the same file can be picked again
+      renderPendingAtts();
+      if(rejected.length) alert('Skipped:\n'+rejected.join('\n'));
+      return;
+    }
+  }
 
   function onDragStart(e){
     const chip=e.target.closest('[data-dpname]'); if(!chip) return;
