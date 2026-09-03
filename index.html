@@ -277,11 +277,6 @@ input[type=text]::placeholder{color:var(--text3)}
 /* ── Avatar ── */
 .avatar{width:36px;height:36px;border-radius:50%;background:var(--green-light);color:var(--green-dark);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;border:1.5px solid #B2E5D8}
 
-/* ── Heatmap ── */
-.overlap-grid{min-width:490px}
-.overlap-row{display:grid;grid-template-columns:46px repeat(7,1fr);gap:3px;margin-bottom:3px}
-.ocell{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;transition:background .12s;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
-
 /* ── Tech cards ── */
 .tech-list{display:flex;flex-direction:column;gap:12px}
 .tech-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden}
@@ -1472,7 +1467,7 @@ function initials(n){return n.split(' ').map(w=>w[0]).join('').toUpperCase().sli
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
 // ── Manager view ──────────────────────────────────────────────────────────────
-let mgrMode='overlap';
+let mgrMode='dispatch';
 let crewMode='board';
 let crewSelectedWorker='';
 let currentUserName='';
@@ -1487,7 +1482,6 @@ function setCrewMode(m){
 
 function mgrSubTabsHtml(){
   return `<div class="mgr-sub-tabs">
-      <button class="mgr-sub-tab ${mgrMode==='overlap'?'active':''}" onclick="setMgrMode('overlap')">Team heatmap</button>
       <button class="mgr-sub-tab ${mgrMode==='individual'?'active':''}" onclick="setMgrMode('individual')">Individual</button>
       <button class="mgr-sub-tab ${mgrMode==='dispatch'?'active':''}" onclick="setMgrMode('dispatch')">Dispatch</button>
       <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>
@@ -1525,13 +1519,12 @@ async function renderManager(){
   const total=techData.length;
   subLbl.textContent=`Week of ${week.label} · ${total} tech${total!==1?'s':''} submitted`;
 
-  // overlapCount = number of techs AVAILABLE at each slot (i.e. did NOT mark it unavailable)
-  // overlapNames = which techs those are, so the heatmap can show initials when only one is free
+  // overlapCount = number of techs AVAILABLE at each slot (i.e. did NOT mark it
+  // unavailable); feeds the "max overlap" stat pill below.
   const overlapCount=DAYS.map(()=>new Array(N).fill(0));
-  const overlapNames=DAYS.map(()=>Array.from({length:N},()=>[]));
-  techData.forEach(({name,slotSets})=>{
+  techData.forEach(({slotSets})=>{
     slotSets.forEach((s,di)=>{
-      for(let i=0;i<N;i++){if(!s.has(START*2+i)){overlapCount[di][i]++;overlapNames[di][i].push(name);}}
+      for(let i=0;i<N;i++){if(!s.has(START*2+i)){overlapCount[di][i]++;}}
     });
   });
 
@@ -1556,60 +1549,11 @@ async function renderManager(){
     </div>
   </div>`;
 
-  html+=mgrMode==='overlap'?buildHeatmap(overlapCount,overlapNames,total):buildIndividual(techData);
+  html+=buildIndividual(techData);
   el.innerHTML=html;
 }
 
 function setMgrMode(m){mgrMode=m;renderManager();}
-
-function buildHeatmap(overlapCount,overlapNames,total){
-  const todayMon=getMondayOf(new Date());
-  const isCurrentWeek=weekKey(todayMon)===selectedWeekKey;
-  const today=isCurrentWeek?todayDayIdx():-1;
-
-  let html=`<div class="card"><div class="card-head"><div><div class="card-title">Team overlap heatmap</div><div class="card-sub">How many techs are free at each time</div></div></div><div class="card-body"><div class="grid-outer"><div class="overlap-grid">`;
-  html+='<div class="grid-col-heads"><span></span>';
-  DAYS.forEach((d,i)=>{
-    const date=new Date(getSelectedWeek().monDate);date.setDate(date.getDate()+i);
-    const hName=getHoliday(date);
-    const hBadge=hName?`<span class="holiday-badge holiday-badge-sm" title="${hName}">🏛 ${hName.length>8?hName.slice(0,7)+'…':hName}</span>`:'';
-    html+=`<span class="${i===today?'today':''}" style="${hName?'color:var(--holiday-text);':''}">${d}${hBadge}</span>`;
-  });
-  html+='</div>';
-
-  for(let s=0;s<N;s++){
-    const abs=START*2+s;
-    const lbl=slotLabel(abs);
-    if(s>0&&abs%2===0)html+='<div class="hour-sep"></div>';
-    html+='<div class="overlap-row"><div class="time-lbl">'+lbl+'</div>';
-    DAYS.forEach((_,di)=>{
-      const count=overlapCount[di][s];
-      const pct=total>0?count/total:0;
-      let bg,fc,txt='';
-      if(count===0){bg='var(--surface2)';fc='transparent';}
-      else if(pct<=.33){bg='#C8EFE4';fc='#0D6E56';}
-      else if(pct<=.66){bg='#52C9A8';fc='#fff';}
-      else{bg='#16A37F';fc='#fff';}
-      let title='';
-      if(count>0){
-        const names=overlapNames[di][s];
-        txt=names.map(n=>initials(n)).join(', ');
-        title=` title="${esc(names.join(', '))}"`;
-      }
-      html+=`<div class="ocell" style="background:${bg};color:${fc}"${title}>${txt}</div>`;
-    });
-    html+='</div>';
-  }
-  html+='</div></div>';
-  html+=`<div style="display:flex;gap:12px;margin-top:14px;align-items:center;flex-wrap:wrap">
-    <span style="font-size:12px;color:var(--text3)">Coverage:</span>
-    <span class="legend-item"><span class="ldot" style="background:var(--surface2);border:1.5px solid var(--border)"></span>None</span>
-    <span class="legend-item"><span class="ldot" style="background:#C8EFE4;border:1.5px solid #9DDECE"></span>Low</span>
-    <span class="legend-item"><span class="ldot" style="background:#52C9A8;border:1.5px solid #2DB08F"></span>Medium</span>
-    <span class="legend-item"><span class="ldot" style="background:#16A37F;border:1.5px solid #0D6E56"></span>High</span>
-  </div></div></div>`;
-  return html;
-}
 
 function buildIndividual(techData){
   const todayMon=getMondayOf(new Date());
