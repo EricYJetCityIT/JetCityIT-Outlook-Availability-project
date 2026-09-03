@@ -111,6 +111,8 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .tc-acts{display:flex;gap:6px;align-items:center;flex:none}
 .tc-act{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--green-dark);text-decoration:none;white-space:nowrap;padding:5px 10px;border:1px solid var(--border2);border-radius:16px}
 .tc-act:hover{background:var(--surface2)}
+.tc-del-v{border:1px solid var(--border2);background:transparent;color:var(--text3);cursor:pointer;font-size:13px;padding:5px 9px;border-radius:16px;line-height:1;width:auto}
+.tc-del-v:hover{color:var(--red);border-color:var(--red)}
 .tc-erow{border:1px solid var(--border);border-radius:8px;padding:10px 34px 10px 10px;margin-bottom:8px;position:relative}
 .tc-efields{display:flex;flex-direction:column;gap:6px}
 .tc-del{position:absolute;top:8px;right:8px;border:none;background:transparent;color:var(--text3);cursor:pointer;font-size:15px;width:auto;padding:2px 6px;line-height:1}
@@ -3055,20 +3057,30 @@ function openTeamContacts(e){
   var state={staff:[],custom:[],canEdit:false};
 
   function telHref(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
-  function contactRow(c){
+  // idx is the position in state.custom for a curated row (so it can be deleted);
+  // pass null for read-only staff rows pulled from Entra.
+  function contactRow(c,idx){
     var actions='';
     if(c.phone) actions+='<a class="tc-act" href="'+telHref(c.phone)+'">📞 '+esc(c.phone||'')+'</a>';
     if(c.email) actions+='<a class="tc-act" href="mailto:'+esc(c.email||'')+'" title="'+esc(c.email||'')+'">✉️</a>';
+    if(idx!=null && state.canEdit) actions+='<button class="tc-del-v" data-tc="delete" data-idx="'+idx+'" title="Delete contact" aria-label="Delete contact">🗑</button>';
     return '<div class="tc-row"><div class="tc-info"><div class="tc-name">'+esc(c.name||'')+(c.role?' <span class="tc-role">'+esc(c.role||'')+'</span>':'')+'</div>'
       +(c.phone?'':'<div class="tc-nonum">No number on file</div>')+'</div><div class="tc-acts">'+actions+'</div></div>';
   }
   function renderView(){
     var html='';
-    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(contactRow).join('');
-    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(contactRow).join('');
+    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(function(c,i){return contactRow(c,i);}).join('');
+    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(function(c){return contactRow(c,null);}).join('');
     if(!state.custom.length && !state.staff.length) html='<div style="color:var(--text2);padding:8px 0">No contacts yet.'+(state.canEdit?' Tap “Edit key numbers” to add some.':'')+'</div>';
     body.innerHTML=html;
     ft.innerHTML=(state.canEdit?'<button class="btn btn-sm" data-tc="edit">✏️ Edit key numbers</button>':'<span></span>')+'<button class="btn btn-sm" data-tc="close">Close</button>';
+  }
+  // Shared PUT used by both Save (edit mode) and the per-row Delete in the view.
+  async function saveContacts(contacts){
+    var token=await getApiToken();
+    var res=await fetch('/api/contacts',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({contacts:contacts})});
+    if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
+    var data=await res.json(); return data.contacts||[];
   }
   function editRow(c){
     c=c||{};
@@ -3105,17 +3117,21 @@ function openTeamContacts(e){
     else if(act==='cancel') renderView();
     else if(act==='add'){ var rc=ov.querySelector('[data-tc-rows]'); if(rc) rc.insertAdjacentHTML('beforeend', editRow({})); }
     else if(act==='delrow'){ var row=b.closest('.tc-erow'); if(row) row.remove(); }
+    else if(act==='delete'){
+      var idx=parseInt(b.getAttribute('data-idx'),10);
+      var c=state.custom[idx]; if(!c) return;
+      if(!confirm('Delete '+(c.name||'this contact')+' from Key numbers?')) return;
+      var next=state.custom.slice(); next.splice(idx,1);
+      var prev=state.custom;
+      state.custom=next; renderView(); // optimistic
+      saveContacts(next).then(function(saved){ state.custom=saved; renderView(); })
+        .catch(function(err){ console.error('delete contact failed',err); state.custom=prev; renderView(); alert('Couldn’t delete: '+String(err.message||err).slice(0,140)); });
+    }
     else if(act==='save'){
       var contacts=collectRows(); var msg=ov.querySelector('[data-tc-msg]');
       b.disabled=true; b.textContent='Saving…';
-      (async function(){
-        try{
-          var token=await getApiToken();
-          var res=await fetch('/api/contacts',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({contacts:contacts})});
-          if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
-          var data=await res.json(); state.custom=data.contacts||[]; renderView();
-        }catch(err){ console.error('save contacts failed',err); if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(err.message||err).slice(0,120); } b.disabled=false; b.textContent='Save'; }
-      })();
+      saveContacts(contacts).then(function(saved){ state.custom=saved; renderView(); })
+        .catch(function(err){ console.error('save contacts failed',err); if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(err.message||err).slice(0,120); } b.disabled=false; b.textContent='Save'; });
     }
   });
   (async function(){
