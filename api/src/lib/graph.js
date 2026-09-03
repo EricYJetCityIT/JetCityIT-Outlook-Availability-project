@@ -75,7 +75,9 @@ async function sendMail({ from, to, subject, html, attachments }) {
 // User.Read.All permission (admin-consented) on top of Mail.Send.
 async function listUsers() {
   const token = await getAppToken();
-  let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName&$top=999';
+  // mobilePhone/businessPhones/jobTitle feed the in-app Team contacts list;
+  // adding them to the select is harmless for the matchDirectoryUser callers.
+  let url = 'https://graph.microsoft.com/v1.0/users?$select=displayName,mail,userPrincipalName,mobilePhone,businessPhones,jobTitle,accountEnabled&$top=999';
   const users = [];
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });

@@ -100,6 +100,21 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .info-link{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:14px}
 .info-link:hover{background:var(--surface2)}
 .info-link svg{flex:none;color:var(--text3)}
+/* ── Team contacts modal ── */
+.tc-sec-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin:16px 0 6px}
+.tc-sec-h:first-child{margin-top:2px}
+.tc-row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border)}
+.tc-info{flex:1;min-width:0}
+.tc-name{font-size:14px;color:var(--text);font-weight:500}
+.tc-role{font-weight:400;color:var(--text3);font-size:12px}
+.tc-nonum{font-size:12px;color:var(--text3);margin-top:1px}
+.tc-acts{display:flex;gap:6px;align-items:center;flex:none}
+.tc-act{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--green-dark);text-decoration:none;white-space:nowrap;padding:5px 10px;border:1px solid var(--border2);border-radius:16px}
+.tc-act:hover{background:var(--surface2)}
+.tc-erow{border:1px solid var(--border);border-radius:8px;padding:10px 34px 10px 10px;margin-bottom:8px;position:relative}
+.tc-efields{display:flex;flex-direction:column;gap:6px}
+.tc-del{position:absolute;top:8px;right:8px;border:none;background:transparent;color:var(--text3);cursor:pointer;font-size:15px;width:auto;padding:2px 6px;line-height:1}
+.tc-del:hover{color:var(--red)}
 .info-link .il-sub{display:block;font-size:11px;color:var(--text3);margin-top:1px}
 .svc-map-sub{font-size:12px;color:var(--text3);margin:-4px 0 6px}
 .svc-map svg{width:100%;max-width:440px;display:block;margin:0 auto;border-radius:12px;border:1px solid var(--border)}
@@ -583,6 +598,10 @@ if('serviceWorker' in navigator){
       <a class="info-link" href="#" onclick="openParkingFinder(event); return false;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 21s6.5-5.8 6.5-10.5a6.5 6.5 0 10-13 0C5.5 15.2 12 21 12 21z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M10 14V7h2.4a2.3 2.3 0 010 4.6H10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>Find parking<span class="il-sub">Near any address</span></span>
+      </a>
+      <a class="info-link" href="#" onclick="openTeamContacts(event); return false;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M16 19v-1a4 4 0 00-4-4H7a4 4 0 00-4 4v1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.5" cy="8" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M21 19v-1a4 4 0 00-3-3.85M16.5 5.15A3 3 0 0117 11" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Team contacts<span class="il-sub">Crew phone numbers</span></span>
       </a>
     </div>
     <button class="hdr-gear" id="settings-gear" onclick="toggleSettingsMenu(event)" title="Settings" aria-label="Settings">
@@ -3014,6 +3033,101 @@ async function openParkingList(address){
     body.innerHTML='<div class="pk-map" data-pk-mapc></div>'+note;
     renderParkingMap(body.querySelector('[data-pk-mapc]'), data, token, address, blobUrls).then(function(m){ pkMap=m; }).catch(function(err){ console.error('map render failed',err); var c=body.querySelector('[data-pk-mapc]'); if(c){ c.style.height='auto'; c.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Map couldn’t load. Try “Open in Google Maps” below.</div>'; } });
   }catch(e){ console.error('parking load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load parking. Try “Open in Google Maps” below.</div>'; }
+}
+// Team contacts — opened from the header ℹ️ Company info menu. Any signed-in
+// user can VIEW (tap-to-call/email); editors get an Edit mode to maintain the
+// curated "Key numbers" list, stored server-side in Cosmos (never in the public
+// repo). Staff numbers come from Entra automatically via /api/contacts.
+function openTeamContacts(e){
+  if(e) e.stopPropagation();
+  var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Team contacts</span><button class="dp-close" data-tc="close">✕</button></div>'
+    +'<div class="dp-modal-bd" data-tc-body style="min-height:80px;color:var(--text3);font-size:13px">Loading…</div>'
+    +'<div class="dp-modal-ft" data-tc-ft><span></span><button class="btn btn-sm" data-tc="close">Close</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  var body=ov.querySelector('[data-tc-body]');
+  var ft=ov.querySelector('[data-tc-ft]');
+  var state={staff:[],custom:[],canEdit:false};
+
+  function telHref(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
+  function contactRow(c){
+    var actions='';
+    if(c.phone) actions+='<a class="tc-act" href="'+telHref(c.phone)+'">📞 '+esc(c.phone||'')+'</a>';
+    if(c.email) actions+='<a class="tc-act" href="mailto:'+esc(c.email||'')+'" title="'+esc(c.email||'')+'">✉️</a>';
+    return '<div class="tc-row"><div class="tc-info"><div class="tc-name">'+esc(c.name||'')+(c.role?' <span class="tc-role">'+esc(c.role||'')+'</span>':'')+'</div>'
+      +(c.phone?'':'<div class="tc-nonum">No number on file</div>')+'</div><div class="tc-acts">'+actions+'</div></div>';
+  }
+  function renderView(){
+    var html='';
+    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(contactRow).join('');
+    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(contactRow).join('');
+    if(!state.custom.length && !state.staff.length) html='<div style="color:var(--text2);padding:8px 0">No contacts yet.'+(state.canEdit?' Tap “Edit key numbers” to add some.':'')+'</div>';
+    body.innerHTML=html;
+    ft.innerHTML=(state.canEdit?'<button class="btn btn-sm" data-tc="edit">✏️ Edit key numbers</button>':'<span></span>')+'<button class="btn btn-sm" data-tc="close">Close</button>';
+  }
+  function editRow(c){
+    c=c||{};
+    return '<div class="tc-erow"><button class="tc-del" data-tc="delrow" title="Remove">✕</button><div class="tc-efields">'
+      +'<input data-f="name" placeholder="Name" value="'+esc(c.name||'')+'"/>'
+      +'<input data-f="phone" placeholder="Phone" value="'+esc(c.phone||'')+'"/>'
+      +'<input data-f="email" placeholder="Email (optional)" value="'+esc(c.email||'')+'"/>'
+      +'<input data-f="role" placeholder="Role (optional)" value="'+esc(c.role||'')+'"/>'
+      +'</div></div>';
+  }
+  function renderEdit(){
+    var rows=state.custom.length?state.custom:[{}];
+    body.innerHTML='<div class="tc-sec-h">Key numbers <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">· office line, on-call, vendors, or crew not in Entra</span></div>'
+      +'<div data-tc-rows>'+rows.map(editRow).join('')+'</div>'
+      +'<button class="btn btn-ghost btn-sm" data-tc="add" style="margin-top:2px">+ Add contact</button>'
+      +'<div data-tc-msg style="font-size:12px;color:var(--text3);margin-top:8px">These are saved securely and only shown to signed-in staff.</div>';
+    ft.innerHTML='<button class="btn btn-sm" data-tc="cancel">Cancel</button><button class="btn btn-primary btn-sm" data-tc="save">Save</button>';
+  }
+  function collectRows(){
+    var out=[];
+    body.querySelectorAll('.tc-erow').forEach(function(r){
+      var g=function(f){ var el=r.querySelector('[data-f="'+f+'"]'); return el?el.value.trim():''; };
+      var name=g('name'); if(!name && !g('phone') && !g('email')) return;
+      out.push({name:name,phone:g('phone'),email:g('email'),role:g('role')});
+    });
+    return out;
+  }
+  ov.addEventListener('click',function(ev){
+    var b=ev.target.closest('[data-tc]');
+    if(!b){ if(ev.target===ov) cleanup(); return; }
+    var act=b.getAttribute('data-tc');
+    if(act==='close') cleanup();
+    else if(act==='edit') renderEdit();
+    else if(act==='cancel') renderView();
+    else if(act==='add'){ var rc=ov.querySelector('[data-tc-rows]'); if(rc) rc.insertAdjacentHTML('beforeend', editRow({})); }
+    else if(act==='delrow'){ var row=b.closest('.tc-erow'); if(row) row.remove(); }
+    else if(act==='save'){
+      var contacts=collectRows(); var msg=ov.querySelector('[data-tc-msg]');
+      b.disabled=true; b.textContent='Saving…';
+      (async function(){
+        try{
+          var token=await getApiToken();
+          var res=await fetch('/api/contacts',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({contacts:contacts})});
+          if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
+          var data=await res.json(); state.custom=data.contacts||[]; renderView();
+        }catch(err){ console.error('save contacts failed',err); if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(err.message||err).slice(0,120); } b.disabled=false; b.textContent='Save'; }
+      })();
+    }
+  });
+  (async function(){
+    try{
+      var token=await getApiToken();
+      var res=await fetch('/api/contacts',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      var data=await res.json();
+      state.staff=data.staff||[]; state.custom=data.custom||[]; state.canEdit=!!data.canEdit;
+      renderView();
+    }catch(e){ console.error('contacts load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load contacts. Please try again.</div>'; }
+  })();
 }
 // Info-tab "Find parking": type any address, then show the in-app parking list.
 function openParkingFinder(e){
