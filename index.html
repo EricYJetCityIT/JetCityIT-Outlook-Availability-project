@@ -149,7 +149,8 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 
 /* ── Header ── */
 .hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;padding:0 24px;gap:12px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow-sm)}
-.hdr-logo{width:32px;height:32px;background:var(--green);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-logo img{width:100%;height:100%;object-fit:contain}
 .hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
 .company-logo-wrap{display:flex;justify-content:center;align-items:center;padding:28px 0 8px}
 .company-logo-wrap img{height:160px;width:auto;object-fit:contain}
@@ -558,8 +559,8 @@ if('serviceWorker' in navigator){
 <!-- ── Microsoft Login Overlay ── -->
 <div id="ms-login-overlay" style="position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 40px rgba(15,23,36,.12);padding:48px 40px;max-width:400px;width:100%;text-align:center">
-    <div style="width:56px;height:56px;background:var(--green);border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
-      <svg width="28" height="28" fill="none" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2.5" stroke="white" stroke-width="2"/><path d="M3 9h18M9 4v5M15 4v5" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+    <div style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
+      <img src="/logo.png" alt="Jet City IT" style="width:100%;height:100%;object-fit:contain"/>
     </div>
     <div style="font-size:22px;font-weight:700;color:var(--text);letter-spacing:-.4px;margin-bottom:8px">Jet City IT</div>
     <div style="font-size:15px;color:var(--text3);margin-bottom:32px">Sign in with your JetCityIT Microsoft account to submit your availability.</div>
@@ -577,10 +578,7 @@ if('serviceWorker' in navigator){
 <!-- ── Header ── -->
 <div class="hdr">
   <div class="hdr-logo">
-    <svg width="17" height="17" fill="none" viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="18" rx="2.5" stroke="white" stroke-width="2"/>
-      <path d="M3 9h18M9 4v5M15 4v5" stroke="white" stroke-width="2" stroke-linecap="round"/>
-    </svg>
+    <img src="/logo.png" alt="Jet City IT"/>
   </div>
   <span class="hdr-name">Team Availability</span>
   <div class="hdr-right">
