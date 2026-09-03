@@ -41,13 +41,19 @@ function sanitizeContact(c) {
   };
 }
 
-async function readCustom() {
+// The stored doc holds the curated list plus `hidden` = keys of Entra staff an
+// editor chose to hide from this view (staff re-sync from Graph, so a plain
+// delete would reappear — hiding is remembered and reversible).
+async function readDoc() {
   const container = getContainer(CONTAINER_ID);
   try {
     const { resource } = await container.item(DOC_ID, DOC_ID).read();
-    return Array.isArray(resource && resource.contacts) ? resource.contacts : [];
+    return {
+      contacts: Array.isArray(resource && resource.contacts) ? resource.contacts : [],
+      hidden: Array.isArray(resource && resource.hidden) ? resource.hidden : [],
+    };
   } catch (e) {
-    if (e.code === 404) return [];
+    if (e.code === 404) return { contacts: [], hidden: [] };
     throw e;
   }
 }
@@ -65,7 +71,7 @@ async function readStaff() {
     const key = (email || u.displayName || '').toLowerCase();
     if (!key || seen[key]) return;
     seen[key] = 1;
-    out.push({ name: clean(u.displayName || email, 80), email, phone, role: clean(u.jobTitle, 60) });
+    out.push({ name: clean(u.displayName || email, 80), email, phone, role: clean(u.jobTitle, 60), key });
   });
   out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   staffCache = out;
@@ -81,29 +87,43 @@ app.http('contacts', {
     try {
       const user = await requireUser(request);
 
+      const doc = await readDoc();
+      const hiddenSet = new Set((doc.hidden || []).map((k) => String(k).toLowerCase()));
+
       if (request.method === 'GET') {
         // Staff pull can fail (Graph hiccup) without breaking the curated list.
-        let staff = [];
+        let allStaff = [];
         try {
-          staff = await readStaff();
+          allStaff = await readStaff();
         } catch (e) {
           context.error(`contacts: staff pull failed: ${e && e.message}`);
         }
-        const custom = await readCustom();
-        return { jsonBody: { staff, custom, canEdit: !!(user && user.isEditor) } };
+        const staff = allStaff.filter((s) => !hiddenSet.has(s.key));
+        // Hidden-but-still-in-Entra people, so an editor can restore them.
+        const hiddenStaff = allStaff.filter((s) => hiddenSet.has(s.key)).map((s) => ({ name: s.name, key: s.key }));
+        return { jsonBody: { staff, custom: doc.contacts, hiddenStaff, canEdit: !!(user && user.isEditor) } };
       }
 
-      // PUT - replace the curated list (editors only).
+      // PUT (editors only) — may replace the curated list and/or hide/unhide a
+      // staff row. Any subset of {contacts, hide, unhide} is applied to the doc.
       requireEditor(user);
       const body = await request.json().catch(() => ({}));
-      const raw = Array.isArray(body.contacts) ? body.contacts : [];
-      if (raw.length > MAX_CUSTOM) {
-        return { status: 400, jsonBody: { error: `Too many contacts (max ${MAX_CUSTOM})` } };
+
+      let contacts = doc.contacts;
+      if (Array.isArray(body.contacts)) {
+        if (body.contacts.length > MAX_CUSTOM) {
+          return { status: 400, jsonBody: { error: `Too many contacts (max ${MAX_CUSTOM})` } };
+        }
+        contacts = body.contacts.map(sanitizeContact).filter(Boolean);
       }
-      const contacts = raw.map(sanitizeContact).filter(Boolean);
+
+      if (body.hide) hiddenSet.add(String(body.hide).toLowerCase());
+      if (body.unhide) hiddenSet.delete(String(body.unhide).toLowerCase());
+      const hidden = Array.from(hiddenSet).slice(0, MAX_CUSTOM * 2);
+
       const container = getContainer(CONTAINER_ID);
-      await container.items.upsert({ id: DOC_ID, contacts, updatedAt: new Date().toISOString(), updatedBy: user.upn || null });
-      return { jsonBody: { saved: true, contacts } };
+      await container.items.upsert({ id: DOC_ID, contacts, hidden, updatedAt: new Date().toISOString(), updatedBy: user.upn || null });
+      return { jsonBody: { saved: true, contacts, hidden } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

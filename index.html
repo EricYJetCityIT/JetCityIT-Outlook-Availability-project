@@ -3054,33 +3054,43 @@ function openTeamContacts(e){
   document.addEventListener('keydown',onKey);
   var body=ov.querySelector('[data-tc-body]');
   var ft=ov.querySelector('[data-tc-ft]');
-  var state={staff:[],custom:[],canEdit:false};
+  var state={staff:[],custom:[],hiddenStaff:[],canEdit:false};
 
   function telHref(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
-  // idx is the position in state.custom for a curated row (so it can be deleted);
-  // pass null for read-only staff rows pulled from Entra.
-  function contactRow(c,idx){
+  // opts.idx = position in state.custom (curated row → delete); opts.staffKey =
+  // an Entra staff key (read-only row → hide). Delete/hide only for editors.
+  function contactRow(c,opts){
+    opts=opts||{};
     var actions='';
     if(c.phone) actions+='<a class="tc-act" href="'+telHref(c.phone)+'">📞 '+esc(c.phone||'')+'</a>';
     if(c.email) actions+='<a class="tc-act" href="mailto:'+esc(c.email||'')+'" title="'+esc(c.email||'')+'">✉️</a>';
-    if(idx!=null && state.canEdit) actions+='<button class="tc-del-v" data-tc="delete" data-idx="'+idx+'" title="Delete contact" aria-label="Delete contact">🗑</button>';
+    if(state.canEdit && opts.idx!=null) actions+='<button class="tc-del-v" data-tc="delete" data-idx="'+opts.idx+'" title="Delete contact" aria-label="Delete contact">🗑</button>';
+    else if(state.canEdit && opts.staffKey) actions+='<button class="tc-del-v" data-tc="hide" data-key="'+esc(opts.staffKey)+'" title="Hide from list" aria-label="Hide from list">🗑</button>';
     return '<div class="tc-row"><div class="tc-info"><div class="tc-name">'+esc(c.name||'')+(c.role?' <span class="tc-role">'+esc(c.role||'')+'</span>':'')+'</div>'
       +(c.phone?'':'<div class="tc-nonum">No number on file</div>')+'</div><div class="tc-acts">'+actions+'</div></div>';
   }
   function renderView(){
     var html='';
-    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(function(c,i){return contactRow(c,i);}).join('');
-    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(function(c){return contactRow(c,null);}).join('');
+    if(state.custom.length) html+='<div class="tc-sec-h">Key numbers</div>'+state.custom.map(function(c,i){return contactRow(c,{idx:i});}).join('');
+    if(state.staff.length) html+='<div class="tc-sec-h">JCIT crew</div>'+state.staff.map(function(c){return contactRow(c,{staffKey:c.key});}).join('');
     if(!state.custom.length && !state.staff.length) html='<div style="color:var(--text2);padding:8px 0">No contacts yet.'+(state.canEdit?' Tap “Edit key numbers” to add some.':'')+'</div>';
     body.innerHTML=html;
     ft.innerHTML=(state.canEdit?'<button class="btn btn-sm" data-tc="edit">✏️ Edit key numbers</button>':'<span></span>')+'<button class="btn btn-sm" data-tc="close">Close</button>';
   }
-  // Shared PUT used by both Save (edit mode) and the per-row Delete in the view.
-  async function saveContacts(contacts){
+  // One PUT for every editor change — {contacts} replaces the curated list,
+  // {hide}/{unhide} toggles a staff row's visibility. Returns the server's doc.
+  async function putContacts(payload){
     var token=await getApiToken();
-    var res=await fetch('/api/contacts',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({contacts:contacts})});
+    var res=await fetch('/api/contacts',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify(payload)});
     if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
-    var data=await res.json(); return data.contacts||[];
+    return res.json();
+  }
+  async function reload(){
+    var token=await getApiToken();
+    var res=await fetch('/api/contacts',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    var data=await res.json();
+    state.staff=data.staff||[]; state.custom=data.custom||[]; state.hiddenStaff=data.hiddenStaff||[]; state.canEdit=!!data.canEdit;
   }
   function editRow(c){
     c=c||{};
@@ -3096,7 +3106,11 @@ function openTeamContacts(e){
     body.innerHTML='<div class="tc-sec-h">Key numbers <span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0">· office line, on-call, vendors, or crew not in Entra</span></div>'
       +'<div data-tc-rows>'+rows.map(editRow).join('')+'</div>'
       +'<button class="btn btn-ghost btn-sm" data-tc="add" style="margin-top:2px">+ Add contact</button>'
-      +'<div data-tc-msg style="font-size:12px;color:var(--text3);margin-top:8px">These are saved securely and only shown to signed-in staff.</div>';
+      +'<div data-tc-msg style="font-size:12px;color:var(--text3);margin-top:8px">These are saved securely and only shown to signed-in staff.</div>'
+      +((state.hiddenStaff&&state.hiddenStaff.length)
+        ? '<div class="tc-sec-h" style="margin-top:18px">Hidden crew</div><div style="font-size:12px;color:var(--text3);margin-bottom:4px">Pulled from Entra but hidden from the list — tap to restore.</div>'
+          +state.hiddenStaff.map(function(h){ return '<div class="tc-row"><div class="tc-info"><div class="tc-name" style="color:var(--text3)">'+esc(h.name||'')+'</div></div><div class="tc-acts"><button class="tc-act" data-tc="unhide" data-key="'+esc(h.key||'')+'">↩ Restore</button></div></div>'; }).join('')
+        : '');
     ft.innerHTML='<button class="btn btn-sm" data-tc="cancel">Cancel</button><button class="btn btn-primary btn-sm" data-tc="save">Save</button>';
   }
   function collectRows(){
@@ -3122,25 +3136,36 @@ function openTeamContacts(e){
       var c=state.custom[idx]; if(!c) return;
       if(!confirm('Delete '+(c.name||'this contact')+' from Key numbers?')) return;
       var next=state.custom.slice(); next.splice(idx,1);
-      var prev=state.custom;
+      var prevC=state.custom;
       state.custom=next; renderView(); // optimistic
-      saveContacts(next).then(function(saved){ state.custom=saved; renderView(); })
-        .catch(function(err){ console.error('delete contact failed',err); state.custom=prev; renderView(); alert('Couldn’t delete: '+String(err.message||err).slice(0,140)); });
+      putContacts({contacts:next}).then(function(d){ state.custom=d.contacts||[]; renderView(); })
+        .catch(function(err){ console.error('delete contact failed',err); state.custom=prevC; renderView(); alert('Couldn’t delete: '+String(err.message||err).slice(0,140)); });
+    }
+    else if(act==='hide'){
+      var hkey=b.getAttribute('data-key');
+      var sm=null; for(var i=0;i<state.staff.length;i++){ if(state.staff[i].key===hkey){ sm=state.staff[i]; break; } }
+      if(!confirm('Hide '+((sm&&sm.name)||'this contact')+' from Team contacts?\nYou can restore them from “Edit key numbers”.')) return;
+      var prevS=state.staff.slice(), prevH=state.hiddenStaff.slice();
+      state.staff=state.staff.filter(function(x){ return x.key!==hkey; });
+      if(sm) state.hiddenStaff=state.hiddenStaff.concat([{name:sm.name,key:hkey}]);
+      renderView(); // optimistic
+      putContacts({hide:hkey}).catch(function(err){ console.error('hide contact failed',err); state.staff=prevS; state.hiddenStaff=prevH; renderView(); alert('Couldn’t hide: '+String(err.message||err).slice(0,140)); });
+    }
+    else if(act==='unhide'){
+      var ukey=b.getAttribute('data-key'); b.disabled=true; b.textContent='Restoring…';
+      putContacts({unhide:ukey}).then(function(){ return reload(); }).then(function(){ renderEdit(); })
+        .catch(function(err){ console.error('unhide contact failed',err); b.disabled=false; b.textContent='↩ Restore'; alert('Couldn’t restore: '+String(err.message||err).slice(0,140)); });
     }
     else if(act==='save'){
       var contacts=collectRows(); var msg=ov.querySelector('[data-tc-msg]');
       b.disabled=true; b.textContent='Saving…';
-      saveContacts(contacts).then(function(saved){ state.custom=saved; renderView(); })
+      putContacts({contacts:contacts}).then(function(d){ state.custom=d.contacts||[]; renderView(); })
         .catch(function(err){ console.error('save contacts failed',err); if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(err.message||err).slice(0,120); } b.disabled=false; b.textContent='Save'; });
     }
   });
   (async function(){
     try{
-      var token=await getApiToken();
-      var res=await fetch('/api/contacts',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      var data=await res.json();
-      state.staff=data.staff||[]; state.custom=data.custom||[]; state.canEdit=!!data.canEdit;
+      await reload();
       renderView();
     }catch(e){ console.error('contacts load failed',e); body.innerHTML='<div style="color:var(--red)">Couldn’t load contacts. Please try again.</div>'; }
   })();
