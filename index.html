@@ -2475,9 +2475,9 @@ const JCITDispatch=(function(){
   }
   function dataModal(){
     const json=JSON.stringify(state,null,2);
-    return overlay('Data · import / export',
-      `<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Local storage in this browser. Export to back up, or paste a JSON export to restore. Loading replaces all dispatch data.</div><textarea id="dp-data-json" rows="10" style="font-family:monospace;font-size:12px">${esc(json)}</textarea>`,
-      `<button class="btn btn-sm" data-dpact="data-export">Download .json</button><div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="data-load">Load JSON</button></div>`);
+    return overlay('Data · export',
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Read-only snapshot of the current dispatch data, synced from the "JCIT 2026 Crew Calendar" Smartsheet. Download to back it up — jobs and crew are edited in Smartsheet (or via Assign crew) and can't be restored by pasting JSON back in here.</div><textarea id="dp-data-json" rows="10" readonly style="font-family:monospace;font-size:12px">${esc(json)}</textarea>`,
+      `<button class="btn btn-sm" data-dpact="data-export">Download .json</button><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function detailModal(j){
     // Assign crew is a manager-only action even though this popup itself is
@@ -2742,7 +2742,6 @@ const JCITDispatch=(function(){
     if(act==='roster'){ modal={type:'roster'}; renderModalRoot(); return; }
     if(act==='data'){ modal={type:'data'}; renderModalRoot(); return; }
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
-    if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return;
