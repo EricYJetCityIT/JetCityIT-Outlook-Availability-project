@@ -2468,11 +2468,9 @@ const JCITDispatch=(function(){
       `<span id="dp-assign-msg" style="font-size:12px;color:var(--text3);align-self:center"></span><div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="assign-save" data-id="${j.id}">Save crew</button></div>`);
   }
   function rosterModal(){
-    const rows=state.workers.map(w=>`<div class="dp-assign-row"><span class="dp-assign-name" style="cursor:default">${esc(w.name)}${w.active?'':' <span style="color:var(--text3)">(inactive)</span>'}</span>
-      <button class="btn btn-sm" data-dpact="w-toggle" data-name="${esc(w.name)}">${w.active?'Deactivate':'Activate'}</button>
-      <button class="btn btn-sm btn-danger" data-dpact="w-del" data-name="${esc(w.name)}">Remove</button></div>`).join('');
+    const rows=state.workers.map(w=>`<div class="dp-assign-row"><span class="dp-assign-name" style="cursor:default">${esc(w.name)}${w.active?'':' <span style="color:var(--text3)">(inactive)</span>'}</span></div>`).join('');
     return overlay('Team',
-      `<div style="display:flex;gap:8px;margin-bottom:14px"><input id="dp-w-name" placeholder="New crew member name"/><button class="btn btn-primary btn-sm" data-dpact="w-add">Add</button></div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No crew members yet.</div>'}</div>`,
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">This list follows job assignments from the synced Smartsheet — assign someone to a job to add them here, unassign them from every job to remove them. It isn't editable directly.</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No crew members yet.</div>'}</div>`,
       `<span></span><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function dataModal(){
@@ -2742,9 +2740,6 @@ const JCITDispatch=(function(){
       return;
     }
     if(act==='roster'){ modal={type:'roster'}; renderModalRoot(); return; }
-    if(act==='w-add'){ const nmEl=document.getElementById('dp-w-name'),val=nmEl?nmEl.value.trim():''; if(val){ if(!workerByName(val)) state.workers.push({name:val,active:true}); save(); renderModalRoot(); } return; }
-    if(act==='w-toggle'){ const w=workerByName(el.getAttribute('data-name')); if(w){ w.active=!w.active; save(); renderModalRoot(); refreshActiveView(); } return; }
-    if(act==='w-del'){ const nm=el.getAttribute('data-name'); if(!confirm('Remove '+nm+'? They will be unassigned from all jobs.')) return; state.workers=state.workers.filter(w=>w.name!==nm); state.jobs.forEach(j=>{ if(j.technicians){const i=j.technicians.indexOf(nm); if(i>=0)j.technicians.splice(i,1);} if(j.lead){const i=j.lead.indexOf(nm); if(i>=0)j.lead.splice(i,1);} }); save(); renderModalRoot(); refreshActiveView(); return; }
     if(act==='data'){ modal={type:'data'}; renderModalRoot(); return; }
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='data-load'){ const ta=document.getElementById('dp-data-json'); try{ const parsed=JSON.parse(ta.value); if(!parsed.workers||!parsed.jobs) throw new Error('JSON must have workers[] and jobs[]'); state=parsed; save(); modal=null; renderModalRoot(); refreshActiveView(); }catch(err){ alert('Could not load JSON: '+err.message); } return; }
@@ -2794,8 +2789,23 @@ const JCITDispatch=(function(){
     if(!name) return;
     const j=jobById(job.getAttribute('data-id')); if(!j) return;
     j.technicians=j.technicians||[];
-    if((j.lead||[]).indexOf(name)<0&&j.technicians.indexOf(name)<0) j.technicians.push(name);
-    save(); refreshActiveView();
+    if((j.lead||[]).indexOf(name)>=0||j.technicians.indexOf(name)>=0) return;
+    j.technicians.push(name);
+    refreshActiveView();
+    // Same real endpoint the "Assign crew" modal's Save button uses
+    // (saveCrewAwait -> PUT /api/dispatch/jobs/{id}/crew) instead of the
+    // rejected full-state save() - drag-and-drop is just another UI for the
+    // same crew-assignment write. Revert + surface the error on failure so a
+    // drop never silently looks saved when it wasn't.
+    (async()=>{
+      try{ await saveCrewAwait(j.id); }
+      catch(err){
+        console.error('save crew failed',err);
+        const i=j.technicians.indexOf(name); if(i>=0) j.technicians.splice(i,1);
+        refreshActiveView();
+        alert('Could not assign '+name+' — '+String(err.message||err).slice(0,140));
+      }
+    })();
   }
 
   function init(){
