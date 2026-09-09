@@ -2444,6 +2444,7 @@ const JCITDispatch=(function(){
     const sameDayBooked=(name)=>state.jobs.filter(o=>
       o.id!==j.id && o.date===j.date && !o.cancelled &&
       ((o.lead||[]).indexOf(name)>=0 || (o.technicians||[]).indexOf(name)>=0));
+    const fmtBookedJob=(o)=>esc(o.project)+(o.startTime?' · '+esc(o.startTime):'');
     const rows=activeWorkers()
       .map(w=>({w,avail:availabilityFor(w.name,j.date),booked:sameDayBooked(w.name)}))
       .sort((x,y)=>((AVAIL_RANK[x.avail&&x.avail.status]??2)-(AVAIL_RANK[y.avail&&y.avail.status]??2))
@@ -2451,7 +2452,9 @@ const JCITDispatch=(function(){
       .map(({w,avail,booked})=>{
       const isTech=(j.technicians||[]).indexOf(w.name)>=0, isLead=(j.lead||[]).indexOf(w.name)>=0, a=avatarFor(w.name);
       const availHtml=avail?`<div style="font-size:11px;color:${availColor[avail.status]};margin-top:2px">${esc(avail.text)}</div>`:'';
-      const bookedHtml=booked.length?`<div class="dp-booked-flag" title="${esc(booked.map(o=>o.project+(o.startTime?' · '+o.startTime:'')).join('\n'))}">⚠ ${booked.length===1?'Also on: '+esc(booked[0].project)+(booked[0].startTime?' · '+esc(booked[0].startTime):''):'On '+booked.length+' other jobs this day'}</div>`:'';
+      const bookedHtml=!booked.length?'':(booked.length>=3
+        ? `<div class="dp-booked-flag" title="${esc(booked.map(o=>o.project+(o.startTime?' · '+o.startTime:'')).join('\n'))}">⚠ On ${booked.length} other jobs this day</div>`
+        : `<div class="dp-booked-flag">⚠ Also on:${booked.map(o=>`<div style="margin-left:15px">${fmtBookedJob(o)}</div>`).join('')}</div>`);
       return `<div class="dp-assign-row${isTech||isLead?' dp-on':''}" style="align-items:flex-start">
         <span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>
         <div style="flex:1;min-width:0">
