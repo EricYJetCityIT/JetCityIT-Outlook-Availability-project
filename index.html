@@ -2031,7 +2031,13 @@ const JCITDispatch=(function(){
   // initial" match. If two submitters would collide on that key, fall back to
   // the original name (→ "no availability") rather than risk showing the wrong
   // person's schedule.
-  function normNameKey(s){const t=String(s||'').trim().toLowerCase().split(/\s+/).filter(Boolean);return t.length>1?t[0]+'|'+t[1][0]:t[0];}
+  // Some people's login first name differs from the roster spelling by more
+  // than a last-name abbreviation — a spelling variant (Abylai/Abylay) or a
+  // nickname (Matt/Matthew). Canonicalize those known first names so the two
+  // still key to the same person. Keyed lowercase {variant: canonical}; add a
+  // line here whenever a new mismatch surfaces.
+  const FIRST_NAME_ALIASES={abylai:'abylay',matt:'matthew'};
+  function normNameKey(s){const t=String(s||'').trim().toLowerCase().split(/\s+/).filter(Boolean);if(!t.length)return'';const f=FIRST_NAME_ALIASES[t[0]]||t[0];return t.length>1?f+'|'+t[1][0]:f;}
   function resolveAvailName(name){
     if(getSlots(name)) return name;
     const target=normNameKey(name);
