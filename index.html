@@ -506,6 +506,11 @@ body.is-editor #tab-manager{display:inline-block}
    default, revealed only when the API confirms membership (adds `is-finance`). */
 #tab-invoice{display:none}
 body.is-finance #tab-invoice{display:inline-block}
+/* Project Planning tab is Project-Planners-group only (PLANNER_UPNS). Same
+   pattern: hidden by default, revealed only when the API confirms membership
+   (adds `is-planner`). */
+#tab-planning{display:none}
+body.is-planner #tab-planning{display:inline-block}
 
 /* ── Dispatch modals ── */
 .dp-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
@@ -674,6 +679,10 @@ if('serviceWorker' in navigator){
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/></svg>
       Manager view
     </button>
+    <button class="tab" id="tab-planning" onclick="switchTab('planning')">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 3v3h8V3" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Project Planning
+    </button>
     <button class="tab" id="tab-invoice" onclick="switchTab('invoice')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M6 3h9l3 3v15l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       Invoice
@@ -684,6 +693,12 @@ if('serviceWorker' in navigator){
   <div class="view" id="view-invoice">
     <div class="section-head"><div><h1>Invoice</h1><p>Financial group only.</p></div></div>
     <div class="empty"><div class="empty-icon">🧾</div><p>Invoice tools coming soon.</p></div>
+  </div>
+
+  <!-- PROJECT PLANNING VIEW (Project Planners group only) -->
+  <div class="view" id="view-planning">
+    <div class="section-head"><div><h1>Project Planning</h1><p>Project Planners group only.</p></div></div>
+    <div class="empty"><div class="empty-icon">📋</div><p>Project planning tools coming soon.</p></div>
   </div>
 
   <!-- TECH VIEW -->
@@ -1218,6 +1233,8 @@ function switchTab(id){
   if(id === 'manager' && !currentUserIsEditor) return;
   // Invoice is financial-group-only (FINANCE_UPNS); same belt-and-suspenders guard.
   if(id === 'invoice' && !currentUserIsFinance) return;
+  // Project Planning is Project-Planners-group-only (PLANNER_UPNS); same guard.
+  if(id === 'planning' && !currentUserIsPlanner) return;
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
@@ -1494,6 +1511,7 @@ let crewSelectedWorker='';
 let currentUserName='';
 let currentUserIsEditor=false;
 let currentUserIsFinance=false;
+let currentUserIsPlanner=false;
 function setCrewMode(m){
   crewMode=m;
   document.getElementById('crew-subtab-board').classList.toggle('active',m==='board');
@@ -3256,6 +3274,7 @@ async function loadMyRole(){
       const me=await res.json();
       currentUserIsEditor=!!me.isEditor;
       currentUserIsFinance=!!me.isFinance;
+      currentUserIsPlanner=!!me.isPlanner;
       // Read-only users get `is-viewer` (write controls hide); editors get
       // `is-editor`, which reveals the Manager-view tab (hidden by default).
       // Non-editors never see the Manager tab at all.
@@ -3263,6 +3282,8 @@ async function loadMyRole(){
       document.body.classList.toggle('is-editor', currentUserIsEditor);
       // `is-finance` reveals the Invoice tab for the FINANCE_UPNS group only.
       document.body.classList.toggle('is-finance', currentUserIsFinance);
+      // `is-planner` reveals the Project Planning tab for the Project Planners group (PLANNER_UPNS) only.
+      document.body.classList.toggle('is-planner', currentUserIsPlanner);
     }
   }catch(e){ console.error('Failed to load role:',e); }
 }

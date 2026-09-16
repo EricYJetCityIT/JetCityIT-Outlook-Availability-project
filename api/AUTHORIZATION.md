@@ -30,6 +30,30 @@ A caller is treated as an editor if **either** is true:
 Everyone else is read-only. You can start with `EDITOR_UPNS` today and move to
 App Roles later with no code change.
 
+## Separate access groups (Invoice, Project Planners)
+
+Two additional groups gate their own tabs and are **independent** of editor
+status — being an editor does not grant them, and vice versa. Each is a
+comma-separated list of `@jetcityit.com` emails in an app setting; empty or
+unset means nobody is in the group and the tab stays hidden for everyone.
+
+| App setting | Grants | Frontend flag |
+|---|---|---|
+| `FINANCE_UPNS` | **Invoice** tab (`isFinance`, `requireFinance`) | `is-finance` body class reveals `#tab-invoice` |
+| `PLANNER_UPNS` | **Project Planning** tab — the "Project Planners" group (`isPlanner`, `requirePlanner`) | `is-planner` body class reveals `#tab-planning` |
+
+Set them in the Static Web App → **Configuration** (application settings for the
+managed Functions), e.g.:
+
+```
+PLANNER_UPNS = dylanm@jetcityit.com,someone@jetcityit.com
+```
+
+`GET /api/me` returns `{ isEditor, isFinance, isPlanner }`, which the frontend
+uses to reveal each tab. As always, the tab-hiding is only a UX aid — any data
+endpoint behind these tabs must call `requireFinance` / `requirePlanner`
+server-side to actually enforce the group.
+
 ### Option A — quick start with `EDITOR_UPNS`
 
 In the Static Web App → **Configuration** (application settings for the managed

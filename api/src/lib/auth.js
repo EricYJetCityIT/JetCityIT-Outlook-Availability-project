@@ -36,6 +36,15 @@ const FINANCE_UPNS = (process.env.FINANCE_UPNS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// The "Project Planners" group — a separate access group (for the Project
+// Planning tab), independent of editor and finance status. Comma-separated
+// @jetcityit.com emails in the PLANNER_UPNS app setting. Empty/unset => nobody.
+const PLANNER_UPNS = (process.env.PLANNER_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
   cache: true,
@@ -108,8 +117,9 @@ async function requireUser(request) {
   const roles = Array.isArray(decoded.roles) ? decoded.roles : [];
   const isEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
   const isFinance = FINANCE_UPNS.includes(upn);
+  const isPlanner = PLANNER_UPNS.includes(upn);
 
-  return { name: decoded.name || upn, upn, roles, isEditor, isFinance };
+  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner };
 }
 
 // Gate for write/change operations. Reads never call this; writes do.
@@ -122,6 +132,13 @@ function requireEditor(user) {
 // Gate for the financial group (Invoice tab and any invoice data endpoints).
 function requireFinance(user) {
   if (!user || !user.isFinance) {
+    throw new AuthError(403, 'You do not have permission to view this.');
+  }
+}
+
+// Gate for the Project Planners group (Project Planning tab and its endpoints).
+function requirePlanner(user) {
+  if (!user || !user.isPlanner) {
     throw new AuthError(403, 'You do not have permission to view this.');
   }
 }
@@ -146,4 +163,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, AuthError, authErrorResponse };
