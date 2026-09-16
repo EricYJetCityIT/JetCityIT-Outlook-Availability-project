@@ -511,6 +511,40 @@ body.is-finance #tab-invoice{display:inline-block}
    (adds `is-planner`). */
 #tab-planning{display:none}
 body.is-planner #tab-planning{display:inline-block}
+/* ── Project Planning tab ── */
+.pp-list{display:flex;flex-direction:column;gap:10px}
+.pp-card{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;font-family:inherit;color:var(--text)}
+.pp-card:hover{border-color:var(--green)}
+.pp-card-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.pp-card-title{font-size:15px;font-weight:600;color:var(--text)}
+.pp-card-sub{font-size:12.5px;color:var(--text3);margin-top:2px}
+.pp-card-meta{font-size:12px;color:var(--text3);display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+.pp-sec{margin-top:20px}
+.pp-sec-h{font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px}
+.pp-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.pp-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.pp-box-h{font-size:12px;color:var(--text3);margin-bottom:6px}
+.pp-contact{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--text)}
+.pp-scope{font-size:13.5px;color:var(--text2);line-height:1.6;white-space:pre-wrap}
+.pp-chips{display:flex;flex-wrap:wrap;gap:6px}
+.pp-chip{background:var(--green-light);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12.5px}
+.pp-chip b{color:var(--text3);font-weight:500;margin-left:3px}
+.pp-tl{width:100%;border-collapse:collapse;font-size:13px}
+.pp-tl th{font-weight:400;color:var(--text3);text-align:left;padding:5px 8px}
+.pp-tl td{padding:6px 8px;border-top:1px solid var(--border);color:var(--text);vertical-align:top}
+.pp-total{font-size:12px;color:var(--text3)}
+.pp-total b{color:var(--text)}
+.pp-erow{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}
+.pp-erow input{flex:1;min-width:0}
+.pp-erow .pp-hc{flex:0 0 84px}
+.pp-erow-x{flex:0 0 auto;background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:15px;line-height:1;padding:8px 4px}
+.pp-erow-x:hover{color:var(--red)}
+.pp-warn{font-size:12px;color:#B45309;margin-top:4px}
+:root[data-theme="dark"] .pp-warn{color:#FBBF24}
+#pp-form input,#pp-form textarea{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;outline:none}
+#pp-form input:focus,#pp-form textarea:focus{border-color:var(--green)}
+#pp-form textarea{resize:vertical;line-height:1.5}
+#pp-form label.dp-fld{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px;margin-top:14px}
 
 /* ── Dispatch modals ── */
 .dp-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
@@ -697,8 +731,7 @@ if('serviceWorker' in navigator){
 
   <!-- PROJECT PLANNING VIEW (Project Planners group only) -->
   <div class="view" id="view-planning">
-    <div class="section-head"><div><h1>Project Planning</h1><p>Project Planners group only.</p></div></div>
-    <div class="empty"><div class="empty-icon">📋</div><p>Project planning tools coming soon.</p></div>
+    <div id="pp-root"><div class="empty"><div class="empty-icon">📋</div><p>Loading…</p></div></div>
   </div>
 
   <!-- TECH VIEW -->
@@ -1241,6 +1274,7 @@ function switchTab(id){
   document.getElementById('tab-'+id).classList.add('active');
   if(id==='manager')renderManager();
   if(id==='crew')renderCrewView();
+  if(id==='planning')renderPlanning();
 }
 
 // ── Tech view ─────────────────────────────────────────────────────────────────
@@ -3072,6 +3106,159 @@ async function openParkingList(address){
 // isn't in Entra. Any signed-in user can VIEW (tap-to-call/email); editors get an
 // Edit mode to add/fix/remove crew and to hide/restore Entra rows. Manually-added
 // contacts live server-side in Cosmos (never in the public repo).
+// ── Project Planning tab ──────────────────────────────────────────────────────
+// Project/move plans stored in Cosmos via /api/plans. Any signed-in user READS;
+// only the Project Planners group (currentUserIsPlanner) sees create/edit/delete.
+// Server re-checks (requirePlanner) on every write — this is only the UX gate.
+var ppCurrent=null;     // plan shown in the detail view (for Edit/Delete)
+var ppEditingId=null;   // id being edited (null = creating a new plan)
+
+function ppEl(){ return document.getElementById('pp-root'); }
+function ppTel(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
+function ppTotal(rows){ return (rows||[]).reduce(function(a,r){ return a+(parseInt(r.hc,10)||0); },0); }
+function ppWhen(iso){ try{ var d=new Date(iso); if(isNaN(d.getTime())) return ''; return d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return ''; } }
+
+async function ppFetch(path,opts){
+  var token=await getApiToken();
+  opts=opts||{}; opts.headers=Object.assign({'X-Jetcity-Authorization':'Bearer '+token},opts.headers||{});
+  if(opts.body){ opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(opts.body); }
+  var res=await fetch('/api/plans'+(path||''),opts);
+  if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){ } throw new Error(m); }
+  return res.json();
+}
+
+function ppWire(){ var root=ppEl(); if(!root||root._wired) return; root._wired=1; root.addEventListener('click',ppOnClick); }
+
+async function renderPlanning(){
+  ppWire(); var root=ppEl(); if(!root) return;
+  root.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>Loading…</p></div>';
+  try{ var data=await ppFetch(''); ppRenderList(data); }
+  catch(e){ console.error('plans load failed',e); root.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t load project plans. Please try again.</p></div>'; }
+}
+
+function ppRenderList(data){
+  var root=ppEl(); if(!root) return;
+  var canEdit=!!(data&&data.canEdit); var plans=(data&&data.plans)||[];
+  ppCurrent=null; ppEditingId=null;
+  var head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1>Project Planning</h1><p>Move and project plans.'+(canEdit?' You can create and edit.':' View only.')+'</p></div>'+(canEdit?'<button class="btn btn-primary btn-sm" onclick="openPlanEdit(null)">+ New plan</button>':'')+'</div>';
+  var body;
+  if(!plans.length){ body='<div class="empty"><div class="empty-icon">📋</div><p>No project plans yet.'+(canEdit?' Click “+ New plan” to add one.':'')+'</p></div>'; }
+  else body='<div class="pp-list">'+plans.map(function(p){
+    var meta=[];
+    if(p.discTotal) meta.push('<span>Disconnect '+Number(p.discTotal).toLocaleString()+' HC</span>');
+    if(p.reconTotal) meta.push('<span>Reconnect '+Number(p.reconTotal).toLocaleString()+' HC</span>');
+    if(p.updatedAt) meta.push('<span>Updated '+ppWhen(p.updatedAt)+'</span>');
+    return '<button class="pp-card" onclick="openPlan(\''+esc(p.id)+'\')"><div class="pp-card-top"><span class="pp-card-title">'+(esc(p.project)||'Untitled plan')+'</span>'+(p.bisDate?'<span class="pp-card-sub">BIS '+esc(p.bisDate)+'</span>':'')+'</div>'+(p.projectId?'<div class="pp-card-sub">'+esc(p.projectId)+'</div>':'')+(meta.length?'<div class="pp-card-meta">'+meta.join('')+'</div>':'')+'</button>';
+  }).join('')+'</div>';
+  root.innerHTML=head+body;
+}
+
+async function openPlan(id){
+  ppWire(); var root=ppEl(); if(!root) return;
+  root.innerHTML='<div class="empty"><p>Loading…</p></div>';
+  try{ var data=await ppFetch('/'+encodeURIComponent(id)); ppRenderDetail(data.plan,!!data.canEdit); }
+  catch(e){ console.error('plan load failed',e); root.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t load this plan.</p><button class="btn btn-sm" onclick="renderPlanning()">← All plans</button></div>'; }
+}
+
+function ppContactBox(title,list,showOrg){
+  var rows=(list||[]).map(function(c){
+    var right=c.phone?'<a class="dp-tel" href="'+ppTel(c.phone)+'">📞 '+esc(c.phone)+'</a>':'';
+    var name=esc(c.name||'')+(showOrg&&c.org?' <span style="color:var(--text3)">· '+esc(c.org)+'</span>':'');
+    return '<div class="pp-contact"><span>'+name+'</span><span>'+right+'</span></div>';
+  }).join('');
+  return '<div class="pp-box"><div class="pp-box-h">'+esc(title)+'</div>'+(rows||'<div style="font-size:13px;color:var(--text3)">—</div>')+'</div>';
+}
+
+function ppRenderDetail(p,canEdit){
+  var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
+  var discT=ppTotal(p.disconnect), reconT=ppTotal(p.reconnect);
+  var chips=function(rows){ return (rows||[]).map(function(r){ return '<span class="pp-chip">'+esc(r.floor||'')+'<b>'+(parseInt(r.hc,10)||0)+'</b></span>'; }).join(''); };
+  var sub=[]; if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
+  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
+  html+='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
+  if(p.scope) html+='<div class="pp-sec"><div class="pp-sec-h">Move scope</div><div class="pp-scope">'+esc(p.scope)+'</div></div>';
+  if((p.disconnect&&p.disconnect.length)||(p.reconnect&&p.reconnect.length)){
+    html+='<div class="pp-sec pp-two"><div><div class="pp-sec-h" style="display:flex;justify-content:space-between;align-items:baseline">Disconnect <span class="pp-total">total <b>'+discT.toLocaleString()+'</b> HC</span></div><div class="pp-chips">'+(chips(p.disconnect)||'<span style="color:var(--text3);font-size:13px">—</span>')+'</div></div>'
+      +'<div><div class="pp-sec-h" style="display:flex;justify-content:space-between;align-items:baseline">Reconnect <span class="pp-total">total <b>'+reconT.toLocaleString()+'</b> HC</span></div><div class="pp-chips">'+(chips(p.reconnect)||'<span style="color:var(--text3);font-size:13px">—</span>')+'</div></div></div>';
+  }
+  if(p.timeline&&p.timeline.length){
+    html+='<div class="pp-sec"><div class="pp-sec-h">Preliminary timeline</div><table class="pp-tl"><thead><tr><th style="width:50%">Task</th><th style="width:34%">When</th><th style="width:16%">Lead</th></tr></thead><tbody>'+p.timeline.map(function(r){ return '<tr><td>'+esc(r.task||'')+'</td><td>'+esc(r.when||'')+'</td><td>'+esc(r.lead||'')+'</td></tr>'; }).join('')+'</tbody></table></div>';
+  }
+  if(p.pmhc||p.requirements){
+    html+='<div class="pp-sec pp-two">';
+    if(p.pmhc) html+='<div><div class="pp-sec-h">Post-move help center</div><div class="pp-scope">'+esc(p.pmhc)+'</div></div>';
+    if(p.requirements) html+='<div><div class="pp-sec-h">Technician requirements</div><div class="pp-scope">'+esc(p.requirements)+'</div></div>';
+    html+='</div>';
+  }
+  html+='<div class="pp-sec" style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:14px">';
+  if(canEdit) html+='<button class="btn btn-sm" onclick="openPlanEdit(ppCurrent)">✏️ Edit plan</button><button class="btn btn-sm" onclick="ppDelete()">🗑 Delete</button>';
+  html+='<span style="flex:1"></span><span style="font-size:12px;color:var(--text3)">'+(p.updatedAt?'Updated '+ppWhen(p.updatedAt):'')+'</span></div>';
+  root.innerHTML=html;
+}
+
+function ppInput(f,val,ph,cls){ return '<input data-f="'+f+'"'+(cls?' class="'+cls+'"':'')+' placeholder="'+esc(ph||'')+'" value="'+esc(val==null?'':String(val))+'"/>'; }
+function ppContactErow(kind,c){ c=c||{}; var org=kind==='managers'?ppInput('org',c.org,'Org (e.g. CRESA)'):''; return '<div class="pp-erow" data-erow>'+ppInput('name',c.name,'Name')+org+ppInput('phone',c.phone,'Phone')+'<button type="button" class="pp-erow-x" data-del aria-label="Remove">✕</button></div>'; }
+function ppFloorErow(r){ r=r||{}; return '<div class="pp-erow" data-erow>'+ppInput('floor',r.floor,'Floor (e.g. L6)')+ppInput('hc',r.hc==null?'':r.hc,'HC','pp-hc')+'<button type="button" class="pp-erow-x" data-del aria-label="Remove">✕</button></div>'; }
+function ppTlErow(r){ r=r||{}; return '<div class="pp-erow" data-erow>'+ppInput('task',r.task,'Task')+ppInput('when',r.when,'When')+ppInput('lead',r.lead,'Lead')+'<button type="button" class="pp-erow-x" data-del aria-label="Remove">✕</button></div>'; }
+
+function openPlanEdit(plan){
+  ppWire(); var root=ppEl(); if(!root) return; plan=plan||{}; ppEditingId=plan.id||null;
+  var isNew=!plan.id;
+  var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
+  var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
+  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1></div></div>';
+  html+='<form id="pp-form" onsubmit="return false">';
+  html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')+'</div>'
+    +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
+    +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
+    +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
+  html+=sect('managers','Project managers (client)',rowsHtml(plan.managers,ppContactErow,'managers'));
+  html+=sect('leads','JCIT project leads',rowsHtml(plan.leads,ppContactErow,'leads'));
+  html+='<div class="pp-sec"><label class="dp-fld">Move scope</label><textarea data-f="scope" rows="5">'+esc(plan.scope||'')+'</textarea></div>';
+  html+=sect('disconnect','Disconnect (floor + HC)',rowsHtml(plan.disconnect,ppFloorErow));
+  html+=sect('reconnect','Reconnect (floor + HC)',rowsHtml(plan.reconnect,ppFloorErow));
+  html+=sect('timeline','Preliminary timeline',rowsHtml(plan.timeline,ppTlErow));
+  html+='<div class="pp-two"><div><label class="dp-fld">Post-move help center</label><textarea data-f="pmhc" rows="4">'+esc(plan.pmhc||'')+'</textarea></div>'
+    +'<div><label class="dp-fld">Technician requirements</label><textarea data-f="requirements" rows="4">'+esc(plan.requirements||'')+'</textarea></div></div>';
+  html+='<div class="pp-sec" style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:14px"><button class="btn btn-primary btn-sm" data-save>Save plan</button><button class="btn btn-sm" data-cancel>Cancel</button><span data-msg style="font-size:12px;color:var(--text3)"></span></div>';
+  html+='</form>';
+  root.innerHTML=html;
+}
+
+function ppRowVals(erow){ var o={}; erow.querySelectorAll('[data-f]').forEach(function(el){ o[el.getAttribute('data-f')]=el.value.trim(); }); return o; }
+function ppCollectRows(root,id){ var out=[]; var c=root.querySelector('[data-rows="'+id+'"]'); if(c) c.querySelectorAll('[data-erow]').forEach(function(r){ out.push(ppRowVals(r)); }); return out; }
+
+async function ppSave(root){
+  var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
+  var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
+  var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'),
+    scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
+    managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
+    disconnect:ppCollectRows(root,'disconnect'), reconnect:ppCollectRows(root,'reconnect'), timeline:ppCollectRows(root,'timeline') };
+  if(!payload.project){ if(msg){ msg.style.color='var(--red)'; msg.textContent='Add a project name first.'; } var pn=root.querySelector('[data-f="project"]'); if(pn) pn.focus(); return; }
+  if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  try{
+    var res=ppEditingId?await ppFetch('/'+encodeURIComponent(ppEditingId),{method:'PUT',body:payload}):await ppFetch('',{method:'POST',body:payload});
+    ppRenderDetail(res.plan,true);
+  }catch(e){ console.error('save plan failed',e); if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(e.message||e).slice(0,120); } if(btn){ btn.disabled=false; btn.textContent='Save plan'; } }
+}
+
+async function ppDelete(){
+  if(!ppCurrent||!ppCurrent.id) return;
+  if(!confirm('Delete “'+(ppCurrent.project||'this plan')+'”? This can’t be undone.')) return;
+  try{ await ppFetch('/'+encodeURIComponent(ppCurrent.id),{method:'DELETE'}); renderPlanning(); }
+  catch(e){ console.error('delete plan failed',e); alert('Couldn’t delete: '+String(e.message||e).slice(0,140)); }
+}
+
+function ppOnClick(ev){
+  var root=ppEl(); if(!root) return;
+  var add=ev.target.closest('[data-add]');
+  if(add){ var id=add.getAttribute('data-add'); var c=root.querySelector('[data-rows="'+id+'"]'); if(c){ var h=id==='managers'?ppContactErow('managers'):id==='leads'?ppContactErow('leads'):id==='timeline'?ppTlErow():ppFloorErow(); c.insertAdjacentHTML('beforeend',h); } return; }
+  if(ev.target.closest('[data-del]')){ var er=ev.target.closest('[data-erow]'); if(er) er.remove(); return; }
+  if(ev.target.closest('[data-cancel]')){ if(ppEditingId) openPlan(ppEditingId); else renderPlanning(); return; }
+  if(ev.target.closest('[data-save]')){ ppSave(root); return; }
+}
+
 function openTeamContacts(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
