@@ -2024,12 +2024,22 @@ const JCITDispatch=(function(){
   function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
   // Escape, then turn any phone number in the text into a tap-to-call tel: link (opens the phone app on mobile).
   function phoneLink(s){return esc(s).replace(/(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g,function(m){return '<a class="dp-tel" href="tel:'+m.replace(/[^\d+]/g,'')+'">'+m+'</a>'})}
-  // Job addresses often carry a leading building/tenant code, e.g.
-  // "RSQ - 401 Union St, Suite 1400, Seattle". Google Maps (and the parking
-  // geocoder) treat that prefix as a business name and drop the pin on the wrong
-  // place, so strip a short leading "CODE - " when a street number follows. The
-  // suite/city are kept — they help geocoding land on the exact building.
-  function mapQuery(a){return String(a||'').replace(/^[^,]{1,25}?\s-\s+(?=\d)/,'').trim();}
+  // Job addresses carry building/tenant codes and floor/suite detail that make
+  // Google Maps (and the parking geocoder) do a fuzzy business/suite search and
+  // pin the wrong place — e.g. "RSQ - 401 Union St, Suite 1400, Seattle" or
+  // "800 5th Ave, Floors 40-42, Seattle" (which scattered across the building's
+  // suites). Strip a leading "CODE - " prefix and any floor/suite/unit detail,
+  // keeping the street + city/state/zip. Unit values must be number-like or a
+  // single letter, so a real word — e.g. the city in "2nd fl Bellevue" — is
+  // never eaten. Verified against all live job addresses (no city lost).
+  function mapQuery(a){
+    var s=String(a||'');
+    s=s.replace(/^[^,]{1,25}?\s-\s+(?=\d)/,'');                                              // leading building/tenant code
+    s=s.replace(/(,\s*)?\b\d+(?:st|nd|rd|th)\s+(?:floors?|fl)\b\.?/ig,'');                    // "2nd fl", "27th Floor"
+    s=s.replace(/(,\s*)?\b(?:floors?|fl|suites?|ste|units?|apt|rm|room)\b\.?\s*(?:#\s*)?(?:[A-Za-z]?\d[\w\-]*|[A-Za-z]\b)/ig,''); // Suite 1400, Ste P100, Floors 40-42, Unit F
+    s=s.replace(/(,\s*)?#\s*\d[\w\-]*/g,'');                                                  // bare #250
+    return s.replace(/\s{2,}/g,' ').replace(/\s*,(?:\s*,)+/g,',').replace(/,\s*$/,'').replace(/^\s*,\s*/,'').trim();
+  }
   function initials(name){return name.split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2)}
   function avatarFor(name){let h=0;String(name).split('').forEach(c=>h+=c.charCodeAt(0));return AVATAR_PALETTE[h%AVATAR_PALETTE.length]}
   function avatarHtml(name,isLead){const a=avatarFor(name);return `<span class="dp-avatar${isLead?' dp-lead':''}" title="${esc(name)}${isLead?' (lead)':''}" style="background:${a.bg};color:${a.fg}">${esc(initials(name))}</span>`}
