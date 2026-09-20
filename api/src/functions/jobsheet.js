@@ -1,6 +1,16 @@
 const { app } = require('@azure/functions');
-const { requireUser, requireTester, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
+
+// Auth failures (401/403/429) go through the shared handler; any other failure
+// (e.g. a Smartsheet API error) returns its real message here. This tab is
+// Testers-only, so surfacing the cause to the two testers is fine and makes the
+// read path debuggable instead of a blank "Internal server error".
+function jobsheetError(e, context) {
+  if (e instanceof AuthError) return authErrorResponse(e, context);
+  try { context.error(e); } catch (_) { /* logging must never break the response */ }
+  return { status: 500, jsonBody: { error: String((e && e.message) || e || 'Unknown error') } };
+}
 
 // Job Sheets tab (Testers group) — READ-ONLY. Serves a picker of the client's
 // job sheets and one sheet's contents (items + live QA photos) to the in-app
@@ -27,7 +37,7 @@ app.http('jobsheetSheets', {
       const sheets = await ss.fetchWorkspaceSheets(getWorkspaceId());
       return { jsonBody: { sheets: sheets.map((s) => ({ id: s.id, name: s.name })) } };
     } catch (e) {
-      return authErrorResponse(e, context);
+      return jobsheetError(e, context);
     }
   },
 });
@@ -52,7 +62,7 @@ app.http('jobsheetSheet', {
       const view = await ss.fetchJobSheetView(id);
       return { jsonBody: view };
     } catch (e) {
-      return authErrorResponse(e, context);
+      return jobsheetError(e, context);
     }
   },
 });
