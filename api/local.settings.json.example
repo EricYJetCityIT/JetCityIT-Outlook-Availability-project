@@ -17,6 +17,6 @@
     "FINANCE_UPNS": "<comma-separated emails in the financial group (Invoice tab). Empty/unset => nobody. Independent of EDITOR_UPNS.>",
     "PLANNER_UPNS": "<comma-separated emails in the Project Planners group (Project Planning tab). Empty/unset => nobody. Independent of EDITOR_UPNS and FINANCE_UPNS.>",
     "TESTER_UPNS": "<comma-separated emails in the Testers group — a private group that unlocks in-progress features (today the Job Sheets tab). Empty/unset => nobody. Independent of the other groups. e.g. dylanm@jetcityit.com,ericy@jetcityit.com>",
-    "JOBSHEET_WORKSPACE_ID": "<numeric Smartsheet workspace ID whose sheets the Job Sheets tab may read (read-only, Testers group). Client-identifying — set in Azure app settings only, never commit a real value. The /api/jobsheet endpoints only ever read sheets inside this one workspace.>"
+    "JOBSHEET_WORKSPACE_ID": "<one or more numeric Smartsheet workspace IDs (comma-separated) whose sheets the Job Sheets tab may read/edit (Testers group). Client-identifying — set in Azure app settings only, never commit a real value. The /api/jobsheet endpoints only ever touch sheets inside these workspaces. e.g. a real client workspace + a sandbox workspace for testing.>"
   }
 }

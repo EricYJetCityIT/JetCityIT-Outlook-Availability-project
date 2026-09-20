@@ -19,10 +19,26 @@ function jobsheetError(e, context) {
 // used from here to read the rest of the Smartsheet library. The workspace id
 // (client-identifying) lives only in Azure app settings, never in the repo.
 
-function getWorkspaceId() {
-  const id = process.env.JOBSHEET_WORKSPACE_ID;
-  if (!id) throw new Error('JOBSHEET_WORKSPACE_ID is not configured');
-  return id;
+// One or more workspace IDs (comma-separated) whose sheets the tab may read/
+// write. Supports a real client workspace plus a sandbox for safe testing.
+function getWorkspaceIds() {
+  const v = process.env.JOBSHEET_WORKSPACE_ID;
+  if (!v) throw new Error('JOBSHEET_WORKSPACE_ID is not configured');
+  const ids = v.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!ids.length) throw new Error('JOBSHEET_WORKSPACE_ID is empty');
+  return ids;
+}
+
+// Aggregates the sheet lists across every configured workspace. Used both to
+// build the picker and to validate that a requested sheet is one the tab is
+// allowed to touch.
+async function listAllowedSheets() {
+  const all = [];
+  for (const id of getWorkspaceIds()) {
+    const sheets = await ss.fetchWorkspaceSheets(id);
+    all.push(...sheets);
+  }
+  return all;
 }
 
 // GET /api/jobsheet/sheets — list the job sheets in the configured workspace.
@@ -34,7 +50,7 @@ app.http('jobsheetSheets', {
     try {
       const user = await requireUser(request);
       requireTester(user);
-      const sheets = await ss.fetchWorkspaceSheets(getWorkspaceId());
+      const sheets = await listAllowedSheets();
       return { jsonBody: { sheets: sheets.map((s) => ({ id: s.id, name: s.name })) } };
     } catch (e) {
       return jobsheetError(e, context);
@@ -55,7 +71,7 @@ app.http('jobsheetSheet', {
       requireTester(user);
       const id = new URL(request.url).searchParams.get('id');
       if (!id) return { status: 400, jsonBody: { error: 'Missing sheet id' } };
-      const allowed = await ss.fetchWorkspaceSheets(getWorkspaceId());
+      const allowed = await listAllowedSheets();
       if (!allowed.some((s) => String(s.id) === String(id))) {
         return { status: 403, jsonBody: { error: 'Sheet not permitted' } };
       }
@@ -82,7 +98,7 @@ app.http('jobsheetCell', {
       if (!body || !body.sheetId || !body.rowId || !body.columnId) {
         return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
       }
-      const allowed = await ss.fetchWorkspaceSheets(getWorkspaceId());
+      const allowed = await listAllowedSheets();
       if (!allowed.some((s) => String(s.id) === String(body.sheetId))) {
         return { status: 403, jsonBody: { error: 'Sheet not permitted' } };
       }
