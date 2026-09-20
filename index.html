@@ -556,6 +556,8 @@ body.is-tester #tab-jobsheet{display:inline-block}
 .js-photos{display:flex;gap:10px;flex-wrap:wrap}
 .js-photo-lg{width:140px;height:140px;border-radius:8px;background:var(--surface2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text3);font-size:12px;border:1px solid var(--border)}
 .js-photo-lg-empty{border:1px dashed var(--border2);background:transparent;color:var(--text3)}
+.js-thumb img{width:100%;height:100%;object-fit:cover;border-radius:5px;display:block}
+.js-photo-full{max-width:240px;max-height:240px;object-fit:contain;border-radius:8px;border:1px solid var(--border);display:block}
 @media(max-width:640px){.js-card{flex-wrap:wrap}.js-pills{max-width:none;justify-content:flex-start}}
 /* ── Project Planning tab ── */
 .pp-list{display:flex;flex-direction:column;gap:10px}
@@ -1349,63 +1351,39 @@ function switchTab(id){
 // detail view. The renderer is column-driven (identifier / photo / checkbox /
 // text), so it adapts to differently-shaped sheets — the core idea of the real
 // tool. Two sample sheets below (a move sheet and a network audit) show that.
-const JS_SHEETS=[
-  { id:'mock-casey', name:'Casey Family Move', progressKey:'complete',
-    columns:[
-      {key:'item',type:'identifier',label:'Item'},
-      {key:'before',type:'photo',label:'Before'},
-      {key:'after',type:'photo',label:'After'},
-      {key:'complete',type:'checkbox',label:'Complete'},
-      {key:'notes',type:'text',label:'Notes'},
-    ],
-    rows:[
-      {item:'Sarah Chen — 312 → 508', before:true, after:true, complete:true, notes:'Monitor arm reused'},
-      {item:'Marcus Webb — 312 → 511', before:true, after:true, complete:true, notes:''},
-      {item:'Priya Nair — 314 → 512', before:true, after:false, complete:false, notes:'Waiting on chair'},
-      {item:'Tom Alvarez — 316 → 515', before:false, after:false, complete:false, notes:''},
-      {item:'Dana Kim — 318 → 519', before:true, after:true, complete:true, notes:'Dual monitors'},
-      {item:'Luis Ortiz — 320 → 522', before:true, after:true, complete:true, notes:''},
-      {item:'Emma Ross — 322 → 525', before:true, after:false, complete:false, notes:'Standing desk pending'},
-      {item:'Kofi Mensah — 324 → 528', before:false, after:false, complete:false, notes:''},
-      {item:'Grace Liu — 326 → 531', before:true, after:true, complete:true, notes:''},
-      {item:'Ben Carter — 328 → 534', before:true, after:true, complete:true, notes:'Docking station added'},
-    ] },
-  { id:'mock-chicago', name:'Chicago Network Audit', progressKey:'connected',
-    columns:[
-      {key:'item',type:'identifier',label:'Desk / jack'},
-      {key:'connected',type:'checkbox',label:'Connected'},
-      {key:'labeled',type:'checkbox',label:'Labeled'},
-      {key:'switch',type:'text',label:'Switch'},
-      {key:'port',type:'text',label:'Port'},
-      {key:'speed',type:'text',label:'Cable speed'},
-      {key:'notes',type:'text',label:'Notes'},
-    ],
-    rows:[
-      {item:'Desk 14 — Jack A', connected:true, labeled:true, switch:'SW-2', port:'Gi1/0/12', speed:'1 Gbps', notes:''},
-      {item:'Desk 14 — Jack B', connected:false, labeled:true, switch:'', port:'', speed:'', notes:'Not patched'},
-      {item:'Desk 15 — Jack A', connected:true, labeled:false, switch:'SW-2', port:'Gi1/0/14', speed:'1 Gbps', notes:'Label missing'},
-      {item:'Desk 16 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/03', speed:'2.5 Gbps', notes:''},
-      {item:'Desk 17 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/05', speed:'1 Gbps', notes:''},
-      {item:'Desk 18 — Jack A', connected:false, labeled:false, switch:'', port:'', speed:'', notes:'Dead drop'},
-      {item:'Desk 19 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/09', speed:'1 Gbps', notes:''},
-      {item:'Desk 20 — Jack A', connected:true, labeled:true, switch:'SW-4', port:'Gi1/0/01', speed:'10 Gbps', notes:'Uplink'},
-    ] },
-];
-let jsSheetId=JS_SHEETS[0].id;
+// Live data (Testers group): the sheet list + one sheet's rows/photos come from
+// the /api/jobsheet endpoints, which read a single configured Smartsheet
+// workspace. No client data lives in this file.
+let jsSheets=[];      // [{id,name}] the picker options
+let jsSheetId=null;   // selected sheet id
+let jsData=null;      // loaded sheet {name,columns,progressKey,rows}
 let jsQuery='';
+let jsLoading=false;
+let jsError='';
 const JS_CAM='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3" stroke="currentColor" stroke-width="2"/><path d="M8.5 6l1-2h5l1 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 function jsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function jsSheet(){return JS_SHEETS.find(s=>s.id===jsSheetId)||JS_SHEETS[0];}
-function jsCols(s,t){return s.columns.filter(c=>c.type===t);}
+function jsIsUrl(v){return typeof v==='string' && /^https?:/.test(v);}
+function jsCols(s,t){return (s&&s.columns||[]).filter(c=>c.type===t);}
 function jsIdent(s){return (jsCols(s,'identifier')[0]||{}).key;}
-function jsDone(s,r){return !!r[s.progressKey];}
-function jsFilteredRows(s){const q=jsQuery.trim().toLowerCase();const idk=jsIdent(s);return s.rows.map((r,i)=>({r,i})).filter(({r})=>!q||String(r[idk]||'').toLowerCase().includes(q));}
+function jsDone(s,r){return s&&s.progressKey? !!r[s.progressKey] : false;}
+function jsFilteredRows(s){const q=jsQuery.trim().toLowerCase();const idk=jsIdent(s);return (s.rows||[]).map((r,i)=>({r,i})).filter(({r})=>!q||String(r[idk]||'').toLowerCase().includes(q));}
+
+async function jsApi(path){
+  const token=await getApiToken();
+  const res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  return res.json();
+}
+
+function jsThumb(c,val){
+  if(jsIsUrl(val)) return `<div class="js-thumb"><img src="${jsEsc(val)}" loading="lazy" alt="${jsEsc(c.label)}"></div>`;
+  if(val) return `<div class="js-thumb" title="${jsEsc(c.label)} photo">${JS_CAM}</div>`;
+  return `<div class="js-thumb js-thumb-empty" title="No ${jsEsc(c.label.toLowerCase())} photo">${JS_CAM}</div>`;
+}
 
 function jsCardHTML(s,r,i){
   const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
-  const thumbs= photos.length? '<div class="js-thumbs">'+photos.map(c=> r[c.key]
-      ? `<div class="js-thumb" title="${jsEsc(c.label)} photo">${JS_CAM}</div>`
-      : `<div class="js-thumb js-thumb-empty" title="No ${jsEsc(c.label.toLowerCase())} photo">${JS_CAM}</div>`).join('')+'</div>' : '';
+  const thumbs= photos.length? '<div class="js-thumbs">'+photos.map(c=>jsThumb(c,r[c.key])).join('')+'</div>' : '';
   const pills= checks.length? '<div class="js-pills">'+checks.map(c=> r[c.key]
       ? `<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>`
       : `<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div>' : '';
@@ -1416,33 +1394,61 @@ function jsCardHTML(s,r,i){
 }
 
 function jsRenderCards(){
-  const s=jsSheet(), wrap=document.querySelector('#view-jobsheet .js-cards'); if(!wrap)return;
+  const s=jsData, wrap=document.querySelector('#view-jobsheet .js-cards'); if(!s||!wrap)return;
   const rows=jsFilteredRows(s);
   wrap.innerHTML= rows.length? rows.map(({r,i})=>jsCardHTML(s,r,i)).join('') : `<div class="js-empty">No items match “${jsEsc(jsQuery)}”.</div>`;
 }
 
-function renderJobsheet(){
+// Paints the whole tab from current state (list + loaded sheet + loading/error).
+function jsPaint(){
   const view=document.getElementById('view-jobsheet'); if(!view)return;
-  const s=jsSheet();
-  const total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
-  const opts=JS_SHEETS.map(x=>`<option value="${x.id}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
+  const opts=jsSheets.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
+  let mid='';
+  if(jsError){ mid=`<div class="js-empty">${jsEsc(jsError)}</div>`; }
+  else if(jsLoading||!jsData){ mid='<div class="js-empty">Loading…</div>'; }
+  else {
+    const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
+    mid=`<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
+        `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
+        '<div class="js-cards"></div>';
+  }
   view.innerHTML=
     '<h2>Job Sheets</h2>'+
-    `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · read-only · sample data (no Smartsheet connection yet)</span></div>`+
-    `<div class="js-toolbar"><select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`+
-    `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)"></div>`+
-    `<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
-    `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
-    '<div class="js-cards"></div>'+
+    `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · read-only · live Smartsheet data</span></div>`+
+    (jsSheets.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`+
+       (jsData&&!jsLoading&&!jsError? `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`:'')+
+       '</div>' : '')+
+    mid+
     '<div class="js-modal-backdrop" id="js-modal-backdrop" onclick="if(event.target===this)jsCloseDetail()"><div class="js-modal" id="js-modal"></div></div>';
-  jsRenderCards();
+  if(jsData&&!jsLoading&&!jsError) jsRenderCards();
+}
+
+// Entry point (called by switchTab). Loads the sheet list on first open.
+function renderJobsheet(){
+  if(!jsSheets.length && !jsLoading && !jsError){ jsLoadList(); return; }
+  jsPaint();
+}
+
+async function jsLoadList(){
+  jsLoading=true; jsError=''; jsPaint();
+  try{
+    const d=await jsApi('/jobsheet/sheets');
+    jsSheets=d.sheets||[]; jsLoading=false;
+    if(jsSheets.length){ jsLoadSheet(jsSheets[0].id); } else { jsPaint(); }
+  }catch(e){ jsLoading=false; jsError=e.message||'Failed to load job sheets'; jsPaint(); }
+}
+
+async function jsLoadSheet(id){
+  jsSheetId=id; jsLoading=true; jsError=''; jsData=null; jsQuery=''; jsPaint();
+  try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)); jsLoading=false; jsPaint(); }
+  catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheet'; jsPaint(); }
 }
 
 function jsSetQuery(v){jsQuery=v;jsRenderCards();}
-function jsSelectSheet(id){jsSheetId=id;jsQuery='';renderJobsheet();}
+function jsSelectSheet(id){jsLoadSheet(id);}
 
 function jsOpenDetail(i){
-  const s=jsSheet(), r=s.rows[i]; if(!r)return;
+  const s=jsData, r=s&&s.rows[i]; if(!r)return;
   const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
   const dash='<span style="color:var(--text3)">—</span>';
   let body='';
@@ -1452,9 +1458,11 @@ function jsOpenDetail(i){
   }
   if(photos.length){
     body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+
-      photos.map(c=> r[c.key]
-        ? `<div class="js-photo-lg">${JS_CAM}<span>${jsEsc(c.label)}</span></div>`
-        : `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`).join('')+'</div></div>';
+      photos.map(c=>{ const v=r[c.key];
+        if(jsIsUrl(v)) return `<figure style="margin:0"><img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}"><figcaption style="font-size:12px;color:var(--text3);margin-top:4px">${jsEsc(c.label)}</figcaption></figure>`;
+        if(v) return `<div class="js-photo-lg">${JS_CAM}<span>${jsEsc(c.label)}</span></div>`;
+        return `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`;
+      }).join('')+'</div></div>';
   }
   texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="color:var(--text)">${r[c.key]?jsEsc(r[c.key]):dash}</div></div>`; });
   document.getElementById('js-modal').innerHTML=

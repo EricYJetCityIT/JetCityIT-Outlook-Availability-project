@@ -16,6 +16,7 @@
     "EDITOR_UPNS": "<comma-separated emails allowed to CHANGE data (reassign crew, clear availability weeks), e.g. dylanm@jetcityit.com,ericy@jetcityit.com. Everyone else is read-only. Optional if using the Entra 'DataEditor' app role instead.>",
     "FINANCE_UPNS": "<comma-separated emails in the financial group (Invoice tab). Empty/unset => nobody. Independent of EDITOR_UPNS.>",
     "PLANNER_UPNS": "<comma-separated emails in the Project Planners group (Project Planning tab). Empty/unset => nobody. Independent of EDITOR_UPNS and FINANCE_UPNS.>",
-    "TESTER_UPNS": "<comma-separated emails in the Testers group — a private group that unlocks in-progress features (today the Job Sheets tab). Empty/unset => nobody. Independent of the other groups. e.g. dylanm@jetcityit.com,ericy@jetcityit.com>"
+    "TESTER_UPNS": "<comma-separated emails in the Testers group — a private group that unlocks in-progress features (today the Job Sheets tab). Empty/unset => nobody. Independent of the other groups. e.g. dylanm@jetcityit.com,ericy@jetcityit.com>",
+    "JOBSHEET_WORKSPACE_ID": "<numeric Smartsheet workspace ID whose sheets the Job Sheets tab may read (read-only, Testers group). Client-identifying — set in Azure app settings only, never commit a real value. The /api/jobsheet endpoints only ever read sheets inside this one workspace.>"
   }
 }

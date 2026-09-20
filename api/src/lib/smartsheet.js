@@ -727,8 +727,141 @@ async function fetchAttachmentBytes(sheetId, attachmentId) {
   return { name: meta.name || String(attachmentId), contentType: meta.mimeType || 'application/octet-stream', bytes };
 }
 
+// ── Job Sheets tab (Testers group) ─────────────────────────────────────────
+// A generic, READ-ONLY view of an arbitrary per-job sheet (e.g. a T-Mobile
+// floor sheet: Desk Number / QA Pic / Notes). Unlike the crew-calendar sheet
+// above, these have no fixed schema, so columns are classified by shape
+// (identifier / photo / checkbox / text) and the client's data is fetched live
+// — it never lives in the repo. Access is limited to sheets inside ONE
+// configured workspace (JOBSHEET_WORKSPACE_ID) so the admin token can't be used
+// to read the whole Smartsheet library.
+
+// Lists the sheets directly in a workspace (id + name), newest-modified first.
+async function fetchWorkspaceSheets(workspaceId) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/workspaces/${encodeURIComponent(workspaceId)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet workspace error ${res.status}: ${t}`);
+  }
+  const data = await res.json();
+  const sheets = Array.isArray(data.sheets) ? data.sheets : [];
+  return sheets
+    .map((s) => ({ id: String(s.id), name: s.name || String(s.id), modifiedAt: s.modifiedAt || '' }))
+    .sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)));
+}
+
+// Fetches a full sheet including the cell-image metadata Smartsheet embeds on
+// cells that hold an image (cell.image = {id,width,height}; cell.value is the
+// filename). No special include is needed for cell images.
+async function fetchGenericSheet(sheetId) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${encodeURIComponent(sheetId)}?include=objectValue`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet sheet error ${res.status}: ${t}`);
+  }
+  return res.json();
+}
+
+// Resolves Smartsheet cell-image ids to temporary display URLs via POST
+// /imageurls (batched, ≤100 per call). Returns Map(imageId -> url). The urls
+// are short-lived, so the viewer fetches them fresh each load.
+async function fetchImageUrls(images) {
+  const out = new Map();
+  const list = (images || []).filter((x) => x && x.imageId);
+  for (let i = 0; i < list.length; i += 100) {
+    const batch = list.slice(i, i + 100).map((x) => ({
+      imageId: x.imageId,
+      ...(x.width ? { width: x.width } : {}),
+      ...(x.height ? { height: x.height } : {}),
+    }));
+    const res = await fetch(`${SMARTSHEET_API_BASE}/imageurls`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(batch),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw new Error(`Smartsheet imageurls error ${res.status}: ${t}`);
+    }
+    const data = await res.json();
+    (data.imageUrls || []).forEach((u) => { if (u.imageId && u.url) out.set(u.imageId, u.url); });
+  }
+  return out;
+}
+
+// Classifies a sheet's columns by shape so the viewer can adapt to any job
+// sheet: the primary column is the item identifier; columns named like a photo
+// (pic/photo/image/before/after/qa) are photos; checkboxes are status toggles;
+// everything else is free text. Hidden columns are dropped.
+function classifyJobSheetColumns(columns) {
+  return (columns || [])
+    .filter((c) => !c.hidden)
+    .map((c) => {
+      const title = c.title || '';
+      let type = 'text';
+      if (c.primary) type = 'identifier';
+      else if (/\b(pic|photo|image|img|before|after|qa)\b/i.test(title)) type = 'photo';
+      else if (c.type === 'CHECKBOX') type = 'checkbox';
+      return { key: 'c' + c.id, columnId: c.id, label: title, type };
+    });
+}
+
+// Builds the read-only viewer payload for one job sheet: {name, columns,
+// progressKey, rows}. Photo cells become a temporary image URL (or null when
+// empty); checkboxes booleans; everything else text. Rows with a blank
+// identifier are skipped (spacer rows). progressKey is the first checkbox
+// column, else the first photo column (a T-Mobile desk is "done" once it has a
+// QA Pic).
+async function fetchJobSheetView(sheetId) {
+  const sheet = await fetchGenericSheet(sheetId);
+  const cols = classifyJobSheetColumns(sheet.columns || []);
+  const photoCols = cols.filter((c) => c.type === 'photo');
+  const cellAt = (row, columnId) => (row.cells || []).find((c) => c.columnId === columnId);
+
+  const imgReqs = [];
+  (sheet.rows || []).forEach((row) => {
+    photoCols.forEach((pc) => {
+      const cell = cellAt(row, pc.columnId);
+      if (cell && cell.image && cell.image.id) imgReqs.push({ imageId: cell.image.id, width: 1024 });
+    });
+  });
+  const urlMap = await fetchImageUrls(imgReqs);
+
+  const idCol = cols.find((c) => c.type === 'identifier');
+  const rows = [];
+  (sheet.rows || []).forEach((row) => {
+    const obj = {};
+    cols.forEach((col) => {
+      const cell = cellAt(row, col.columnId);
+      if (col.type === 'photo') {
+        obj[col.key] = (cell && cell.image && cell.image.id) ? (urlMap.get(cell.image.id) || true) : null;
+      } else if (col.type === 'checkbox') {
+        obj[col.key] = !!(cell && (cell.value === true || cell.value === 'true'));
+      } else {
+        obj[col.key] = cell ? cellText(cell) : '';
+      }
+    });
+    if (idCol && String(obj[idCol.key] || '').trim() === '') return; // skip spacer rows
+    rows.push(obj);
+  });
+
+  const progressCol = cols.find((c) => c.type === 'checkbox') || cols.find((c) => c.type === 'photo') || null;
+  return {
+    name: sheet.name || '',
+    columns: cols.map((c) => ({ key: c.key, label: c.label, type: c.type })),
+    progressKey: progressCol ? progressCol.key : null,
+    rows,
+  };
+}
+
 module.exports = {
   fetchSheet,
+  fetchWorkspaceSheets,
+  fetchJobSheetView,
   fetchAttachment,
   fetchSheetColumns,
   fetchRowsModifiedSince,
