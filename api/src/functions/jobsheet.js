@@ -66,3 +66,33 @@ app.http('jobsheetSheet', {
     }
   },
 });
+
+// GET /api/jobsheet/photo?u=<encoded signed url> — streams one QA cell-image.
+// Anonymous by necessity (an <img> tag can't send our custom auth header), but
+// the capability is the signed url itself: it's only handed out by the
+// Testers-gated /sheet endpoint, is short-lived, and is validated here to be a
+// Smartsheet-signed, non-expired image-proxy url (SSRF guard — never fetches an
+// arbitrary host).
+app.http('jobsheetPhoto', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/photo',
+  handler: async (request, context) => {
+    try {
+      const u = new URL(request.url).searchParams.get('u');
+      if (!u) return { status: 400, jsonBody: { error: 'Missing image url' } };
+      let target;
+      try { target = new URL(u); } catch (_) { return { status: 400, jsonBody: { error: 'Bad image url' } }; }
+      if (target.protocol !== 'https:' || target.hostname !== 'aws.smartsheet.com' || !target.pathname.startsWith('/storageProxy/')) {
+        return { status: 403, jsonBody: { error: 'Image host not permitted' } };
+      }
+      if (!target.searchParams.get('hmac')) return { status: 403, jsonBody: { error: 'Unsigned image url' } };
+      const exp = target.searchParams.get('expirationDate');
+      if (exp && new Date(exp).getTime() < Date.now()) return { status: 410, jsonBody: { error: 'Image link expired' } };
+      const { contentType, bytes } = await ss.fetchImageBytes(u);
+      return { status: 200, headers: { 'Content-Type': contentType, 'Cache-Control': 'private, max-age=300' }, body: bytes };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});

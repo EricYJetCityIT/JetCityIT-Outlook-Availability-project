@@ -838,7 +838,12 @@ async function fetchJobSheetView(sheetId) {
     cols.forEach((col) => {
       const cell = cellAt(row, col.columnId);
       if (col.type === 'photo') {
-        obj[col.key] = (cell && cell.image && cell.image.id) ? (urlMap.get(cell.image.id) || true) : null;
+        // Return a SAME-ORIGIN proxy URL, not the raw aws.smartsheet.com signed
+        // URL: Smartsheet's storageProxy 503s cross-origin browser requests, so
+        // /api/jobsheet/photo fetches the bytes server-side. `true` = has an
+        // image we couldn't resolve a url for (shows a generic photo marker).
+        const url = cell && cell.image && cell.image.id ? urlMap.get(cell.image.id) : null;
+        obj[col.key] = url ? ('/api/jobsheet/photo?u=' + encodeURIComponent(url)) : ((cell && cell.image && cell.image.id) ? true : null);
       } else if (col.type === 'checkbox') {
         obj[col.key] = !!(cell && (cell.value === true || cell.value === 'true'));
       } else {
@@ -863,10 +868,30 @@ async function fetchJobSheetView(sheetId) {
   };
 }
 
+// Fetches a Smartsheet cell-image by its signed storageProxy URL, SERVER-SIDE.
+// Browsers get a 503 from that proxy on cross-origin image loads, so the app
+// proxies the bytes instead. Retries once on a 503 (the proxy is occasionally
+// slow to produce the image). Returns { contentType, bytes }.
+async function fetchImageBytes(signedUrl) {
+  let lastStatus;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(signedUrl, { headers: { 'User-Agent': 'JetCityCrewCalendar/1.0' } });
+    if (res.ok) {
+      const bytes = Buffer.from(await res.arrayBuffer());
+      return { contentType: res.headers.get('content-type') || 'image/jpeg', bytes };
+    }
+    lastStatus = res.status;
+    if (res.status !== 503) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`Smartsheet image fetch failed (${lastStatus})`);
+}
+
 module.exports = {
   fetchSheet,
   fetchWorkspaceSheets,
   fetchJobSheetView,
+  fetchImageBytes,
   fetchAttachment,
   fetchSheetColumns,
   fetchRowsModifiedSince,
