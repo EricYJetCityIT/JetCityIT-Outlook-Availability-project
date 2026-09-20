@@ -849,7 +849,12 @@ async function fetchJobSheetView(sheetId) {
     rows.push(obj);
   });
 
-  const progressCol = cols.find((c) => c.type === 'checkbox') || cols.find((c) => c.type === 'photo') || null;
+  // "Done" is a checkbox that clearly means completion (Complete/Done/Verified/
+  // QC/Ready/Installed) — NOT just any checkbox (e.g. a T-Mobile "Mismatched
+  // Arm" flag isn't completion). If there's no such checkbox, a photo column
+  // stands in (a desk is done once it has a QA Pic); else the first checkbox.
+  const doneCheckbox = cols.find((c) => c.type === 'checkbox' && /\b(complete|completed|done|finished|verif|verified|qc|ready|installed)\b/i.test(c.label));
+  const progressCol = doneCheckbox || cols.find((c) => c.type === 'photo') || cols.find((c) => c.type === 'checkbox') || null;
   return {
     name: sheet.name || '',
     columns: cols.map((c) => ({ key: c.key, label: c.label, type: c.type })),
