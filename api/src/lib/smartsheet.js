@@ -826,7 +826,7 @@ async function fetchJobSheetView(sheetId) {
   (sheet.rows || []).forEach((row) => {
     photoCols.forEach((pc) => {
       const cell = cellAt(row, pc.columnId);
-      if (cell && cell.image && cell.image.id) imgReqs.push({ imageId: cell.image.id, width: 1024 });
+      if (cell && cell.image && cell.image.id) imgReqs.push({ imageId: cell.image.id });
     });
   });
   const urlMap = await fetchImageUrls(imgReqs);
