@@ -45,6 +45,17 @@ const PLANNER_UPNS = (process.env.PLANNER_UPNS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// The "Testers" group — a private access group for in-progress features (today
+// the Job Sheets tab), so a small set of people (e.g. Eric + Dylan) can test
+// something before it's shown to everyone. Independent of editor, finance, and
+// planner status. Comma-separated @jetcityit.com emails in the TESTER_UPNS app
+// setting. Empty/unset => nobody is in it (the gated tab stays hidden for all).
+const TESTER_UPNS = (process.env.TESTER_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
   cache: true,
@@ -118,8 +129,9 @@ async function requireUser(request) {
   const isEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
   const isFinance = FINANCE_UPNS.includes(upn);
   const isPlanner = PLANNER_UPNS.includes(upn);
+  const isTester = TESTER_UPNS.includes(upn);
 
-  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner };
+  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner, isTester };
 }
 
 // Gate for write/change operations. Reads never call this; writes do.
@@ -139,6 +151,13 @@ function requireFinance(user) {
 // Gate for the Project Planners group (Project Planning tab and its endpoints).
 function requirePlanner(user) {
   if (!user || !user.isPlanner) {
+    throw new AuthError(403, 'You do not have permission to view this.');
+  }
+}
+
+// Gate for the Testers group (in-progress test-only tabs and their endpoints).
+function requireTester(user) {
+  if (!user || !user.isTester) {
     throw new AuthError(403, 'You do not have permission to view this.');
   }
 }
@@ -163,4 +182,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, AuthError, authErrorResponse };

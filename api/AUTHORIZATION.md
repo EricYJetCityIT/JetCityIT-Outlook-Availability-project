@@ -41,6 +41,7 @@ unset means nobody is in the group and the tab stays hidden for everyone.
 |---|---|---|
 | `FINANCE_UPNS` | **Invoice** tab (`isFinance`, `requireFinance`) | `is-finance` body class reveals `#tab-invoice` |
 | `PLANNER_UPNS` | **Project Planning** tab — the "Project Planners" group (`isPlanner`, `requirePlanner`) | `is-planner` body class reveals `#tab-planning` |
+| `TESTER_UPNS` | **Job Sheets** tab — the "Testers" group for in-progress features (`isTester`, `requireTester`) | `is-tester` body class reveals `#tab-jobsheet` |
 
 Set them in the Static Web App → **Configuration** (application settings for the
 managed Functions), e.g.:

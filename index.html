@@ -511,6 +511,52 @@ body.is-finance #tab-invoice{display:inline-block}
    (adds `is-planner`). */
 #tab-planning{display:none}
 body.is-planner #tab-planning{display:inline-block}
+/* Job Sheets tab is Testers-group only (TESTER_UPNS). Same pattern: hidden by
+   default, revealed only when the API confirms membership (adds `is-tester`). */
+#tab-jobsheet{display:none}
+body.is-tester #tab-jobsheet{display:inline-block}
+/* ── Job Sheets viewer (Testers preview, Phase 1: read-only, mock data) ── */
+#view-jobsheet h2{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.3px}
+.js-banner{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--text3);margin-bottom:18px}
+.js-banner b{color:var(--text2)}
+.js-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px}
+.js-select,.js-search{padding:10px 14px;border-radius:var(--radius-sm);border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit}
+.js-select{font-weight:600;cursor:pointer}
+.js-search{flex:1;min-width:180px}
+.js-progress-wrap{margin-bottom:20px}
+.js-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.js-progress-count{font-size:13px;color:var(--text2);font-weight:600}
+.js-progress-pct{font-size:13px;color:var(--green);font-weight:700}
+.js-progress-bar{height:8px;border-radius:99px;background:var(--surface2);overflow:hidden}
+.js-progress-fill{height:100%;background:var(--green);border-radius:99px;transition:width .3s}
+.js-cards{display:grid;gap:10px}
+.js-card{display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.js-card:hover{border-color:var(--green-mid);box-shadow:var(--shadow-sm)}
+.js-card-done{background:var(--green-light);border-color:transparent}
+.js-card-main{flex:1;min-width:0}
+.js-card-id{font-size:15px;font-weight:600;color:var(--text);margin-bottom:2px}
+.js-card-sub{font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.js-thumbs{display:flex;gap:6px;flex:none}
+.js-thumb{width:40px;height:40px;border-radius:6px;background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--text3);flex:none;border:1px solid var(--border)}
+.js-thumb-empty{border:1px dashed var(--border2);background:transparent;color:var(--border2)}
+.js-pills{display:flex;flex-wrap:wrap;gap:5px;flex:none;max-width:230px;justify-content:flex-end}
+.js-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.js-pill-on{background:var(--green-light);color:var(--green-dark)}
+.js-pill-off{background:var(--surface2);color:var(--text3)}
+.js-empty{padding:40px;text-align:center;color:var(--text3)}
+.js-modal-backdrop{position:fixed;inset:0;background:rgba(15,23,36,.45);z-index:1200;display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto}
+.js-modal-backdrop.open{display:flex}
+.js-modal{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 48px rgba(15,23,36,.28);width:100%;max-width:560px;overflow:hidden}
+.js-modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border)}
+.js-modal-title{font-size:18px;font-weight:600;color:var(--text)}
+.js-modal-close{border:none;background:transparent;color:var(--text3);cursor:pointer;font-size:22px;line-height:1;padding:2px 8px;border-radius:6px}
+.js-modal-close:hover{background:var(--surface2);color:var(--text)}
+.js-modal-body{padding:20px;display:grid;gap:16px}
+.js-field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin-bottom:6px}
+.js-photos{display:flex;gap:10px;flex-wrap:wrap}
+.js-photo-lg{width:140px;height:140px;border-radius:8px;background:var(--surface2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text3);font-size:12px;border:1px solid var(--border)}
+.js-photo-lg-empty{border:1px dashed var(--border2);background:transparent;color:var(--text3)}
+@media(max-width:640px){.js-card{flex-wrap:wrap}.js-pills{max-width:none;justify-content:flex-start}}
 /* ── Project Planning tab ── */
 .pp-list{display:flex;flex-direction:column;gap:10px}
 .pp-card{display:block;width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;font-family:inherit;color:var(--text)}
@@ -721,6 +767,22 @@ if('serviceWorker' in navigator){
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M6 3h9l3 3v15l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       Invoice
     </button>
+    <button class="tab" id="tab-jobsheet" onclick="switchTab('jobsheet')">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M9 3.5h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.5 11l1.5 1.5 2.5-3M8.5 16l1.5 1.5 2.5-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Job Sheets
+    </button>
+  </div>
+
+  <!-- JOB SHEETS VIEW (private "Testers" group only — TESTER_UPNS). Phase 1 is
+       app-side only: no Smartsheet connection yet. This view is the gated shell
+       we build the viewer/capture UI inside. -->
+  <div class="view" id="view-jobsheet">
+    <h2 style="margin:0 0 6px">Job Sheets</h2>
+    <p style="color:#64748b;max-width:640px;line-height:1.5">
+      Private preview — visible only to the Testers group. Phase 1 is app-side
+      only; there is no Smartsheet connection yet. The row-by-row viewer and
+      offline field-capture UI will be built inside this tab.
+    </p>
   </div>
 
   <!-- INVOICE VIEW (financial group only) -->
@@ -1268,6 +1330,8 @@ function switchTab(id){
   if(id === 'invoice' && !currentUserIsFinance) return;
   // Project Planning is Project-Planners-group-only (PLANNER_UPNS); same guard.
   if(id === 'planning' && !currentUserIsPlanner) return;
+  // Job Sheets is Testers-group-only (TESTER_UPNS); same guard.
+  if(id === 'jobsheet' && !currentUserIsTester) return;
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
@@ -1275,7 +1339,131 @@ function switchTab(id){
   if(id==='manager')renderManager();
   if(id==='crew')renderCrewView();
   if(id==='planning')renderPlanning();
+  if(id==='jobsheet')renderJobsheet();
 }
+
+// ── Job Sheets viewer (Testers group, Phase 1) ─────────────────────────────
+// Self-contained, READ-ONLY preview on MOCK data only — no Smartsheet connection
+// yet (Phase 1 is app-side only, and touches no other tab). Renders a job's
+// sheet as a searchable list of items with a progress bar and a tap-to-open
+// detail view. The renderer is column-driven (identifier / photo / checkbox /
+// text), so it adapts to differently-shaped sheets — the core idea of the real
+// tool. Two sample sheets below (a move sheet and a network audit) show that.
+const JS_SHEETS=[
+  { id:'mock-casey', name:'Casey Family Move', progressKey:'complete',
+    columns:[
+      {key:'item',type:'identifier',label:'Item'},
+      {key:'before',type:'photo',label:'Before'},
+      {key:'after',type:'photo',label:'After'},
+      {key:'complete',type:'checkbox',label:'Complete'},
+      {key:'notes',type:'text',label:'Notes'},
+    ],
+    rows:[
+      {item:'Sarah Chen — 312 → 508', before:true, after:true, complete:true, notes:'Monitor arm reused'},
+      {item:'Marcus Webb — 312 → 511', before:true, after:true, complete:true, notes:''},
+      {item:'Priya Nair — 314 → 512', before:true, after:false, complete:false, notes:'Waiting on chair'},
+      {item:'Tom Alvarez — 316 → 515', before:false, after:false, complete:false, notes:''},
+      {item:'Dana Kim — 318 → 519', before:true, after:true, complete:true, notes:'Dual monitors'},
+      {item:'Luis Ortiz — 320 → 522', before:true, after:true, complete:true, notes:''},
+      {item:'Emma Ross — 322 → 525', before:true, after:false, complete:false, notes:'Standing desk pending'},
+      {item:'Kofi Mensah — 324 → 528', before:false, after:false, complete:false, notes:''},
+      {item:'Grace Liu — 326 → 531', before:true, after:true, complete:true, notes:''},
+      {item:'Ben Carter — 328 → 534', before:true, after:true, complete:true, notes:'Docking station added'},
+    ] },
+  { id:'mock-chicago', name:'Chicago Network Audit', progressKey:'connected',
+    columns:[
+      {key:'item',type:'identifier',label:'Desk / jack'},
+      {key:'connected',type:'checkbox',label:'Connected'},
+      {key:'labeled',type:'checkbox',label:'Labeled'},
+      {key:'switch',type:'text',label:'Switch'},
+      {key:'port',type:'text',label:'Port'},
+      {key:'speed',type:'text',label:'Cable speed'},
+      {key:'notes',type:'text',label:'Notes'},
+    ],
+    rows:[
+      {item:'Desk 14 — Jack A', connected:true, labeled:true, switch:'SW-2', port:'Gi1/0/12', speed:'1 Gbps', notes:''},
+      {item:'Desk 14 — Jack B', connected:false, labeled:true, switch:'', port:'', speed:'', notes:'Not patched'},
+      {item:'Desk 15 — Jack A', connected:true, labeled:false, switch:'SW-2', port:'Gi1/0/14', speed:'1 Gbps', notes:'Label missing'},
+      {item:'Desk 16 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/03', speed:'2.5 Gbps', notes:''},
+      {item:'Desk 17 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/05', speed:'1 Gbps', notes:''},
+      {item:'Desk 18 — Jack A', connected:false, labeled:false, switch:'', port:'', speed:'', notes:'Dead drop'},
+      {item:'Desk 19 — Jack A', connected:true, labeled:true, switch:'SW-3', port:'Gi1/0/09', speed:'1 Gbps', notes:''},
+      {item:'Desk 20 — Jack A', connected:true, labeled:true, switch:'SW-4', port:'Gi1/0/01', speed:'10 Gbps', notes:'Uplink'},
+    ] },
+];
+let jsSheetId=JS_SHEETS[0].id;
+let jsQuery='';
+const JS_CAM='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3" stroke="currentColor" stroke-width="2"/><path d="M8.5 6l1-2h5l1 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+function jsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function jsSheet(){return JS_SHEETS.find(s=>s.id===jsSheetId)||JS_SHEETS[0];}
+function jsCols(s,t){return s.columns.filter(c=>c.type===t);}
+function jsIdent(s){return (jsCols(s,'identifier')[0]||{}).key;}
+function jsDone(s,r){return !!r[s.progressKey];}
+function jsFilteredRows(s){const q=jsQuery.trim().toLowerCase();const idk=jsIdent(s);return s.rows.map((r,i)=>({r,i})).filter(({r})=>!q||String(r[idk]||'').toLowerCase().includes(q));}
+
+function jsCardHTML(s,r,i){
+  const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
+  const thumbs= photos.length? '<div class="js-thumbs">'+photos.map(c=> r[c.key]
+      ? `<div class="js-thumb" title="${jsEsc(c.label)} photo">${JS_CAM}</div>`
+      : `<div class="js-thumb js-thumb-empty" title="No ${jsEsc(c.label.toLowerCase())} photo">${JS_CAM}</div>`).join('')+'</div>' : '';
+  const pills= checks.length? '<div class="js-pills">'+checks.map(c=> r[c.key]
+      ? `<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>`
+      : `<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div>' : '';
+  const subVals=texts.map(c=>r[c.key]).filter(Boolean);
+  const sub= subVals.length? `<div class="js-card-sub">${jsEsc(subVals.join('  ·  '))}</div>` : '';
+  return `<div class="js-card${jsDone(s,r)?' js-card-done':''}" onclick="jsOpenDetail(${i})">`+
+    `<div class="js-card-main"><div class="js-card-id">${jsEsc(r[idk])}</div>${sub}</div>${thumbs}${pills}</div>`;
+}
+
+function jsRenderCards(){
+  const s=jsSheet(), wrap=document.querySelector('#view-jobsheet .js-cards'); if(!wrap)return;
+  const rows=jsFilteredRows(s);
+  wrap.innerHTML= rows.length? rows.map(({r,i})=>jsCardHTML(s,r,i)).join('') : `<div class="js-empty">No items match “${jsEsc(jsQuery)}”.</div>`;
+}
+
+function renderJobsheet(){
+  const view=document.getElementById('view-jobsheet'); if(!view)return;
+  const s=jsSheet();
+  const total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
+  const opts=JS_SHEETS.map(x=>`<option value="${x.id}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
+  view.innerHTML=
+    '<h2>Job Sheets</h2>'+
+    `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · read-only · sample data (no Smartsheet connection yet)</span></div>`+
+    `<div class="js-toolbar"><select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`+
+    `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)"></div>`+
+    `<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
+    `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
+    '<div class="js-cards"></div>'+
+    '<div class="js-modal-backdrop" id="js-modal-backdrop" onclick="if(event.target===this)jsCloseDetail()"><div class="js-modal" id="js-modal"></div></div>';
+  jsRenderCards();
+}
+
+function jsSetQuery(v){jsQuery=v;jsRenderCards();}
+function jsSelectSheet(id){jsSheetId=id;jsQuery='';renderJobsheet();}
+
+function jsOpenDetail(i){
+  const s=jsSheet(), r=s.rows[i]; if(!r)return;
+  const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
+  const dash='<span style="color:var(--text3)">—</span>';
+  let body='';
+  if(checks.length){
+    body+='<div><div class="js-field-label">Status</div><div class="js-pills" style="justify-content:flex-start">'+
+      checks.map(c=> r[c.key]?`<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>`:`<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div></div>';
+  }
+  if(photos.length){
+    body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+
+      photos.map(c=> r[c.key]
+        ? `<div class="js-photo-lg">${JS_CAM}<span>${jsEsc(c.label)}</span></div>`
+        : `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`).join('')+'</div></div>';
+  }
+  texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="color:var(--text)">${r[c.key]?jsEsc(r[c.key]):dash}</div></div>`; });
+  document.getElementById('js-modal').innerHTML=
+    `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(r[idk])}</div><button class="js-modal-close" onclick="jsCloseDetail()" aria-label="Close">&times;</button></div>`+
+    `<div class="js-modal-body">${body||'<div class="js-empty">No details.</div>'}</div>`;
+  document.getElementById('js-modal-backdrop').classList.add('open');
+}
+function jsCloseDetail(){const b=document.getElementById('js-modal-backdrop'); if(b)b.classList.remove('open');}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){const b=document.getElementById('js-modal-backdrop'); if(b&&b.classList.contains('open'))jsCloseDetail();} });
 
 // ── Tech view ─────────────────────────────────────────────────────────────────
 let techSlots=DAYS.map(()=>new Set());
@@ -1546,6 +1734,7 @@ let currentUserName='';
 let currentUserIsEditor=false;
 let currentUserIsFinance=false;
 let currentUserIsPlanner=false;
+let currentUserIsTester=false;
 function setCrewMode(m){
   crewMode=m;
   document.getElementById('crew-subtab-board').classList.toggle('active',m==='board');
@@ -3478,6 +3667,7 @@ async function loadMyRole(){
       currentUserIsEditor=!!me.isEditor;
       currentUserIsFinance=!!me.isFinance;
       currentUserIsPlanner=!!me.isPlanner;
+      currentUserIsTester=!!me.isTester;
       // Read-only users get `is-viewer` (write controls hide); editors get
       // `is-editor`, which reveals the Manager-view tab (hidden by default).
       // Non-editors never see the Manager tab at all.
@@ -3487,6 +3677,8 @@ async function loadMyRole(){
       document.body.classList.toggle('is-finance', currentUserIsFinance);
       // `is-planner` reveals the Project Planning tab for the Project Planners group (PLANNER_UPNS) only.
       document.body.classList.toggle('is-planner', currentUserIsPlanner);
+      // `is-tester` reveals the Job Sheets tab for the Testers group (TESTER_UPNS) only.
+      document.body.classList.toggle('is-tester', currentUserIsTester);
     }
   }catch(e){ console.error('Failed to load role:',e); }
 }
