@@ -851,6 +851,7 @@ async function fetchJobSheetView(sheetId) {
       }
     });
     if (idCol && String(obj[idCol.key] || '').trim() === '') return; // skip spacer rows
+    obj._rowId = String(row.id); // needed to write edits back to this row
     rows.push(obj);
   });
 
@@ -887,10 +888,24 @@ async function fetchImageBytes(signedUrl) {
   throw new Error(`Smartsheet image fetch failed (${lastStatus})`);
 }
 
+// Writes a single cell on one row of an arbitrary job sheet — the Job Sheets
+// tab's inline editing (Notes text, status checkboxes). '' clears the cell
+// (value:null); a boolean sets a checkbox; strict:false lets a value through a
+// validated column like a person typing into it. One cell per call keeps edits
+// atomic and easy to reason about.
+async function updateJobSheetCell(sheetId, rowId, columnId, value) {
+  let v;
+  if (typeof value === 'boolean') v = value;
+  else v = (value === undefined || value === null || value === '') ? null : value;
+  const rows = [{ id: rowId, cells: [{ columnId: Number(columnId), value: v, strict: false }] }];
+  return putRows(sheetId, rows);
+}
+
 module.exports = {
   fetchSheet,
   fetchWorkspaceSheets,
   fetchJobSheetView,
+  updateJobSheetCell,
   fetchImageBytes,
   fetchAttachment,
   fetchSheetColumns,

@@ -67,6 +67,33 @@ app.http('jobsheetSheet', {
   },
 });
 
+// POST /api/jobsheet/cell — writes one cell (Notes text / status checkbox) back
+// to a row. Testers-only, and limited to sheets inside the configured workspace
+// (same guard as reads). Body: { sheetId, rowId, columnId, value }.
+app.http('jobsheetCell', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/cell',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const body = await request.json().catch(() => null);
+      if (!body || !body.sheetId || !body.rowId || !body.columnId) {
+        return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
+      }
+      const allowed = await ss.fetchWorkspaceSheets(getWorkspaceId());
+      if (!allowed.some((s) => String(s.id) === String(body.sheetId))) {
+        return { status: 403, jsonBody: { error: 'Sheet not permitted' } };
+      }
+      await ss.updateJobSheetCell(body.sheetId, body.rowId, body.columnId, body.value);
+      return { jsonBody: { ok: true } };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
 // GET /api/jobsheet/photo?u=<encoded signed url> — streams one QA cell-image.
 // Anonymous by necessity (an <img> tag can't send our custom auth header), but
 // the capability is the signed url itself: it's only handed out by the

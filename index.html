@@ -553,6 +553,13 @@ body.is-tester #tab-jobsheet{display:inline-block}
 .js-modal-close:hover{background:var(--surface2);color:var(--text)}
 .js-modal-body{padding:20px;display:grid;gap:16px}
 .js-field-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--text3);margin-bottom:6px}
+.js-edit{width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:var(--radius-sm);font-family:inherit;font-size:14px;color:var(--text);background:var(--surface);resize:vertical}
+.js-edit:focus{outline:none;border-color:var(--green-mid)}
+.js-save-status{font-size:12px;margin-top:4px;min-height:14px;color:var(--text3)}
+.js-save-status.ok{color:var(--green)}
+.js-save-status.err{color:#d9534f}
+.js-check{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;color:var(--text)}
+.js-check input{width:16px;height:16px;cursor:pointer;accent-color:var(--green)}
 .js-photos{display:flex;gap:10px;flex-wrap:wrap}
 .js-photo-lg{width:140px;height:140px;border-radius:8px;background:var(--surface2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text3);font-size:12px;border:1px solid var(--border)}
 .js-photo-lg-empty{border:1px dashed var(--border2);background:transparent;color:var(--text3)}
@@ -1414,7 +1421,7 @@ function jsPaint(){
   }
   view.innerHTML=
     '<h2>Job Sheets</h2>'+
-    `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · read-only · live Smartsheet data</span></div>`+
+    `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
     (jsSheets.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`+
        (jsData&&!jsLoading&&!jsError? `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`:'')+
        '</div>' : '')+
@@ -1450,11 +1457,10 @@ function jsSelectSheet(id){jsLoadSheet(id);}
 function jsOpenDetail(i){
   const s=jsData, r=s&&s.rows[i]; if(!r)return;
   const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
-  const dash='<span style="color:var(--text3)">—</span>';
   let body='';
   if(checks.length){
-    body+='<div><div class="js-field-label">Status</div><div class="js-pills" style="justify-content:flex-start">'+
-      checks.map(c=> r[c.key]?`<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>`:`<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div></div>';
+    body+='<div><div class="js-field-label">Status</div><div style="display:grid;gap:8px">'+
+      checks.map(c=>`<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="jsSaveField(${i},'${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
   }
   if(photos.length){
     body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+
@@ -1464,13 +1470,46 @@ function jsOpenDetail(i){
         return `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`;
       }).join('')+'</div></div>';
   }
-  texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="color:var(--text)">${r[c.key]?jsEsc(r[c.key]):dash}</div></div>`; });
+  texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" data-key="${c.key}" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="jsSaveField(${i},'${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
   document.getElementById('js-modal').innerHTML=
     `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(r[idk])}</div><button class="js-modal-close" onclick="jsCloseDetail()" aria-label="Close">&times;</button></div>`+
     `<div class="js-modal-body">${body||'<div class="js-empty">No details.</div>'}</div>`;
   document.getElementById('js-modal-backdrop').classList.add('open');
 }
 function jsCloseDetail(){const b=document.getElementById('js-modal-backdrop'); if(b)b.classList.remove('open');}
+
+// Recomputes the progress bar/counter in place (after an edit changes a
+// done-defining field) without rebuilding the whole tab / closing the modal.
+function jsUpdateProgress(){
+  const s=jsData; if(!s)return;
+  const total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
+  const c=document.querySelector('#view-jobsheet .js-progress-count'); if(c)c.textContent=done+' of '+total+' complete';
+  const p=document.querySelector('#view-jobsheet .js-progress-pct'); if(p)p.textContent=pct+'%';
+  const f=document.querySelector('#view-jobsheet .js-progress-fill'); if(f)f.style.width=pct+'%';
+}
+
+// Writes one edited cell (text on blur, checkbox on change) back to Smartsheet.
+// Updates local state + the card/progress on success; on failure shows the
+// error and reverts a checkbox to its saved state.
+async function jsSaveField(i, colKey, value){
+  const s=jsData, r=s&&s.rows[i]; if(!r)return;
+  if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
+  const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
+  const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
+  setSt('Saving…','');
+  try{
+    const token=await getApiToken();
+    const res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sheetId:jsSheetId,rowId:r._rowId,columnId:colKey.slice(1),value:value})});
+    if(!res.ok){ let m='Save failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+    r[colKey]=value;
+    setSt('Saved','ok'); setTimeout(()=>{ if(st&&st.textContent==='Saved') setSt('',''); },2000);
+    jsRenderCards(); jsUpdateProgress();
+  }catch(e){
+    setSt(e.message||'Save failed','err');
+    const inp=document.querySelector('#js-modal [data-key="'+colKey+'"]');
+    if(inp && inp.type==='checkbox') inp.checked=!!r[colKey];
+  }
+}
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){const b=document.getElementById('js-modal-backdrop'); if(b&&b.classList.contains('open'))jsCloseDetail();} });
 
 // ── Tech view ─────────────────────────────────────────────────────────────────
