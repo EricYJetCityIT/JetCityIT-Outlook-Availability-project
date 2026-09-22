@@ -8,6 +8,9 @@ const { getContainer } = require('../lib/cosmos');
 // (PLANNER_UPNS / isPlanner) may create, edit, or delete one. Each plan is its
 // own Cosmos doc in the shared `dispatch` container, id-namespaced `plan:<uuid>`
 // so it never collides with the jobs `state` doc, team-contacts, or parking.
+// A plan may optionally carry `jobId` (a dispatch job's id, e.g. "ss-123") to
+// link it to a Smartsheet job — the job-detail popup's "Project plan" button
+// looks a plan up by jobId via GET /api/plans?jobId=.
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'plan:';
 
@@ -67,6 +70,8 @@ function sanitizePlan(body, id, user) {
     type: 'projectPlan',
     project: clean(body.project, 200),
     projectId: clean(body.projectId, 60),
+    jobId: clean(body.jobId, 60),
+    client: clean(body.client, 200),
     planDate: clean(body.planDate, 60),
     bisDate: clean(body.bisDate, 60),
     managers: arr(body.managers, sanitizeContact, MAX.contacts),
@@ -89,6 +94,8 @@ function summarize(p) {
     id: p.id,
     project: p.project || '',
     projectId: p.projectId || '',
+    jobId: p.jobId || '',
+    client: p.client || '',
     planDate: p.planDate || '',
     bisDate: p.bisDate || '',
     discTotal: total(p.disconnect),
@@ -112,13 +119,20 @@ app.http('plans', {
 
       if (request.method === 'GET') {
         if (!docId) {
-          // List: all plan docs, newest first.
-          const { resources } = await container.items
-            .query({
-              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
-              parameters: [{ name: '@p', value: ID_PREFIX }],
-            })
-            .fetchAll();
+          // List: all plan docs, newest first. ?jobId= narrows to plans linked
+          // to a specific dispatch job (used by the job-detail popup's
+          // "Project plan" button to find/offer a plan for that job).
+          const jobIdFilter = request.query.get('jobId');
+          const query = jobIdFilter
+            ? {
+                query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) AND c.jobId = @jobId ORDER BY c.updatedAt DESC',
+                parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@jobId', value: jobIdFilter }],
+              }
+            : {
+                query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
+                parameters: [{ name: '@p', value: ID_PREFIX }],
+              };
+          const { resources } = await container.items.query(query).fetchAll();
           return { jsonBody: { plans: resources.map(summarize), canEdit: !!user.isPlanner } };
         }
         try {

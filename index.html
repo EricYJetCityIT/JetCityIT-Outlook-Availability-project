@@ -2822,7 +2822,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -3054,6 +3054,7 @@ const JCITDispatch=(function(){
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
+    if(act==='planlink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobPlanModal({id:j.id,project:j.project,client:j.client,date:j.date,leadNames:crewOf(j).filter(c=>c.lead).map(c=>c.name)}); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return;
       // Closing the assign modal without saving reverts any pending crew edits
       // back to the last-saved state so they don't linger in the local view.
@@ -3364,6 +3365,8 @@ async function openParkingList(address){
 // Server re-checks (requirePlanner) on every write — this is only the UX gate.
 var ppCurrent=null;     // plan shown in the detail view (for Edit/Delete)
 var ppEditingId=null;   // id being edited (null = creating a new plan)
+var ppEditingJobId=null;   // linked dispatch job id carried through the edit form (jobId isn't a visible field)
+var ppEditingClient='';    // linked job's client, same treatment
 
 function ppEl(){ return document.getElementById('pp-root'); }
 function ppTel(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
@@ -3421,13 +3424,12 @@ function ppContactBox(title,list,showOrg){
   return '<div class="pp-box"><div class="pp-box-h">'+esc(title)+'</div>'+(rows||'<div style="font-size:13px;color:var(--text3)">—</div>')+'</div>';
 }
 
-function ppRenderDetail(p,canEdit){
-  var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
+// Read-only plan content shared by the full Planning-tab detail view and the
+// quick-look modal opened from a job popup (openJobPlanModal).
+function ppDetailBodyHtml(p){
   var discT=ppTotal(p.disconnect), reconT=ppTotal(p.reconnect);
   var chips=function(rows){ return (rows||[]).map(function(r){ return '<span class="pp-chip">'+esc(r.floor||'')+'<b>'+(parseInt(r.hc,10)||0)+'</b></span>'; }).join(''); };
-  var sub=[]; if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
-  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
-  html+='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
+  var html='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
   if(p.scope) html+='<div class="pp-sec"><div class="pp-sec-h">Move scope</div><div class="pp-scope">'+esc(p.scope)+'</div></div>';
   if((p.disconnect&&p.disconnect.length)||(p.reconnect&&p.reconnect.length)){
     html+='<div class="pp-sec pp-two"><div><div class="pp-sec-h" style="display:flex;justify-content:space-between;align-items:baseline">Disconnect <span class="pp-total">total <b>'+discT.toLocaleString()+'</b> HC</span></div><div class="pp-chips">'+(chips(p.disconnect)||'<span style="color:var(--text3);font-size:13px">—</span>')+'</div></div>'
@@ -3442,6 +3444,14 @@ function ppRenderDetail(p,canEdit){
     if(p.requirements) html+='<div><div class="pp-sec-h">Technician requirements</div><div class="pp-scope">'+esc(p.requirements)+'</div></div>';
     html+='</div>';
   }
+  return html;
+}
+
+function ppRenderDetail(p,canEdit){
+  var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
+  var sub=[]; if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
+  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
+  html+=ppDetailBodyHtml(p);
   html+='<div class="pp-sec" style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:14px">';
   if(canEdit) html+='<button class="btn btn-sm" onclick="openPlanEdit(ppCurrent)">✏️ Edit plan</button><button class="btn btn-sm" onclick="ppDelete()">🗑 Delete</button>';
   html+='<span style="flex:1"></span><span style="font-size:12px;color:var(--text3)">'+(p.updatedAt?'Updated '+ppWhen(p.updatedAt):'')+'</span></div>';
@@ -3455,10 +3465,12 @@ function ppTlErow(r){ r=r||{}; return '<div class="pp-erow" data-erow>'+ppInput(
 
 function openPlanEdit(plan){
   ppWire(); var root=ppEl(); if(!root) return; plan=plan||{}; ppEditingId=plan.id||null;
+  ppEditingJobId=plan.jobId||null; ppEditingClient=plan.client||'';
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
-  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1></div></div>';
+  var linkNote=ppEditingJobId?'<p style="margin-top:4px;font-size:12px;color:var(--text3)">🔗 Linked to a calendar job'+(ppEditingClient?' · '+esc(ppEditingClient):'')+'</p>':'';
+  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1>'+linkNote+'</div></div>';
   html+='<form id="pp-form" onsubmit="return false">';
   html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')+'</div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
@@ -3484,6 +3496,7 @@ async function ppSave(root){
   var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
   var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
   var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'),
+    jobId:ppEditingJobId||'', client:ppEditingClient||'',
     scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
     managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
     disconnect:ppCollectRows(root,'disconnect'), reconnect:ppCollectRows(root,'reconnect'), timeline:ppCollectRows(root,'timeline') };
@@ -3509,6 +3522,70 @@ function ppOnClick(ev){
   if(ev.target.closest('[data-del]')){ var er=ev.target.closest('[data-erow]'); if(er) er.remove(); return; }
   if(ev.target.closest('[data-cancel]')){ if(ppEditingId) openPlan(ppEditingId); else renderPlanning(); return; }
   if(ev.target.closest('[data-save]')){ ppSave(root); return; }
+}
+
+// Activates the Planning tab's UI (same as switchTab('planning')) WITHOUT
+// also calling renderPlanning() — used when the caller is about to render a
+// specific plan itself (openPlan/openPlanEdit) and doesn't want that fetch
+// racing the list fetch switchTab would otherwise kick off, both writing to
+// the same #pp-root and whichever resolves last winning.
+function enterPlanningTab(){
+  if(typeof flushPendingSave==='function') flushPendingSave();
+  document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  var view=document.getElementById('view-planning'); if(view) view.classList.add('active');
+  var tab=document.getElementById('tab-planning'); if(tab) tab.classList.add('active');
+}
+
+// Quick-look modal opened from a job's detail popup (the "📋 Project plan"
+// button) — looks a plan up by the job's id via GET /api/plans?jobId=, shown
+// to ANY signed-in crew member (read-only) regardless of the Project-Planners
+// gate on the full Planning tab. Only planners get a way onward: into the full
+// plan (edit/delete live there) or, if none exists yet, a prefilled create form.
+async function openJobPlanModal(job){
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:640px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">📋 Project plan</span><button class="dp-close" data-jp="close">✕</button></div>'
+    +'<div class="dp-modal-bd" data-jp-body style="min-height:80px">Loading…</div>'
+    +'<div class="dp-modal-ft" data-jp-ft><span></span><button class="btn btn-sm" data-jp="close">Close</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  var body=ov.querySelector('[data-jp-body]'), ft=ov.querySelector('[data-jp-ft]');
+  var foundPlan=null;
+
+  ov.addEventListener('click',function(ev){
+    if(ev.target===ov||ev.target.closest('[data-jp="close"]')){ cleanup(); return; }
+    if(ev.target.closest('[data-jp="open"]')){ cleanup(); enterPlanningTab(); openPlan(foundPlan.id); return; }
+    if(ev.target.closest('[data-jp="create"]')){
+      cleanup(); enterPlanningTab();
+      openPlanEdit({ project:job.project||'', jobId:job.id, client:job.client||'',
+        planDate: job.date?ppWhen(job.date):'',
+        leads:(job.leadNames||[]).map(function(n){ return {name:n,phone:''}; }) });
+      return;
+    }
+  });
+
+  try{
+    var list=await ppFetch('?jobId='+encodeURIComponent(job.id));
+    var hit=(list&&list.plans&&list.plans[0])||null;
+    if(hit){
+      var full=await ppFetch('/'+encodeURIComponent(hit.id));
+      foundPlan=full.plan||hit;
+      var p=foundPlan;
+      body.innerHTML='<h2 style="margin:0 0 4px;font-size:18px">'+(esc(p.project)||'Untitled plan')+'</h2>'
+        +(p.projectId||p.planDate?'<p style="margin:0 0 12px;font-size:13px;color:var(--text3)">'+[p.projectId,p.planDate].filter(Boolean).map(esc).join(' · ')+'</p>':'')
+        +ppDetailBodyHtml(p);
+      ft.innerHTML=(currentUserIsPlanner?'<button class="btn btn-sm" data-jp="open">Open full plan →</button>':'<span></span>')+'<button class="btn btn-sm" data-jp="close">Close</button>';
+    } else {
+      body.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>No project plan has been created for this job yet.</p></div>';
+      ft.innerHTML=(currentUserIsPlanner?'<button class="btn btn-primary btn-sm" data-jp="create">+ Create project plan</button>':'<span></span>')+'<button class="btn btn-sm" data-jp="close">Close</button>';
+    }
+  }catch(e){
+    console.error('job plan lookup failed',e);
+    body.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t check for a linked plan.</p></div>';
+  }
 }
 
 function openTeamContacts(e){
