@@ -3130,12 +3130,23 @@ const JCITDispatch=(function(){
 
   // Lightweight job search for the Project Planning tab's "Link to calendar"
   // picker (top-level pp* code, outside this closure, has no other access to
-  // `state.jobs`). Returns plain serializable summaries, newest date first.
+  // `state.jobs`). Returns plain serializable summaries, soonest date first,
+  // restricted to a 1-week-back .. 2-weeks-ahead window around today (a
+  // project name like "Amazon P-926303 ..." can span dozens of dated rows
+  // over many months, so an unbounded list is mostly noise for "which job is
+  // this plan about right now").
   async function searchJobs(query){
     await ensureLoaded();
     const q=String(query||'').trim().toLowerCase();
-    const matches=!q ? state.jobs.slice() : state.jobs.filter(j=>(j.project||'').toLowerCase().includes(q)||(j.client||'').toLowerCase().includes(q));
-    return matches.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,40).map(j=>({
+    const today=new Date(); today.setHours(0,0,0,0);
+    const from=new Date(today); from.setDate(from.getDate()-7);
+    const to=new Date(today); to.setDate(to.getDate()+14);
+    const fromIso=toISO(from), toIso=toISO(to);
+    const matches=state.jobs.filter(j=>{
+      if(!j.date||j.date<fromIso||j.date>toIso) return false;
+      return !q || (j.project||'').toLowerCase().includes(q) || (j.client||'').toLowerCase().includes(q);
+    });
+    return matches.slice().sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))).slice(0,40).map(j=>({
       id:j.id, project:j.project||'', client:j.client||'', date:j.date||'', startTime:j.startTime||'',
       leadNames:crewOf(j).filter(c=>c.lead).map(c=>c.name)
     }));
@@ -3578,7 +3589,7 @@ function ppPickJobModal(onPick){
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title">Link to a calendar job</span><button class="dp-close" data-pj="close">✕</button></div>'
-    +'<div class="dp-modal-bd"><input type="text" data-pj-q placeholder="Search by project or client…" style="width:100%;margin-bottom:10px"/><div data-pj-results style="max-height:50vh;overflow:auto"></div></div>'
+    +'<div class="dp-modal-bd"><input type="text" data-pj-q placeholder="Search by project or client…" style="width:100%;margin-bottom:6px"/><p style="margin:0 0 10px;font-size:11px;color:var(--text3)">Showing jobs from 1 week ago to 2 weeks out</p><div data-pj-results style="max-height:50vh;overflow:auto"></div></div>'
     +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Links to every job with the picked project name</span><button class="btn btn-sm" data-pj="close">Cancel</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
