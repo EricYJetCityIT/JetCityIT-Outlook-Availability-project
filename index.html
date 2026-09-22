@@ -3128,7 +3128,20 @@ const JCITDispatch=(function(){
   }
   init();
 
-  return { boardHtml, myScheduleHtml, ensureLoaded, reportsViewHtml };
+  // Lightweight job search for the Project Planning tab's "Link to calendar"
+  // picker (top-level pp* code, outside this closure, has no other access to
+  // `state.jobs`). Returns plain serializable summaries, newest date first.
+  async function searchJobs(query){
+    await ensureLoaded();
+    const q=String(query||'').trim().toLowerCase();
+    const matches=!q ? state.jobs.slice() : state.jobs.filter(j=>(j.project||'').toLowerCase().includes(q)||(j.client||'').toLowerCase().includes(q));
+    return matches.slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,40).map(j=>({
+      id:j.id, project:j.project||'', client:j.client||'', date:j.date||'', startTime:j.startTime||'',
+      leadNames:crewOf(j).filter(c=>c.lead).map(c=>c.name)
+    }));
+  }
+
+  return { boardHtml, myScheduleHtml, ensureLoaded, reportsViewHtml, searchJobs };
 })();
 
 async function renderCrewView(){
@@ -3469,10 +3482,11 @@ function openPlanEdit(plan){
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
-  var linkNote=ppEditingJobId?'<p style="margin-top:4px;font-size:12px;color:var(--text3)">🔗 Linked to a calendar job'+(ppEditingClient?' · '+esc(ppEditingClient):'')+'</p>':'';
-  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1>'+linkNote+'</div></div>';
+  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1></div></div>';
   html+='<form id="pp-form" onsubmit="return false">';
-  html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')+'</div>'
+  html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')
+    +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
+    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-link style="margin-top:6px">🔗 Link to calendar</button></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
     +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
     +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
@@ -3521,7 +3535,79 @@ function ppOnClick(ev){
   if(add){ var id=add.getAttribute('data-add'); var c=root.querySelector('[data-rows="'+id+'"]'); if(c){ var h=id==='managers'?ppContactErow('managers'):id==='leads'?ppContactErow('leads'):id==='timeline'?ppTlErow():ppFloorErow(); c.insertAdjacentHTML('beforeend',h); } return; }
   if(ev.target.closest('[data-del]')){ var er=ev.target.closest('[data-erow]'); if(er) er.remove(); return; }
   if(ev.target.closest('[data-cancel]')){ if(ppEditingId) openPlan(ppEditingId); else renderPlanning(); return; }
+  if(ev.target.closest('[data-pp-link]')){ ppPickJobModal(function(job){ ppApplyJobLink(root,job); }); return; }
+  if(ev.target.closest('[data-pp-unlink]')){ ppEditingJobId=null; ppEditingClient=''; ppRenderLinkNote(root); return; }
   if(ev.target.closest('[data-save]')){ ppSave(root); return; }
+}
+
+// Note shown next to the Project-name field once a plan is linked to the
+// calendar. Linking is by PROJECT NAME (not a single job id) — a big project
+// like "Amazon Doppler restack" has many dispatch rows (one per day/task), so
+// the link is meant to match ALL of them, not just the one job that was
+// picked. ppEditingJobId/ppEditingClient only remember which representative
+// job was picked (for the client name + as a prefill source), not what the
+// link actually matches against at read time (see openJobPlanModal).
+function ppLinkNoteHtml(projectName){
+  if(!ppEditingJobId) return '';
+  return '🔗 Linked to calendar jobs named “<b>'+esc(projectName||'')+'</b>”'+(ppEditingClient?' · '+esc(ppEditingClient):'')+' <button type="button" class="btn btn-ghost btn-sm" data-pp-unlink style="padding:0 4px;font-size:11px">Unlink</button>';
+}
+function ppRenderLinkNote(root){
+  var note=root.querySelector('[data-pp-linknote]'); if(!note) return;
+  var projEl=root.querySelector('#pp-form [data-f="project"]');
+  note.innerHTML=ppLinkNoteHtml(projEl?projEl.value:'');
+}
+// Applies a picked calendar job: forces the Project-name field to the job's
+// EXACT project string (required for the name match to work), and fills in
+// Plan date + JCIT leads only if those are still empty (never clobbers
+// something the planner already typed).
+function ppApplyJobLink(root,job){
+  var projEl=root.querySelector('#pp-form [data-f="project"]'); if(projEl) projEl.value=job.project||'';
+  var dateEl=root.querySelector('#pp-form [data-f="planDate"]'); if(dateEl&&!dateEl.value.trim()&&job.date) dateEl.value=ppWhen(job.date);
+  ppEditingJobId=job.id||null; ppEditingClient=job.client||'';
+  var leadsC=root.querySelector('[data-rows="leads"]');
+  if(leadsC&&job.leadNames&&job.leadNames.length){
+    var rows=leadsC.querySelectorAll('[data-erow]');
+    var allEmpty=Array.prototype.every.call(rows,function(r){ var n=r.querySelector('[data-f="name"]'); return !n||!n.value.trim(); });
+    if(allEmpty) leadsC.innerHTML=job.leadNames.map(function(n){ return ppContactErow('leads',{name:n}); }).join('');
+  }
+  ppRenderLinkNote(root);
+}
+// Small search-and-pick overlay over JCITDispatch.searchJobs (the only way
+// top-level pp* code can reach the live calendar's job list).
+function ppPickJobModal(onPick){
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Link to a calendar job</span><button class="dp-close" data-pj="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><input type="text" data-pj-q placeholder="Search by project or client…" style="width:100%;margin-bottom:10px"/><div data-pj-results style="max-height:50vh;overflow:auto"></div></div>'
+    +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Links to every job with the picked project name</span><button class="btn btn-sm" data-pj="close">Cancel</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  var q=ov.querySelector('[data-pj-q]'), results=ov.querySelector('[data-pj-results]');
+  var reqId=0;
+  async function runSearch(){
+    var myReq=++reqId;
+    results.innerHTML='<div style="padding:8px 2px;color:var(--text3);font-size:13px">Searching…</div>';
+    try{
+      var list=await JCITDispatch.searchJobs(q.value);
+      if(myReq!==reqId) return; // a newer keystroke's search already superseded this one
+      results._list=list;
+      results.innerHTML=list.length?list.map(function(j,i){
+        return '<button type="button" class="pp-job-pick" data-pj-idx="'+i+'" style="display:block;width:100%;text-align:left;padding:8px 6px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;color:inherit">'
+          +'<div style="font-weight:600;font-size:14px">'+(esc(j.project)||'Untitled')+'</div>'
+          +'<div style="font-size:12px;color:var(--text3)">'+[j.client,j.date?ppWhen(j.date):'',j.startTime].filter(Boolean).map(esc).join(' · ')+'</div></button>';
+      }).join(''):'<div style="padding:8px 2px;color:var(--text3);font-size:13px">No matching jobs.</div>';
+    }catch(e){ if(myReq===reqId) results.innerHTML='<div style="padding:8px 2px;color:var(--red);font-size:13px">Couldn’t search jobs.</div>'; }
+  }
+  q.addEventListener('input',runSearch);
+  ov.addEventListener('click',function(ev){
+    if(ev.target===ov||ev.target.closest('[data-pj="close"]')){ cleanup(); return; }
+    var btn=ev.target.closest('[data-pj-idx]');
+    if(btn){ var idx=parseInt(btn.getAttribute('data-pj-idx'),10); var job=results._list&&results._list[idx]; if(job){ cleanup(); onPick(job); } return; }
+  });
+  runSearch();
+  setTimeout(function(){ q.focus(); },0);
 }
 
 // Activates the Planning tab's UI (same as switchTab('planning')) WITHOUT
@@ -3538,10 +3624,12 @@ function enterPlanningTab(){
 }
 
 // Quick-look modal opened from a job's detail popup (the "📋 Project plan"
-// button) — looks a plan up by the job's id via GET /api/plans?jobId=, shown
-// to ANY signed-in crew member (read-only) regardless of the Project-Planners
-// gate on the full Planning tab. Only planners get a way onward: into the full
-// plan (edit/delete live there) or, if none exists yet, a prefilled create form.
+// button) — looks a plan up by PROJECT NAME via GET /api/plans?project=
+// (case-insensitive exact match — a plan links to every calendar job sharing
+// its project name, not just one row), shown to ANY signed-in crew member
+// (read-only) regardless of the Project-Planners gate on the full Planning
+// tab. Only planners get a way onward: into the full plan (edit/delete live
+// there) or, if none exists yet, a prefilled create form.
 async function openJobPlanModal(job){
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:640px;width:94vw">'
@@ -3568,8 +3656,11 @@ async function openJobPlanModal(job){
   });
 
   try{
-    var list=await ppFetch('?jobId='+encodeURIComponent(job.id));
-    var hit=(list&&list.plans&&list.plans[0])||null;
+    var hit=null;
+    if((job.project||'').trim()){
+      var list=await ppFetch('?project='+encodeURIComponent(job.project));
+      hit=(list&&list.plans&&list.plans[0])||null;
+    }
     if(hit){
       var full=await ppFetch('/'+encodeURIComponent(hit.id));
       foundPlan=full.plan||hit;

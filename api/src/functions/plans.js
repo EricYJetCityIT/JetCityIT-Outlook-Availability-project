@@ -8,9 +8,12 @@ const { getContainer } = require('../lib/cosmos');
 // (PLANNER_UPNS / isPlanner) may create, edit, or delete one. Each plan is its
 // own Cosmos doc in the shared `dispatch` container, id-namespaced `plan:<uuid>`
 // so it never collides with the jobs `state` doc, team-contacts, or parking.
-// A plan may optionally carry `jobId` (a dispatch job's id, e.g. "ss-123") to
-// link it to a Smartsheet job — the job-detail popup's "Project plan" button
-// looks a plan up by jobId via GET /api/plans?jobId=.
+// A plan links to the calendar by PROJECT NAME: the job-detail popup's
+// "Project plan" button looks a plan up via GET /api/plans?project=<name>
+// (case-insensitive), matching every dispatch job sharing that project name
+// (a big project has many rows, one per day/task -- not just one job). A plan
+// may also carry `jobId` (the one representative dispatch job it was linked
+// FROM, e.g. "ss-123") — informational only, not used for the name lookup.
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'plan:';
 
@@ -119,19 +122,32 @@ app.http('plans', {
 
       if (request.method === 'GET') {
         if (!docId) {
-          // List: all plan docs, newest first. ?jobId= narrows to plans linked
-          // to a specific dispatch job (used by the job-detail popup's
-          // "Project plan" button to find/offer a plan for that job).
+          // List: all plan docs, newest first. ?project= narrows to plans
+          // linked to a dispatch job by PROJECT NAME (case-insensitive exact
+          // match) -- used by the job-detail popup's "Project plan" button. A
+          // named project can have many dispatch rows (one per day/task), so
+          // this deliberately matches by name, not a single job id. ?jobId=
+          // is also accepted (kept for the one representative job a plan was
+          // linked FROM -- informational, not how lookups match).
+          const projectFilter = request.query.get('project');
           const jobIdFilter = request.query.get('jobId');
-          const query = jobIdFilter
-            ? {
-                query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) AND c.jobId = @jobId ORDER BY c.updatedAt DESC',
-                parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@jobId', value: jobIdFilter }],
-              }
-            : {
-                query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
-                parameters: [{ name: '@p', value: ID_PREFIX }],
-              };
+          let query;
+          if (projectFilter) {
+            query = {
+              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) AND LOWER(c.project) = LOWER(@name) ORDER BY c.updatedAt DESC',
+              parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@name', value: projectFilter }],
+            };
+          } else if (jobIdFilter) {
+            query = {
+              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) AND c.jobId = @jobId ORDER BY c.updatedAt DESC',
+              parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@jobId', value: jobIdFilter }],
+            };
+          } else {
+            query = {
+              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
+              parameters: [{ name: '@p', value: ID_PREFIX }],
+            };
+          }
           const { resources } = await container.items.query(query).fetchAll();
           return { jsonBody: { plans: resources.map(summarize), canEdit: !!user.isPlanner } };
         }
