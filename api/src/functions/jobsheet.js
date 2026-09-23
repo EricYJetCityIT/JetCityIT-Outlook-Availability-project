@@ -121,6 +121,50 @@ app.http('jobsheetCell', {
   },
 });
 
+// POST /api/jobsheet/photo-upload — uploads a photo INTO a cell (a QA Pic /
+// Before / After column), the write side of the photo columns the read path
+// already renders. multipart/form-data: sheetId, rowId, columnId (the "c123"
+// key as returned by /sheet -- the leading "c" is stripped to get the numeric
+// Smartsheet columnId, same convention /cell already uses) + one file part.
+// Testers-only. Nothing is stored on our side; the bytes stream straight to
+// Smartsheet's cellimages endpoint (see addCellImage).
+const JS_PHOTO_MAX_BYTES = 15 * 1024 * 1024; // 15 MB — phone camera photos, not scans
+app.http('jobsheetPhotoUpload', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/photo-upload',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      let form;
+      try { form = await request.formData(); } catch (e) { return { status: 400, jsonBody: { error: 'Expected a multipart file upload' } }; }
+      const sheetId = form.get('sheetId');
+      const rowId = form.get('rowId');
+      const rawColumnKey = form.get('columnId');
+      if (!sheetId || !rowId || !rawColumnKey) {
+        return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
+      }
+      const columnId = String(rawColumnKey).replace(/^c/, '');
+      let file = null;
+      for (const value of form.values()) {
+        if (value && typeof value === 'object' && typeof value.arrayBuffer === 'function') { file = value; break; }
+      }
+      if (!file) return { status: 400, jsonBody: { error: 'No photo was uploaded' } };
+      if (!/^image\//i.test(file.type || '') && !/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name || '')) {
+        return { status: 400, jsonBody: { error: 'Only image files are allowed' } };
+      }
+      const bytes = Buffer.from(await file.arrayBuffer());
+      if (!bytes.length) return { status: 400, jsonBody: { error: 'Empty file' } };
+      if (bytes.length > JS_PHOTO_MAX_BYTES) return { status: 400, jsonBody: { error: 'Photo is too large (max 15 MB)' } };
+      await ss.addCellImage(sheetId, rowId, columnId, file.name || 'photo.jpg', file.type || 'image/jpeg', bytes);
+      return { jsonBody: { ok: true } };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
 // GET /api/jobsheet/photo?u=<encoded signed url> — streams one QA cell-image.
 // Anonymous by necessity (an <img> tag can't send our custom auth header), but
 // the capability is the signed url itself: it's only handed out by the

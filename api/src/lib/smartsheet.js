@@ -947,6 +947,36 @@ async function updateJobSheetCell(sheetId, rowId, columnId, value) {
   return putRows(sheetId, rows);
 }
 
+// Uploads a photo INTO a cell (not a row attachment) — the write side of the
+// Job Sheets photo columns (QA Pic / Before / After). This is a DIFFERENT
+// Smartsheet API from addRowAttachment: POST
+// /sheets/{id}/rows/{id}/columns/{id}/cellimages with the raw image bytes,
+// same simple-upload header shape (Content-Type/-Disposition/-Length) as
+// addRowAttachment. Smartsheet auto-fits the cell's value/image to what was
+// uploaded — no follow-up cell write needed.
+async function addCellImage(sheetId, rowId, columnId, fileName, contentType, bytes) {
+  const safeName = String(fileName || 'photo.jpg').replace(/["\r\n\\]/g, '_');
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  const res = await fetch(
+    `${SMARTSHEET_API_BASE}/sheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(rowId)}/columns/${encodeURIComponent(columnId)}/cellimages`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        'Content-Type': contentType || 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${safeName}"`,
+        'Content-Length': String(buf.length),
+      },
+      body: buf,
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet cell image error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
 module.exports = {
   fetchSheet,
   fetchAllWorkspaces,
@@ -954,6 +984,7 @@ module.exports = {
   fetchWorkspaceSheets,
   fetchJobSheetView,
   updateJobSheetCell,
+  addCellImage,
   fetchImageBytes,
   fetchAttachment,
   fetchSheetColumns,

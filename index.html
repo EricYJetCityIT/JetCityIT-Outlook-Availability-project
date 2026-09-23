@@ -573,6 +573,8 @@ body.is-tester #tab-jobsheet{display:inline-block}
 .js-photo-lg-empty{border:1px dashed var(--border2);background:transparent;color:var(--text3)}
 .js-thumb img{width:100%;height:100%;object-fit:cover;border-radius:5px;display:block}
 .js-photo-full{max-width:240px;max-height:240px;object-fit:contain;border-radius:8px;border:1px solid var(--border);display:block}
+.js-photo-add-btn{font-size:12px;color:var(--green);cursor:pointer;font-weight:600}
+.js-photo-add-btn:hover{text-decoration:underline}
 @media(max-width:640px){.js-card{flex-wrap:wrap}.js-pills{max-width:none;justify-content:flex-start}}
 /* ── Project Planning tab ── */
 .pp-list{display:flex;flex-direction:column;gap:10px}
@@ -1562,9 +1564,15 @@ function jsOpenDetail(i){
   if(photos.length){
     body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+
       photos.map(c=>{ const v=r[c.key];
-        if(jsIsUrl(v)) return `<figure style="margin:0"><img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}"><figcaption style="font-size:12px;color:var(--text3);margin-top:4px">${jsEsc(c.label)}</figcaption></figure>`;
-        if(v) return `<div class="js-photo-lg">${JS_CAM}<span>${jsEsc(c.label)}</span></div>`;
-        return `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`;
+        const img= jsIsUrl(v)? `<img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}">`
+          : v? `<div class="js-photo-lg">${JS_CAM}<span>${jsEsc(c.label)}</span></div>`
+          : `<div class="js-photo-lg js-photo-lg-empty">${JS_CAM}<span>No ${jsEsc(c.label.toLowerCase())}</span></div>`;
+        const addLabel=(jsIsUrl(v)||v)?'Replace':'📷 Add photo';
+        return `<figure style="margin:0">${img}`+
+          `<figcaption style="font-size:12px;color:var(--text3);margin-top:4px;display:flex;align-items:center;gap:8px">`+
+          `<span>${jsEsc(c.label)}</span>`+
+          `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="jsUploadPhoto(${i},'${c.key}',this)"></label>`+
+          `</figcaption><div class="js-save-status" data-for="${c.key}"></div></figure>`;
       }).join('')+'</div></div>';
   }
   texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" data-key="${c.key}" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="jsSaveField(${i},'${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
@@ -1607,6 +1615,35 @@ async function jsSaveField(i, colKey, value){
     if(inp && inp.type==='checkbox') inp.checked=!!r[colKey];
   }
 }
+
+// Uploads a photo into a cell (QA Pic / Before / After) — Smartsheet's
+// cellimages write API, a different endpoint from the row-attachment upload
+// used elsewhere in this app (see addCellImage in smartsheet.js). Smartsheet's
+// response only gives image metadata (id/width/height), not a ready-to-display
+// url, so on success the whole sheet is re-fetched (same as a fresh open) and
+// the same row's detail is re-opened to show the new photo immediately.
+async function jsUploadPhoto(i, colKey, inputEl){
+  const file=inputEl.files&&inputEl.files[0]; if(!file) return;
+  const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
+  const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
+  const s=jsData, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
+  setSt('Uploading…','');
+  try{
+    const token=await getApiToken();
+    const fd=new FormData();
+    fd.append('sheetId',jsSheetId); fd.append('rowId',r._rowId); fd.append('columnId',colKey);
+    fd.append('file',file,file.name||'photo.jpg');
+    const res=await fetch('/api/jobsheet/photo-upload',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
+    if(!res.ok){ let m='Upload failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+    jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId));
+    jsRenderCards(); jsUpdateProgress();
+    if(jsData.rows[i]) jsOpenDetail(i); // re-render the modal with the new photo
+  }catch(e){
+    setSt(e.message||'Upload failed','err');
+  }
+  inputEl.value='';
+}
+
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){const b=document.getElementById('js-modal-backdrop'); if(b&&b.classList.contains('open'))jsCloseDetail();} });
 
 // ── Tech view ─────────────────────────────────────────────────────────────────
