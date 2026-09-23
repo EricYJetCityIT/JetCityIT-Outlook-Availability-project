@@ -1361,17 +1361,18 @@ function switchTab(id){
   if(id==='jobsheet')renderJobsheet();
 }
 
-// ── Job Sheets viewer (Testers group, Phase 1) ─────────────────────────────
-// Self-contained, READ-ONLY preview on MOCK data only — no Smartsheet connection
-// yet (Phase 1 is app-side only, and touches no other tab). Renders a job's
-// sheet as a searchable list of items with a progress bar and a tap-to-open
-// detail view. The renderer is column-driven (identifier / photo / checkbox /
-// text), so it adapts to differently-shaped sheets — the core idea of the real
-// tool. Two sample sheets below (a move sheet and a network audit) show that.
-// Live data (Testers group): the sheet list + one sheet's rows/photos come from
-// the /api/jobsheet endpoints, which read a single configured Smartsheet
-// workspace. No client data lives in this file.
-let jsSheets=[];      // [{id,name}] the picker options
+// ── Job Sheets viewer (Testers group) ───────────────────────────────────────
+// Two-level picker (workspace → sheet, both live from Smartsheet) over a job's
+// sheet, rendered as a searchable list of items with a progress bar and a
+// tap-to-open detail view. The renderer is column-driven (identifier / photo /
+// checkbox / text), so it adapts to differently-shaped sheets. No client data
+// lives in this file — the workspace/sheet lists and one sheet's rows/photos
+// all come live from the /api/jobsheet endpoints, gated to the Testers group.
+let jsWorkspaces=[];   // [{id,name}] the workspace picker options
+let jsWorkspaceId=null; // selected workspace id
+let jsWsLoading=false;
+let jsWsError='';
+let jsSheets=[];      // [{id,name}] the sheet picker options, within jsWorkspaceId
 let jsSheetId=null;   // selected sheet id
 let jsData=null;      // loaded sheet {name,columns,progressKey,rows}
 let jsQuery='';
@@ -1419,10 +1420,16 @@ function jsRenderCards(){
 // Paints the whole tab from current state (list + loaded sheet + loading/error).
 function jsPaint(){
   const view=document.getElementById('view-jobsheet'); if(!view)return;
+  const wsOpts=jsWorkspaces.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsWorkspaceId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   const opts=jsSheets.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   let mid='';
-  if(jsError){ mid=`<div class="js-empty">${jsEsc(jsError)}</div>`; }
-  else if(jsLoading||!jsData){ mid='<div class="js-empty">Loading…</div>'; }
+  if(jsWsError){ mid=`<div class="js-empty">${jsEsc(jsWsError)}</div>`; }
+  else if(jsWsLoading){ mid='<div class="js-empty">Loading workspaces…</div>'; }
+  else if(!jsWorkspaces.length){ mid='<div class="js-empty">No workspaces available.</div>'; }
+  else if(jsError){ mid=`<div class="js-empty">${jsEsc(jsError)}</div>`; }
+  else if(jsLoading){ mid='<div class="js-empty">Loading…</div>'; }
+  else if(!jsSheets.length){ mid='<div class="js-empty">No sheets in this workspace.</div>'; }
+  else if(!jsData){ mid='<div class="js-empty">Loading…</div>'; }
   else {
     const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
     mid=`<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
@@ -1432,7 +1439,8 @@ function jsPaint(){
   view.innerHTML=
     '<h2>Job Sheets</h2>'+
     `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
-    (jsSheets.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`+
+    (jsWorkspaces.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectWorkspace(this.value)">${wsOpts}</select>`+
+       (jsSheets.length? `<select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`:'')+
        (jsData&&!jsLoading&&!jsError? `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`:'')+
        '</div>' : '')+
     mid+
@@ -1440,19 +1448,36 @@ function jsPaint(){
   if(jsData&&!jsLoading&&!jsError) jsRenderCards();
 }
 
-// Entry point (called by switchTab). Loads the sheet list on first open.
+// Entry point (called by switchTab). Loads the workspace list on first open.
 function renderJobsheet(){
-  if(!jsSheets.length && !jsLoading && !jsError){ jsLoadList(); return; }
+  if(!jsWorkspaces.length && !jsWsLoading && !jsWsError){ jsLoadWorkspaces(); return; }
   jsPaint();
 }
 
-async function jsLoadList(){
+async function jsLoadWorkspaces(){
+  jsWsLoading=true; jsWsError=''; jsPaint();
+  try{
+    const d=await jsApi('/jobsheet/workspaces');
+    jsWorkspaces=d.workspaces||[]; jsWsLoading=false;
+    if(jsWorkspaces.length){ jsSelectWorkspace(jsWorkspaces[0].id); } else { jsPaint(); }
+  }catch(e){ jsWsLoading=false; jsWsError=e.message||'Failed to load workspaces'; jsPaint(); }
+}
+
+// Switches to a different workspace: resets the sheet picker + loaded sheet,
+// then loads that workspace's sheets (auto-opens the first one, same pattern
+// as the sheet picker itself).
+function jsSelectWorkspace(id){
+  jsWorkspaceId=id; jsSheets=[]; jsSheetId=null; jsData=null; jsQuery=''; jsError='';
+  jsLoadSheetsForWorkspace(id);
+}
+
+async function jsLoadSheetsForWorkspace(id){
   jsLoading=true; jsError=''; jsPaint();
   try{
-    const d=await jsApi('/jobsheet/sheets');
+    const d=await jsApi('/jobsheet/sheets?workspaceId='+encodeURIComponent(id));
     jsSheets=d.sheets||[]; jsLoading=false;
     if(jsSheets.length){ jsLoadSheet(jsSheets[0].id); } else { jsPaint(); }
-  }catch(e){ jsLoading=false; jsError=e.message||'Failed to load job sheets'; jsPaint(); }
+  }catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheets'; jsPaint(); }
 }
 
 async function jsLoadSheet(id){

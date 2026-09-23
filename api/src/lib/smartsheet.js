@@ -728,13 +728,33 @@ async function fetchAttachmentBytes(sheetId, attachmentId) {
 }
 
 // ── Job Sheets tab (Testers group) ─────────────────────────────────────────
-// A generic, READ-ONLY view of an arbitrary per-job sheet (e.g. a T-Mobile
-// floor sheet: Desk Number / QA Pic / Notes). Unlike the crew-calendar sheet
-// above, these have no fixed schema, so columns are classified by shape
-// (identifier / photo / checkbox / text) and the client's data is fetched live
-// — it never lives in the repo. Access is limited to sheets inside ONE
-// configured workspace (JOBSHEET_WORKSPACE_ID) so the admin token can't be used
-// to read the whole Smartsheet library.
+// A generic, READ-ONLY-schema view of an arbitrary per-job sheet (e.g. a
+// T-Mobile floor sheet: Desk Number / QA Pic / Notes) plus write-back for the
+// Notes/status columns. Unlike the crew-calendar sheet above, these have no
+// fixed schema, so columns are classified by shape (identifier / photo /
+// checkbox / text) and the client's data is fetched live — it never lives in
+// the repo. The picker lets a Tester browse ANY workspace/sheet the app's
+// Smartsheet token can see (fetchAllWorkspaces + fetchWorkspaceSheets); the
+// real access boundary is that token's own Smartsheet permissions (same
+// principle as the rest of this file), with the Testers group as the app-side
+// gate on who can reach this tab at all.
+
+// Lists every workspace the token's Smartsheet account can see (id + name),
+// alphabetical -- powers the Job Sheets tab's workspace picker.
+async function fetchAllWorkspaces() {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/workspaces?includeAll=true`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet workspaces error ${res.status}: ${t}`);
+  }
+  const data = await res.json();
+  const items = Array.isArray(data.data) ? data.data : [];
+  return items
+    .map((w) => ({ id: String(w.id), name: w.name || String(w.id) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 // Lists the sheets directly in a workspace (id + name), newest-modified first.
 async function fetchWorkspaceSheets(workspaceId) {
@@ -903,6 +923,7 @@ async function updateJobSheetCell(sheetId, rowId, columnId, value) {
 
 module.exports = {
   fetchSheet,
+  fetchAllWorkspaces,
   fetchWorkspaceSheets,
   fetchJobSheetView,
   updateJobSheetCell,

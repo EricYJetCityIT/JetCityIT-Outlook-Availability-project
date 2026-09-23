@@ -12,36 +12,35 @@ function jobsheetError(e, context) {
   return { status: 500, jsonBody: { error: String((e && e.message) || e || 'Unknown error') } };
 }
 
-// Job Sheets tab (Testers group) — READ-ONLY. Serves a picker of the client's
-// job sheets and one sheet's contents (items + live QA photos) to the in-app
-// viewer. Everything is gated to the Testers group AND limited to the single
-// workspace named by JOBSHEET_WORKSPACE_ID, so the admin token can never be
-// used from here to read the rest of the Smartsheet library. The workspace id
-// (client-identifying) lives only in Azure app settings, never in the repo.
+// Job Sheets tab (Testers group). Serves a picker of the token's Smartsheet
+// workspaces, the sheets inside whichever one is chosen, and one sheet's
+// contents (items + live QA photos) to the in-app viewer, plus a write-back
+// endpoint for the Notes/status columns. Gated to the Testers group; beyond
+// that, the real access boundary is the app's SMARTSHEET_API_TOKEN's own
+// Smartsheet permissions -- there is no app-side workspace allow-list, so a
+// Tester can reach anything that token can see (same as every other
+// Smartsheet-backed feature in this app; Job Sheets is no longer special-cased
+// to one configured workspace).
 
-// One or more workspace IDs (comma-separated) whose sheets the tab may read/
-// write. Supports a real client workspace plus a sandbox for safe testing.
-function getWorkspaceIds() {
-  const v = process.env.JOBSHEET_WORKSPACE_ID;
-  if (!v) throw new Error('JOBSHEET_WORKSPACE_ID is not configured');
-  const ids = v.split(',').map((s) => s.trim()).filter(Boolean);
-  if (!ids.length) throw new Error('JOBSHEET_WORKSPACE_ID is empty');
-  return ids;
-}
+// GET /api/jobsheet/workspaces — list every workspace the token can see, for
+// the tab's workspace picker.
+app.http('jobsheetWorkspaces', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/workspaces',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const workspaces = await ss.fetchAllWorkspaces();
+      return { jsonBody: { workspaces } };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
 
-// Aggregates the sheet lists across every configured workspace. Used both to
-// build the picker and to validate that a requested sheet is one the tab is
-// allowed to touch.
-async function listAllowedSheets() {
-  const all = [];
-  for (const id of getWorkspaceIds()) {
-    const sheets = await ss.fetchWorkspaceSheets(id);
-    all.push(...sheets);
-  }
-  return all;
-}
-
-// GET /api/jobsheet/sheets — list the job sheets in the configured workspace.
+// GET /api/jobsheet/sheets?workspaceId=<id> — list the job sheets in one workspace.
 app.http('jobsheetSheets', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -50,7 +49,9 @@ app.http('jobsheetSheets', {
     try {
       const user = await requireUser(request);
       requireTester(user);
-      const sheets = await listAllowedSheets();
+      const workspaceId = new URL(request.url).searchParams.get('workspaceId');
+      if (!workspaceId) return { status: 400, jsonBody: { error: 'Missing workspaceId' } };
+      const sheets = await ss.fetchWorkspaceSheets(workspaceId);
       return { jsonBody: { sheets: sheets.map((s) => ({ id: s.id, name: s.name })) } };
     } catch (e) {
       return jobsheetError(e, context);
@@ -58,9 +59,7 @@ app.http('jobsheetSheets', {
   },
 });
 
-// GET /api/jobsheet/sheet?id=<sheetId> — one sheet's viewer payload. The id is
-// validated against the configured workspace's sheet list first, so a Testers
-// member can only ever read sheets inside that one workspace.
+// GET /api/jobsheet/sheet?id=<sheetId> — one sheet's viewer payload.
 app.http('jobsheetSheet', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -71,10 +70,6 @@ app.http('jobsheetSheet', {
       requireTester(user);
       const id = new URL(request.url).searchParams.get('id');
       if (!id) return { status: 400, jsonBody: { error: 'Missing sheet id' } };
-      const allowed = await listAllowedSheets();
-      if (!allowed.some((s) => String(s.id) === String(id))) {
-        return { status: 403, jsonBody: { error: 'Sheet not permitted' } };
-      }
       const view = await ss.fetchJobSheetView(id);
       return { jsonBody: view };
     } catch (e) {
@@ -84,8 +79,7 @@ app.http('jobsheetSheet', {
 });
 
 // POST /api/jobsheet/cell — writes one cell (Notes text / status checkbox) back
-// to a row. Testers-only, and limited to sheets inside the configured workspace
-// (same guard as reads). Body: { sheetId, rowId, columnId, value }.
+// to a row. Testers-only. Body: { sheetId, rowId, columnId, value }.
 app.http('jobsheetCell', {
   methods: ['POST'],
   authLevel: 'anonymous',
@@ -97,10 +91,6 @@ app.http('jobsheetCell', {
       const body = await request.json().catch(() => null);
       if (!body || !body.sheetId || !body.rowId || !body.columnId) {
         return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
-      }
-      const allowed = await listAllowedSheets();
-      if (!allowed.some((s) => String(s.id) === String(body.sheetId))) {
-        return { status: 403, jsonBody: { error: 'Sheet not permitted' } };
       }
       await ss.updateJobSheetCell(body.sheetId, body.rowId, body.columnId, body.value);
       return { jsonBody: { ok: true } };
