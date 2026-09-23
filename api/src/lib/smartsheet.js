@@ -756,6 +756,32 @@ async function fetchAllWorkspaces() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Searches sheet names/content across the whole Smartsheet account (the
+// account-wide Search API) and returns just the sheet matches, each tagged
+// with its containing workspace when the API gives us one -- powers the Job
+// Sheets tab's "search Smartsheet for a sheet" box, so a Tester can jump
+// straight to a sheet instead of walking the workspace/sheet pickers.
+async function searchSheets(query) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/search?query=${encodeURIComponent(query)}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error(`Smartsheet search error ${res.status}: ${t}`);
+  }
+  const data = await res.json();
+  const items = Array.isArray(data.results) ? data.results : [];
+  return items
+    .filter((r) => r.objectType === 'sheet')
+    .slice(0, 20)
+    .map((r) => ({
+      id: String(r.objectId),
+      name: r.text || String(r.objectId),
+      workspaceId: r.parentObjectType === 'workspace' && r.parentObjectId ? String(r.parentObjectId) : null,
+      workspaceName: r.parentObjectType === 'workspace' ? (r.parentObjectName || null) : null,
+    }));
+}
+
 // Lists the sheets directly in a workspace (id + name), newest-modified first.
 async function fetchWorkspaceSheets(workspaceId) {
   const res = await fetch(`${SMARTSHEET_API_BASE}/workspaces/${encodeURIComponent(workspaceId)}`, {
@@ -924,6 +950,7 @@ async function updateJobSheetCell(sheetId, rowId, columnId, value) {
 module.exports = {
   fetchSheet,
   fetchAllWorkspaces,
+  searchSheets,
   fetchWorkspaceSheets,
   fetchJobSheetView,
   updateJobSheetCell,

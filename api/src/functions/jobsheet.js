@@ -40,6 +40,27 @@ app.http('jobsheetWorkspaces', {
   },
 });
 
+// GET /api/jobsheet/search?q=<term> — account-wide sheet-name search, so a
+// Tester can jump straight to a sheet without walking the workspace/sheet
+// pickers. Returns [] for a missing/blank query rather than erroring.
+app.http('jobsheetSearch', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/search',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const q = (new URL(request.url).searchParams.get('q') || '').trim();
+      if (!q) return { jsonBody: { results: [] } };
+      const results = await ss.searchSheets(q);
+      return { jsonBody: { results } };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
 // GET /api/jobsheet/sheets?workspaceId=<id> — list the job sheets in one workspace.
 app.http('jobsheetSheets', {
   methods: ['GET'],

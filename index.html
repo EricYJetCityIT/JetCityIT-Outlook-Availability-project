@@ -523,6 +523,14 @@ body.is-tester #tab-jobsheet{display:inline-block}
 .js-select,.js-search{padding:10px 14px;border-radius:var(--radius-sm);border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit}
 .js-select{font-weight:600;cursor:pointer}
 .js-search{flex:1;min-width:180px}
+.js-search-wrap{position:relative;flex:1;min-width:220px}
+.js-search-wrap .js-search{width:100%;box-sizing:border-box}
+.js-search-results{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:var(--radius-sm);max-height:280px;overflow-y:auto;z-index:30;box-shadow:0 8px 24px rgba(15,23,36,.14)}
+.js-search-row{display:block;width:100%;text-align:left;padding:9px 12px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;font-family:inherit;color:var(--text)}
+.js-search-row:last-child{border-bottom:none}
+.js-search-row:hover{background:var(--surface2)}
+.js-search-row-name{font-size:13.5px;font-weight:600}
+.js-search-row-sub{font-size:11.5px;color:var(--text3);margin-top:1px}
 .js-progress-wrap{margin-bottom:20px}
 .js-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .js-progress-count{font-size:13px;color:var(--text2);font-weight:600}
@@ -1378,6 +1386,9 @@ let jsData=null;      // loaded sheet {name,columns,progressKey,rows}
 let jsQuery='';
 let jsLoading=false;
 let jsError='';
+let jsSearchResults=[]; // [{id,name,workspaceId,workspaceName}] account-wide sheet search matches
+let jsSearchTimer=null;
+let jsSearchReqId=0;
 const JS_CAM='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3" stroke="currentColor" stroke-width="2"/><path d="M8.5 6l1-2h5l1 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 function jsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsIsUrl(v){return typeof v==='string' && (v.startsWith('/api/') || /^https?:/.test(v));}
@@ -1434,6 +1445,7 @@ function jsPaint(){
     const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
     mid=`<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
         `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
+        `<input class="js-search" style="width:100%;box-sizing:border-box;margin:12px 0" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`+
         '<div class="js-cards"></div>';
   }
   view.innerHTML=
@@ -1441,7 +1453,7 @@ function jsPaint(){
     `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
     (jsWorkspaces.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectWorkspace(this.value)">${wsOpts}</select>`+
        (jsSheets.length? `<select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`:'')+
-       (jsData&&!jsLoading&&!jsError? `<input class="js-search" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`:'')+
+       `<div class="js-search-wrap"><input class="js-search" type="search" placeholder="Search Smartsheet for a sheet…" oninput="jsSearchSheets(this.value)" onblur="jsBlurSearch()" onfocus="jsRenderSearchResults()"><div class="js-search-results" id="js-search-results"></div></div>`+
        '</div>' : '')+
     mid+
     '<div class="js-modal-backdrop" id="js-modal-backdrop" onclick="if(event.target===this)jsCloseDetail()"><div class="js-modal" id="js-modal"></div></div>';
@@ -1464,19 +1476,21 @@ async function jsLoadWorkspaces(){
 }
 
 // Switches to a different workspace: resets the sheet picker + loaded sheet,
-// then loads that workspace's sheets (auto-opens the first one, same pattern
-// as the sheet picker itself).
-function jsSelectWorkspace(id){
+// then loads that workspace's sheets. `preferredSheetId` (set when arriving
+// via a search-result pick) opens that sheet if it's in the list, instead of
+// always defaulting to the first one.
+function jsSelectWorkspace(id, preferredSheetId){
   jsWorkspaceId=id; jsSheets=[]; jsSheetId=null; jsData=null; jsQuery=''; jsError='';
-  jsLoadSheetsForWorkspace(id);
+  jsLoadSheetsForWorkspace(id, preferredSheetId);
 }
 
-async function jsLoadSheetsForWorkspace(id){
+async function jsLoadSheetsForWorkspace(id, preferredSheetId){
   jsLoading=true; jsError=''; jsPaint();
   try{
     const d=await jsApi('/jobsheet/sheets?workspaceId='+encodeURIComponent(id));
     jsSheets=d.sheets||[]; jsLoading=false;
-    if(jsSheets.length){ jsLoadSheet(jsSheets[0].id); } else { jsPaint(); }
+    const target=(preferredSheetId && jsSheets.some(s=>s.id===preferredSheetId))? preferredSheetId : (jsSheets[0]&&jsSheets[0].id);
+    if(target){ jsLoadSheet(target); } else { jsPaint(); }
   }catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheets'; jsPaint(); }
 }
 
@@ -1488,6 +1502,49 @@ async function jsLoadSheet(id){
 
 function jsSetQuery(v){jsQuery=v;jsRenderCards();}
 function jsSelectSheet(id){jsLoadSheet(id);}
+
+// Account-wide "search Smartsheet for a sheet" box (toolbar) — separate from
+// the item-search above, which only filters rows already loaded in the
+// current sheet. Debounced; a stale response (an older keystroke's request
+// resolving after a newer one) is dropped via jsSearchReqId.
+function jsSearchSheets(q){
+  clearTimeout(jsSearchTimer);
+  const term=q.trim();
+  if(term.length<2){ jsSearchResults=[]; jsRenderSearchResults(); return; }
+  jsSearchTimer=setTimeout(async()=>{
+    const myReq=++jsSearchReqId;
+    try{
+      const d=await jsApi('/jobsheet/search?q='+encodeURIComponent(term));
+      if(myReq!==jsSearchReqId) return;
+      jsSearchResults=d.results||[];
+    }catch(e){ if(myReq!==jsSearchReqId) return; jsSearchResults=[]; }
+    jsRenderSearchResults();
+  },300);
+}
+
+function jsRenderSearchResults(){
+  const el=document.getElementById('js-search-results'); if(!el)return;
+  if(!jsSearchResults.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.innerHTML=jsSearchResults.map((r,i)=>
+    `<button type="button" class="js-search-row" onmousedown="event.preventDefault()" onclick="jsPickSearchResult(${i})">`+
+    `<div class="js-search-row-name">${jsEsc(r.name)}</div>`+
+    (r.workspaceName? `<div class="js-search-row-sub">${jsEsc(r.workspaceName)}</div>` : '')+
+    `</button>`
+  ).join('');
+}
+
+// A short blur delay so a result's click (which onmousedown already guards
+// against losing focus for) still lands before the dropdown closes.
+function jsBlurSearch(){ setTimeout(function(){ jsSearchResults=[]; jsRenderSearchResults(); },150); }
+
+function jsPickSearchResult(i){
+  const r=jsSearchResults[i]; if(!r) return;
+  jsSearchResults=[]; jsRenderSearchResults();
+  const input=document.querySelector('#view-jobsheet .js-search-wrap .js-search'); if(input) input.value='';
+  if(r.workspaceId){ jsSelectWorkspace(r.workspaceId, r.id); }
+  else { jsWorkspaceId=null; jsSheets=[{id:r.id,name:r.name}]; jsLoadSheet(r.id); }
+}
 
 function jsOpenDetail(i){
   const s=jsData, r=s&&s.rows[i]; if(!r)return;
