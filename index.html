@@ -519,6 +519,11 @@ body.is-tester #tab-jobsheet{display:inline-block}
 #view-jobsheet h2{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.3px}
 .js-banner{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--text3);margin-bottom:18px}
 .js-banner b{color:var(--text2)}
+.js-outbox-bar{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:16px;font-size:13px;color:var(--text2)}
+.js-outbox-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.js-outbox-list{margin-top:8px;display:flex;flex-direction:column;gap:4px}
+.js-outbox-row{color:var(--text3)}
+.js-outbox-err{color:#d9534f}
 .js-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:16px}
 .js-select,.js-search{padding:10px 14px;border-radius:var(--radius-sm);border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit}
 .js-select{font-weight:600;cursor:pointer}
@@ -1458,6 +1463,7 @@ function jsPaint(){
   view.innerHTML=
     '<h2>Job Sheets</h2>'+
     `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
+    '<div class="js-outbox-bar" id="js-outbox-bar" style="display:none"></div>'+
     (jsWorkspaces.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectWorkspace(this.value)">${wsOpts}</select>`+
        (jsSheets.length? `<select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`:'')+
        `<div class="js-search-wrap"><input class="js-search" type="search" placeholder="Search Smartsheet for a sheet…" oninput="jsSearchSheets(this.value)" onblur="jsBlurSearch()" onfocus="jsRenderSearchResults()"><div class="js-search-results" id="js-search-results"></div></div>`+
@@ -1469,6 +1475,7 @@ function jsPaint(){
 
 // Entry point (called by switchTab). Loads the workspace list on first open.
 function renderJobsheet(){
+  jsRefreshOutbox(); // non-blocking; #js-outbox-bar exists by the time it resolves (jsPaint runs below/via jsLoadWorkspaces)
   if(!jsWorkspaces.length && !jsWsLoading && !jsWsError){ jsLoadWorkspaces(); return; }
   jsPaint();
 }
@@ -1593,26 +1600,168 @@ function jsUpdateProgress(){
   const f=document.querySelector('#view-jobsheet .js-progress-fill'); if(f)f.style.width=pct+'%';
 }
 
+// ── Offline outbox ───────────────────────────────────────────────────────────
+// Crew confirmed offline gaps are short (30-60 min max, not all-day) and are a
+// mix of iPhone + Android, and Safari has no API to tell wifi from cellular --
+// so instead of service-worker background sync (Chromium-only anyway) or
+// trying to auto-detect wifi, a write that fails at the NETWORK level (not a
+// real server rejection) is queued in IndexedDB (survives reload/app close)
+// and only leaves the queue when the tech taps "Sync now" themselves, once
+// they know they're on wifi. Same behavior on every platform.
+const JS_OUTBOX_DB='jcit-jobsheet-outbox', JS_OUTBOX_STORE='queue';
+let jsOutboxDbPromise=null;
+function jsOutboxDb(){
+  if(jsOutboxDbPromise) return jsOutboxDbPromise;
+  jsOutboxDbPromise=new Promise((resolve,reject)=>{
+    const req=indexedDB.open(JS_OUTBOX_DB,1);
+    req.onupgradeneeded=()=>{ req.result.createObjectStore(JS_OUTBOX_STORE,{keyPath:'id',autoIncrement:true}); };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+  return jsOutboxDbPromise;
+}
+async function jsOutboxAll(){
+  const db=await jsOutboxDb();
+  return new Promise((resolve,reject)=>{
+    const req=db.transaction(JS_OUTBOX_STORE,'readonly').objectStore(JS_OUTBOX_STORE).getAll();
+    req.onsuccess=()=>resolve(req.result||[]); req.onerror=()=>reject(req.error);
+  });
+}
+async function jsOutboxAdd(item){
+  const db=await jsOutboxDb();
+  return new Promise((resolve,reject)=>{
+    const req=db.transaction(JS_OUTBOX_STORE,'readwrite').objectStore(JS_OUTBOX_STORE)
+      .add(Object.assign({createdAt:Date.now(),status:'pending',error:''},item));
+    req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error);
+  });
+}
+async function jsOutboxPut(item){
+  const db=await jsOutboxDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(JS_OUTBOX_STORE,'readwrite'); tx.objectStore(JS_OUTBOX_STORE).put(item);
+    tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+  });
+}
+async function jsOutboxDelete(id){
+  const db=await jsOutboxDb();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(JS_OUTBOX_STORE,'readwrite'); tx.objectStore(JS_OUTBOX_STORE).delete(id);
+    tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+  });
+}
+// A later edit to the same cell (or a re-shot photo) replaces any queued
+// attempt still waiting for that same cell, so the outbox never carries two
+// competing writes for one field.
+async function jsOutboxSupersede(sheetId,rowId,columnId,kind){
+  const items=await jsOutboxAll();
+  for(const it of items){
+    if(it.sheetId===sheetId&&it.rowId===rowId&&it.columnId===columnId&&it.kind===kind) await jsOutboxDelete(it.id);
+  }
+}
+
+let jsOutboxItems=[];
+let jsSyncing=false;
+let jsOutboxMsg='';
+async function jsRefreshOutbox(){
+  try{ jsOutboxItems=await jsOutboxAll(); }catch(e){ jsOutboxItems=[]; }
+  jsRenderOutboxBar();
+}
+function jsRenderOutboxBar(){
+  const el=document.getElementById('js-outbox-bar'); if(!el) return;
+  if(!jsOutboxItems.length && !jsOutboxMsg){ el.innerHTML=''; el.style.display='none'; return; }
+  el.style.display='block';
+  const failed=jsOutboxItems.filter(x=>x.status==='failed');
+  const label=jsOutboxItems.length? (jsOutboxItems.length+' change'+(jsOutboxItems.length===1?'':'s')+' saved offline'+(failed.length?' · '+failed.length+' failed':'')) : 'All changes synced';
+  el.innerHTML='<div class="js-outbox-head"><span>🔄 '+jsEsc(label)+'</span>'
+    +(jsOutboxItems.length? '<button type="button" class="btn btn-sm" onclick="jsSyncOutbox()"'+(jsSyncing?' disabled':'')+'>'+(jsSyncing?'Syncing…':'🔄 Sync now')+'</button>' : '')
+    +'</div>'
+    +(jsOutboxMsg? '<div class="js-outbox-row">'+jsEsc(jsOutboxMsg)+'</div>' : '')
+    +(failed.length? '<div class="js-outbox-list">'+failed.map(x=>'<div class="js-outbox-row">'+jsEsc((x.kind==='photo'?'📷 ':'✎ ')+(x.rowLabel||'')+' · '+(x.colLabel||''))+' — <span class="js-outbox-err">'+jsEsc(x.error||'failed')+'</span></div>').join('')+'</div>' : '');
+}
+// Retries every queued item in order; stops (leaving the rest queued) the
+// moment one fails for a network reason, since that means we're still
+// offline -- no point burning through the rest. A real per-item rejection
+// (bad data, permission) just marks that item failed and continues.
+async function jsSyncOutbox(){
+  if(jsSyncing) return;
+  jsSyncing=true; jsOutboxMsg=''; jsRenderOutboxBar();
+  let stoppedOffline=false;
+  const items=await jsOutboxAll();
+  for(const item of items){
+    try{
+      if(item.kind==='cell') await jsSaveCellLive(item.sheetId,item.rowId,item.columnId,item.value);
+      else await jsUploadPhotoLive(item.sheetId,item.rowId,item.columnId,item.blob);
+      await jsOutboxDelete(item.id);
+    }catch(e){
+      if(e.offline){ stoppedOffline=true; break; }
+      item.status='failed'; item.error=(e.message||'Failed').slice(0,140);
+      try{ await jsOutboxPut(item); }catch(_){}
+    }
+  }
+  if(stoppedOffline) jsOutboxMsg='Still offline — will keep the rest queued.';
+  jsSyncing=false;
+  await jsRefreshOutbox();
+  // Refresh the open sheet so newly-synced edits/photos show their real
+  // server state instead of the optimistic local one.
+  if(jsSheetId){ try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId)); jsRenderCards(); jsUpdateProgress(); }catch(e){} }
+}
+
+// The actual network calls, shared by the interactive save/upload paths and
+// the outbox flush above. `navigator.onLine===false` is a fast-path (skip a
+// doomed fetch); a genuine fetch failure (offline, DNS, etc.) is the other
+// offline signal. Either way the thrown error carries `.offline=true` so
+// callers can tell "queue this" from "show this error".
+async function jsSaveCellLive(sheetId, rowId, columnId, value){
+  if(navigator.onLine===false){ const e=new Error('Offline'); e.offline=true; throw e; }
+  let res;
+  try{
+    const token=await getApiToken();
+    res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sheetId,rowId,columnId,value})});
+  }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
+  if(!res.ok){ let m='Save failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+}
+async function jsUploadPhotoLive(sheetId, rowId, columnId, file){
+  if(navigator.onLine===false){ const e=new Error('Offline'); e.offline=true; throw e; }
+  let res;
+  try{
+    const token=await getApiToken();
+    const fd=new FormData();
+    fd.append('sheetId',sheetId); fd.append('rowId',rowId); fd.append('columnId',columnId);
+    fd.append('file',file,file.name||'photo.jpg');
+    res=await fetch('/api/jobsheet/photo-upload',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
+  }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
+  if(!res.ok){ let m='Upload failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+}
+
 // Writes one edited cell (text on blur, checkbox on change) back to Smartsheet.
-// Updates local state + the card/progress on success; on failure shows the
-// error and reverts a checkbox to its saved state.
+// Updates local state + the card/progress on success; a network failure queues
+// it to the offline outbox instead (still applied locally so the UI reflects
+// the edit); a real server rejection shows the error and reverts a checkbox.
 async function jsSaveField(i, colKey, value){
   const s=jsData, r=s&&s.rows[i]; if(!r)return;
   if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
   const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
   setSt('Saving…','');
+  const columnId=colKey.slice(1);
   try{
-    const token=await getApiToken();
-    const res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sheetId:jsSheetId,rowId:r._rowId,columnId:colKey.slice(1),value:value})});
-    if(!res.ok){ let m='Save failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+    await jsSaveCellLive(jsSheetId, r._rowId, columnId, value);
     r[colKey]=value;
     setSt('Saved','ok'); setTimeout(()=>{ if(st&&st.textContent==='Saved') setSt('',''); },2000);
     jsRenderCards(); jsUpdateProgress();
   }catch(e){
-    setSt(e.message||'Save failed','err');
-    const inp=document.querySelector('#js-modal [data-key="'+colKey+'"]');
-    if(inp && inp.type==='checkbox') inp.checked=!!r[colKey];
+    if(e.offline){
+      await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'cell');
+      const col=(s.columns||[]).find(c=>c.key===colKey);
+      await jsOutboxAdd({kind:'cell',sheetId:jsSheetId,rowId:r._rowId,columnId,value,rowLabel:String(r[jsIdent(s)]||''),colLabel:col?col.label:colKey});
+      r[colKey]=value;
+      setSt('Saved offline — will sync','ok');
+      jsRenderCards(); jsUpdateProgress(); jsRefreshOutbox();
+    } else {
+      setSt(e.message||'Save failed','err');
+      const inp=document.querySelector('#js-modal [data-key="'+colKey+'"]');
+      if(inp && inp.type==='checkbox') inp.checked=!!r[colKey];
+    }
   }
 }
 
@@ -1621,25 +1770,30 @@ async function jsSaveField(i, colKey, value){
 // used elsewhere in this app (see addCellImage in smartsheet.js). Smartsheet's
 // response only gives image metadata (id/width/height), not a ready-to-display
 // url, so on success the whole sheet is re-fetched (same as a fresh open) and
-// the same row's detail is re-opened to show the new photo immediately.
+// the same row's detail is re-opened to show the new photo immediately. A
+// network failure queues the photo (its File object) to the offline outbox.
 async function jsUploadPhoto(i, colKey, inputEl){
   const file=inputEl.files&&inputEl.files[0]; if(!file) return;
   const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
   const s=jsData, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
+  const columnId=colKey.slice(1);
   setSt('Uploading…','');
   try{
-    const token=await getApiToken();
-    const fd=new FormData();
-    fd.append('sheetId',jsSheetId); fd.append('rowId',r._rowId); fd.append('columnId',colKey);
-    fd.append('file',file,file.name||'photo.jpg');
-    const res=await fetch('/api/jobsheet/photo-upload',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
-    if(!res.ok){ let m='Upload failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+    await jsUploadPhotoLive(jsSheetId, r._rowId, columnId, file);
     jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId));
     jsRenderCards(); jsUpdateProgress();
     if(jsData.rows[i]) jsOpenDetail(i); // re-render the modal with the new photo
   }catch(e){
-    setSt(e.message||'Upload failed','err');
+    if(e.offline){
+      await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'photo');
+      const col=(s.columns||[]).find(c=>c.key===colKey);
+      await jsOutboxAdd({kind:'photo',sheetId:jsSheetId,rowId:r._rowId,columnId,blob:file,rowLabel:String(r[jsIdent(s)]||''),colLabel:col?col.label:colKey});
+      setSt('Saved offline — will sync','ok');
+      jsRefreshOutbox();
+    } else {
+      setSt(e.message||'Upload failed','err');
+    }
   }
   inputEl.value='';
 }
