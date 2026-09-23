@@ -1431,7 +1431,12 @@ function jsRenderCards(){
 // Paints the whole tab from current state (list + loaded sheet + loading/error).
 function jsPaint(){
   const view=document.getElementById('view-jobsheet'); if(!view)return;
-  const wsOpts=jsWorkspaces.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsWorkspaceId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
+  // A search-result pick whose workspace couldn't be resolved (Smartsheet's
+  // Search API doesn't always return a parent workspace) leaves jsWorkspaceId
+  // null — show an honest placeholder rather than letting the <select>
+  // default to displaying its first real option as if it were selected.
+  const wsOpts=(jsWorkspaceId?'':'<option value="" selected disabled>— search result —</option>')
+    +jsWorkspaces.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsWorkspaceId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   const opts=jsSheets.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   let mid='';
   if(jsWsError){ mid=`<div class="js-empty">${jsEsc(jsWsError)}</div>`; }
