@@ -162,6 +162,15 @@ function requireTester(user) {
   }
 }
 
+// Gate for endpoints usable by either group -- e.g. the company directory,
+// which both report-forwarding (editors) and plan-forwarding (planners) need
+// for their recipient picker. Not every editor is a planner or vice versa.
+function requireEditorOrPlanner(user) {
+  if (!user || (!user.isEditor && !user.isPlanner)) {
+    throw new AuthError(403, 'You do not have permission to view this.');
+  }
+}
+
 function authErrorResponse(e, context) {
   if (e instanceof AuthError) {
     if (e.status === 429) {
@@ -182,4 +191,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, AuthError, authErrorResponse };

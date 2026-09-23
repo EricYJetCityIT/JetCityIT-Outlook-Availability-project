@@ -1,13 +1,13 @@
 const { app } = require('@azure/functions');
-const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireEditorOrPlanner, authErrorResponse } = require('../lib/auth');
 const { listUsers } = require('../lib/graph');
 
-// Company directory (name + email) for the Forward-report recipient picker, so
-// editors can send a report to anyone at JCIT, not just the client contacts.
-// Editors only. Cached in-memory for an hour (per Function instance) to avoid
-// hammering Graph on every Forward. Uses the app's already-granted
-// User.Read.All (same permission the availability reminder's directory
-// fallback relies on).
+// Company directory (name + email) for the Forward-report and Forward-plan
+// recipient pickers, so editors/planners can send to anyone at JCIT, not just
+// client contacts. Editors or Planners only. Cached in-memory for an hour (per
+// Function instance) to avoid hammering Graph on every Forward. Uses the
+// app's already-granted User.Read.All (same permission the availability
+// reminder's directory fallback relies on).
 let cache = null;
 let cacheAt = 0;
 const TTL_MS = 60 * 60 * 1000;
@@ -19,7 +19,7 @@ app.http('directory', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireEditor(user);
+      requireEditorOrPlanner(user);
       if (cache && Date.now() - cacheAt < TTL_MS) return { jsonBody: cache };
       const users = await listUsers();
       const seen = {};

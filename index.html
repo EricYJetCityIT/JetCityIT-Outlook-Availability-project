@@ -601,6 +601,16 @@ body.is-tester #tab-jobsheet{display:inline-block}
 #pp-form textarea{resize:vertical;line-height:1.5}
 #pp-form label.dp-fld{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px;margin-top:14px}
 
+/* Printing a project plan: hide everything except the plan detail (either the
+   full Planning-tab view, #pp-root, or the job-popup quick-look modal's body,
+   #jp-print-area) and its own action buttons (.pp-noprint). */
+@media print{
+  body *{visibility:hidden}
+  #pp-root,#pp-root *,#jp-print-area,#jp-print-area *{visibility:visible}
+  #pp-root,#jp-print-area{position:absolute;left:0;top:0;width:100%}
+  .pp-noprint{display:none !important}
+}
+
 /* ── Dispatch modals ── */
 .dp-overlay{position:fixed;inset:0;background:rgba(15,23,36,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:9000;overflow-y:auto}
 .dp-modal{background:var(--surface);border-radius:14px;width:100%;max-width:520px;box-shadow:0 8px 40px rgba(15,23,36,.18);font-family:inherit}
@@ -3474,10 +3484,11 @@ function ppDetailBodyHtml(p){
 function ppRenderDetail(p,canEdit){
   var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
   var sub=[]; if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
-  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
+  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm pp-noprint" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
   html+=ppDetailBodyHtml(p);
-  html+='<div class="pp-sec" style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--border);padding-top:14px">';
-  if(canEdit) html+='<button class="btn btn-sm" onclick="openPlanEdit(ppCurrent)">✏️ Edit plan</button><button class="btn btn-sm" onclick="ppDelete()">🗑 Delete</button>';
+  html+='<div class="pp-sec pp-noprint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:14px">';
+  html+='<button class="btn btn-sm" onclick="window.print()">🖨 Print</button>';
+  if(canEdit) html+='<button class="btn btn-sm" onclick="openPlanEdit(ppCurrent)">✏️ Edit plan</button><button class="btn btn-sm" onclick="forwardPlan(ppCurrent)">✉ Forward</button><button class="btn btn-sm" onclick="ppDelete()">🗑 Delete</button>';
   html+='<span style="flex:1"></span><span style="font-size:12px;color:var(--text3)">'+(p.updatedAt?'Updated '+ppWhen(p.updatedAt):'')+'</span></div>';
   root.innerHTML=html;
 }
@@ -3538,6 +3549,63 @@ async function ppDelete(){
   if(!confirm('Delete “'+(ppCurrent.project||'this plan')+'”? This can’t be undone.')) return;
   try{ await ppFetch('/'+encodeURIComponent(ppCurrent.id),{method:'DELETE'}); renderPlanning(); }
   catch(e){ console.error('delete plan failed',e); alert('Couldn’t delete: '+String(e.message||e).slice(0,140)); }
+}
+
+// Company directory (JCIT staff) for the Forward-plan recipient picker,
+// fetched once and cached. Same endpoint the report-forward composer uses
+// (now Editor-OR-Planner gated server-side); best-effort — a failed fetch
+// just leaves the picker as free-text email entry.
+let __ppDirCache=null;
+async function ppFetchDirectory(){
+  if(__ppDirCache) return __ppDirCache;
+  try{
+    var token=await getApiToken();
+    var res=await fetch('/api/directory',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    __ppDirCache=res.ok?((await res.json()).users||[]):[];
+  }catch(e){ __ppDirCache=[]; }
+  return __ppDirCache;
+}
+// Sends the plan as a formatted HTML email via the backend (app-only Graph
+// sendMail, from the signed-in planner's own mailbox) — mirrors sendReportEmail.
+async function sendPlanEmail(planId,to){
+  var token=await getApiToken();
+  var res=await fetch('/api/send-plan',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({planId:planId,to:to})});
+  if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){} throw new Error(m); }
+  return res.json();
+}
+// Forward-plan composer — same searchable-recipient pattern as forwardReport,
+// minus client contacts (plan managers/leads only carry phone, not email).
+async function forwardPlan(p){
+  if(!p||!p.id){ return; }
+  var company=await ppFetchDirectory();
+  var dl='<datalist id="pp-fw-dir">'+company.map(function(c){ return '<option value="'+esc(c.email)+'">'+esc((c.name||c.email)+' — '+c.email)+'</option>'; }).join('')+'</datalist>';
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:92vw"><div class="dp-modal-hd"><span class="dp-modal-title">Forward plan</span><button class="dp-close" data-pf="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><label class="dp-fld">Send to (email)</label><input id="pp-fw-email" type="email" list="pp-fw-dir" autocomplete="off" placeholder="Search a JCIT name, or type any email…"/>'+dl
+    +'<div id="pp-fw-msg" style="font-size:12px;color:var(--text3);margin-top:8px">Sends a formatted copy of “'+esc(p.project||'this plan')+'” from your mailbox.</div></div>'
+    +'<div class="dp-modal-ft"><span></span><button class="btn btn-primary btn-sm" data-pf="send">✉ Send plan</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  var emailInput=ov.querySelector('#pp-fw-email'), msgEl=ov.querySelector('#pp-fw-msg'), btn=ov.querySelector('[data-pf="send"]');
+  ov.addEventListener('click',function(ev){
+    var c=ev.target.closest('[data-pf]'); if(!c){ if(ev.target===ov) cleanup(); return; }
+    var a=c.getAttribute('data-pf');
+    if(a==='close'){ cleanup(); return; }
+    if(a==='send'){
+      var to=(emailInput.value||'').trim();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)){ msgEl.style.color='var(--red)'; msgEl.textContent='Please enter a valid email address.'; return; }
+      btn.disabled=true; btn.textContent='Sending…'; msgEl.style.color='var(--text3)'; msgEl.textContent='Sending to '+to+'…';
+      sendPlanEmail(p.id,to).then(function(){
+        msgEl.style.color='var(--green)'; msgEl.textContent='✓ Sent to '+to; btn.textContent='Sent'; setTimeout(cleanup,1400);
+      }).catch(function(err){
+        console.error('send plan failed',err); btn.disabled=false; btn.textContent='✉ Send plan';
+        msgEl.style.color='var(--red)'; msgEl.textContent='Could not send — '+String(err.message||err).slice(0,120);
+      });
+    }
+  });
+  setTimeout(function(){ if(emailInput) emailInput.focus(); },30);
 }
 
 function ppOnClick(ev){
@@ -3645,7 +3713,7 @@ async function openJobPlanModal(job){
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:640px;width:94vw">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title">📋 Project plan</span><button class="dp-close" data-jp="close">✕</button></div>'
-    +'<div class="dp-modal-bd" data-jp-body style="min-height:80px">Loading…</div>'
+    +'<div class="dp-modal-bd" data-jp-body id="jp-print-area" style="min-height:80px">Loading…</div>'
     +'<div class="dp-modal-ft" data-jp-ft><span></span><button class="btn btn-sm" data-jp="close">Close</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
@@ -3656,6 +3724,7 @@ async function openJobPlanModal(job){
 
   ov.addEventListener('click',function(ev){
     if(ev.target===ov||ev.target.closest('[data-jp="close"]')){ cleanup(); return; }
+    if(ev.target.closest('[data-jp="print"]')){ window.print(); return; }
     if(ev.target.closest('[data-jp="open"]')){ cleanup(); enterPlanningTab(); openPlan(foundPlan.id); return; }
     if(ev.target.closest('[data-jp="create"]')){
       cleanup(); enterPlanningTab();
@@ -3679,7 +3748,7 @@ async function openJobPlanModal(job){
       body.innerHTML='<h2 style="margin:0 0 4px;font-size:18px">'+(esc(p.project)||'Untitled plan')+'</h2>'
         +(p.projectId||p.planDate?'<p style="margin:0 0 12px;font-size:13px;color:var(--text3)">'+[p.projectId,p.planDate].filter(Boolean).map(esc).join(' · ')+'</p>':'')
         +ppDetailBodyHtml(p);
-      ft.innerHTML=(currentUserIsPlanner?'<button class="btn btn-sm" data-jp="open">Open full plan →</button>':'<span></span>')+'<button class="btn btn-sm" data-jp="close">Close</button>';
+      ft.innerHTML=(currentUserIsPlanner?'<button class="btn btn-sm" data-jp="open">Open full plan →</button>':'<span></span>')+'<button class="btn btn-sm" data-jp="print">🖨 Print</button><button class="btn btn-sm" data-jp="close">Close</button>';
     } else {
       body.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>No project plan has been created for this job yet.</p></div>';
       ft.innerHTML=(currentUserIsPlanner?'<button class="btn btn-primary btn-sm" data-jp="create">+ Create project plan</button>':'<span></span>')+'<button class="btn btn-sm" data-jp="close">Close</button>';
