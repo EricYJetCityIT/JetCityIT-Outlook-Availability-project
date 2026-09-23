@@ -1,7 +1,7 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
-const { logJobSheetActivity } = require('../lib/jobsheetActivity');
+const { logJobSheetActivity, listJobSheetActivity } = require('../lib/jobsheetActivity');
 
 // Auth failures (401/403/429) go through the shared handler; any other failure
 // (e.g. a Smartsheet API error) returns its real message here. This tab is
@@ -96,6 +96,27 @@ app.http('jobsheetSheet', {
       if (!id) return { status: 400, jsonBody: { error: 'Missing sheet id' } };
       const view = await ss.fetchJobSheetView(id);
       return { jsonBody: view };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
+// GET /api/jobsheet/activity?sheetId=<id> — the attribution log for one sheet
+// (see jobsheetActivity.js), newest first. Powers the tab's Activity report
+// (per-person summary + timeline). Testers-only.
+app.http('jobsheetActivityList', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/activity',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const sheetId = new URL(request.url).searchParams.get('sheetId');
+      if (!sheetId) return { status: 400, jsonBody: { error: 'Missing sheetId' } };
+      const items = await listJobSheetActivity(sheetId);
+      return { jsonBody: { items } };
     } catch (e) {
       return jobsheetError(e, context);
     }

@@ -54,4 +54,19 @@ async function logJobSheetActivity(entry, context) {
   }
 }
 
-module.exports = { logJobSheetActivity };
+// Fetches one sheet's activity log, newest first, capped at 500 rows (this is
+// a reporting read, not the source of truth -- 500 is plenty for a per-job
+// report). Only the fields the report actually uses are selected, so a log
+// doc's internal bookkeeping (id/type/createdAt) never leaves this module.
+async function listJobSheetActivity(sheetId) {
+  const container = getContainer(CONTAINER_ID);
+  const { resources } = await container.items
+    .query({
+      query: 'SELECT TOP 500 c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC',
+      parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@sheetId', value: String(sheetId) }],
+    })
+    .fetchAll();
+  return resources;
+}
+
+module.exports = { logJobSheetActivity, listJobSheetActivity };

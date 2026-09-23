@@ -536,6 +536,20 @@ body.is-tester #tab-jobsheet{display:inline-block}
 .js-search-row:hover{background:var(--surface2)}
 .js-search-row-name{font-size:13.5px;font-weight:600}
 .js-search-row-sub{font-size:11.5px;color:var(--text3);margin-top:1px}
+.js-mode-toggle{display:flex;gap:6px;margin-bottom:16px}
+.js-mode-btn{padding:7px 14px;border-radius:999px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.js-mode-btn.active{background:var(--green);border-color:var(--green);color:#fff}
+.js-act-sec-h{font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:10px}
+.js-act-summary{display:flex;flex-wrap:wrap;gap:10px}
+.js-act-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;min-width:180px}
+.js-act-name{font-size:14px;font-weight:600;color:var(--text)}
+.js-act-stats{font-size:12.5px;color:var(--text2);margin-top:2px}
+.js-act-time{font-size:11.5px;color:var(--text3);margin-top:4px}
+.js-act-timeline{display:flex;flex-direction:column;border-top:1px solid var(--border)}
+.js-act-row{display:flex;gap:12px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;flex-wrap:wrap}
+.js-act-when{color:var(--text3);font-size:12px;flex:0 0 auto;min-width:110px}
+.js-act-who{font-weight:600;color:var(--text);flex:0 0 auto}
+.js-act-what{color:var(--text2)}
 .js-progress-wrap{margin-bottom:20px}
 .js-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .js-progress-count{font-size:13px;color:var(--text2);font-weight:600}
@@ -1396,6 +1410,10 @@ let jsError='';
 let jsSearchResults=[]; // [{id,name,workspaceId,workspaceName}] account-wide sheet search matches
 let jsSearchTimer=null;
 let jsSearchReqId=0;
+let jsMode='items';   // 'items' (cards/detail) | 'activity' (who-did-what report for the open sheet)
+let jsActivity=null;  // loaded activity log for jsSheetId, or null if not fetched yet
+let jsActivityLoading=false;
+let jsActivityError='';
 const JS_CAM='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3" stroke="currentColor" stroke-width="2"/><path d="M8.5 6l1-2h5l1 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 function jsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsIsUrl(v){return typeof v==='string' && (v.startsWith('/api/') || /^https?:/.test(v));}
@@ -1453,6 +1471,9 @@ function jsPaint(){
   else if(jsLoading){ mid='<div class="js-empty">Loading…</div>'; }
   else if(!jsSheets.length){ mid='<div class="js-empty">No sheets in this workspace.</div>'; }
   else if(!jsData){ mid='<div class="js-empty">Loading…</div>'; }
+  else if(jsMode==='activity'){
+    mid=jsActivityHtml();
+  }
   else {
     const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
     mid=`<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
@@ -1460,6 +1481,10 @@ function jsPaint(){
         `<input class="js-search" style="width:100%;box-sizing:border-box;margin:12px 0" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`+
         '<div class="js-cards"></div>';
   }
+  const modeToggle=jsData? `<div class="js-mode-toggle">`+
+      `<button type="button" class="js-mode-btn${jsMode==='items'?' active':''}" onclick="jsSetMode('items')">Items</button>`+
+      `<button type="button" class="js-mode-btn${jsMode==='activity'?' active':''}" onclick="jsSetMode('activity')">📊 Activity</button>`+
+      `</div>` : '';
   view.innerHTML=
     '<h2>Job Sheets</h2>'+
     `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
@@ -1468,9 +1493,10 @@ function jsPaint(){
        (jsSheets.length? `<select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`:'')+
        `<div class="js-search-wrap"><input class="js-search" type="search" placeholder="Search Smartsheet for a sheet…" oninput="jsSearchSheets(this.value)" onblur="jsBlurSearch()" onfocus="jsRenderSearchResults()"><div class="js-search-results" id="js-search-results"></div></div>`+
        '</div>' : '')+
+    modeToggle+
     mid+
     '<div class="js-modal-backdrop" id="js-modal-backdrop" onclick="if(event.target===this)jsCloseDetail()"><div class="js-modal" id="js-modal"></div></div>';
-  if(jsData&&!jsLoading&&!jsError) jsRenderCards();
+  if(jsMode==='items'&&jsData&&!jsLoading&&!jsError) jsRenderCards();
 }
 
 // Entry point (called by switchTab). Loads the workspace list on first open.
@@ -1509,13 +1535,72 @@ async function jsLoadSheetsForWorkspace(id, preferredSheetId){
 }
 
 async function jsLoadSheet(id){
-  jsSheetId=id; jsLoading=true; jsError=''; jsData=null; jsQuery=''; jsPaint();
+  jsSheetId=id; jsLoading=true; jsError=''; jsData=null; jsQuery=''; jsMode='items'; jsActivity=null; jsActivityError=''; jsPaint();
   try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)); jsLoading=false; jsPaint(); }
   catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheet'; jsPaint(); }
 }
 
 function jsSetQuery(v){jsQuery=v;jsRenderCards();}
 function jsSelectSheet(id){jsLoadSheet(id);}
+
+// ── Activity report (who-did-what for the open sheet) ───────────────────────
+// Reads the attribution log written by jobsheetActivity.js on every save/
+// upload (see that file). Fetched lazily — only when the tech actually opens
+// the report — and cached per sheet (jsLoadSheet resets jsActivity to null on
+// every sheet switch, so re-opening the report re-fetches fresh).
+function jsSetMode(m){
+  if(jsMode===m) return;
+  jsMode=m;
+  if(m==='activity' && !jsActivity && !jsActivityLoading) jsLoadActivity();
+  else jsPaint();
+}
+async function jsLoadActivity(){
+  jsActivityLoading=true; jsActivityError=''; jsPaint();
+  try{ const d=await jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(jsSheetId)); jsActivity=d.items||[]; jsActivityLoading=false; jsPaint(); }
+  catch(e){ jsActivityLoading=false; jsActivityError=e.message||'Failed to load activity'; jsPaint(); }
+}
+function jsFmtWhen(iso){
+  try{ const d=new Date(iso); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
+  catch(e){ return ''; }
+}
+// Groups the flat log into one row per person: edit/photo counts, distinct
+// items touched, and the first/last capture time (a rough sense of the span
+// they were active on this sheet — not true duration, no open->save tracking
+// yet). Sorted busiest-first.
+function jsActivitySummary(items){
+  const byUser={};
+  items.forEach(it=>{
+    const key=it.user||it.userName||'unknown';
+    if(!byUser[key]) byUser[key]={userName:it.userName||it.user||'Unknown',cell:0,photo:0,items:new Set(),first:it.capturedAt,last:it.capturedAt};
+    const u=byUser[key];
+    if(it.action==='photo') u.photo++; else u.cell++;
+    if(it.rowLabel) u.items.add(it.rowLabel);
+    if(!u.first||it.capturedAt<u.first) u.first=it.capturedAt;
+    if(!u.last||it.capturedAt>u.last) u.last=it.capturedAt;
+  });
+  return Object.values(byUser).map(u=>({userName:u.userName,cell:u.cell,photo:u.photo,itemCount:u.items.size,first:u.first,last:u.last}))
+    .sort((a,b)=>(b.cell+b.photo)-(a.cell+a.photo));
+}
+function jsActivityHtml(){
+  if(jsActivityError) return `<div class="js-empty">${jsEsc(jsActivityError)}</div>`;
+  if(jsActivityLoading||!jsActivity) return '<div class="js-empty">Loading…</div>';
+  const items=jsActivity;
+  if(!items.length) return '<div class="js-empty">No activity logged yet for this sheet.</div>';
+  const summary=jsActivitySummary(items);
+  const summaryHtml=summary.map(u=>
+    `<div class="js-act-card"><div class="js-act-name">${jsEsc(u.userName)}</div>`+
+    `<div class="js-act-stats">${u.cell} edit${u.cell===1?'':'s'} · ${u.photo} photo${u.photo===1?'':'s'} · ${u.itemCount} item${u.itemCount===1?'':'s'}</div>`+
+    `<div class="js-act-time">${jsEsc(jsFmtWhen(u.first))} – ${jsEsc(jsFmtWhen(u.last))}</div></div>`
+  ).join('');
+  const timelineHtml=items.map(it=>
+    `<div class="js-act-row"><span class="js-act-when">${jsEsc(jsFmtWhen(it.capturedAt))}</span>`+
+    `<span class="js-act-who">${jsEsc(it.userName||it.user||'')}</span>`+
+    `<span class="js-act-what">${it.action==='photo'?'📷':'✎'} ${jsEsc(it.rowLabel||'')}${it.columnLabel?' · '+jsEsc(it.columnLabel):''}</span></div>`
+  ).join('');
+  return '<div class="js-act-sec-h">By person</div><div class="js-act-summary">'+summaryHtml+'</div>'
+    +'<div class="js-act-sec-h" style="margin-top:18px">Timeline<span style="font-weight:400;color:var(--text3)"> · newest first, up to 500</span></div>'
+    +'<div class="js-act-timeline">'+timelineHtml+'</div>';
+}
 
 // Account-wide "search Smartsheet for a sheet" box (toolbar) — separate from
 // the item-search above, which only filters rows already loaded in the
