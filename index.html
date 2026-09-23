@@ -1414,6 +1414,21 @@ let jsMode='items';   // 'items' (cards/detail) | 'activity' (who-did-what repor
 let jsActivity=null;  // loaded activity log for jsSheetId, or null if not fetched yet
 let jsActivityLoading=false;
 let jsActivityError='';
+// Labor-duration tracking: elapsed time from opening an item's detail to
+// saving it, capped at JS_DURATION_CAP_SEC (20 min) so a lunch/break/
+// interruption left mid-item doesn't get logged as 20+ minutes of continuous
+// work — see jsComputeDuration. Keyed by row id (survives the modal
+// re-rendering itself after a save/upload); cleared when the item is closed.
+// jsItemSessionId tags every save made during the same open with a shared id,
+// so the report can take the MAX duration per session instead of summing
+// every save — a row with 3 field edits during one open would otherwise
+// triple-count that time (each save's duration is "since open", not "since
+// the last save").
+let jsItemSessionStart={};
+let jsItemSessionId={};
+function jsRandId(){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
+let jsOpenRowId=null;
+const JS_DURATION_CAP_SEC=20*60;
 const JS_CAM='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3" stroke="currentColor" stroke-width="2"/><path d="M8.5 6l1-2h5l1 2" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
 function jsEsc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsIsUrl(v){return typeof v==='string' && (v.startsWith('/api/') || /^https?:/.test(v));}
@@ -1563,12 +1578,23 @@ function jsFmtWhen(iso){
   try{ const d=new Date(iso); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
   catch(e){ return ''; }
 }
+function jsFmtDuration(sec){
+  if(!sec&&sec!==0) return '';
+  const m=Math.floor(sec/60), s=sec%60;
+  return m>0? (m+'m'+(s?(' '+s+'s'):'')) : (s+'s');
+}
 // Groups the flat log into one row per person: edit/photo counts, distinct
-// items touched, and the first/last capture time (a rough sense of the span
-// they were active on this sheet — not true duration, no open->save tracking
-// yet). Sorted busiest-first.
+// items touched, the first/last capture time (a rough sense of the span they
+// were active on this sheet), and tracked labor time. Labor time takes the
+// MAX durationSec per sessionId rather than summing every entry — several
+// saves during one item-open all measure "time since open", so summing them
+// would multiply-count that same span (see jsItemSessionId). Entries with no
+// sessionId/durationSec (interrupted, capped, or pre-dating this feature)
+// simply don't contribute to labor time, but still count toward edits/items.
+// Sorted busiest-first (by edit+photo count).
 function jsActivitySummary(items){
   const byUser={};
+  const sessionMax={}; // "<user>::<sessionId>" -> seconds, deduped across saves in one open
   items.forEach(it=>{
     const key=it.user||it.userName||'unknown';
     if(!byUser[key]) byUser[key]={userName:it.userName||it.user||'Unknown',cell:0,photo:0,items:new Set(),first:it.capturedAt,last:it.capturedAt};
@@ -1577,9 +1603,17 @@ function jsActivitySummary(items){
     if(it.rowLabel) u.items.add(it.rowLabel);
     if(!u.first||it.capturedAt<u.first) u.first=it.capturedAt;
     if(!u.last||it.capturedAt>u.last) u.last=it.capturedAt;
+    if(it.sessionId && it.durationSec!=null){
+      const sk=key+'::'+it.sessionId;
+      if(sessionMax[sk]==null || it.durationSec>sessionMax[sk]) sessionMax[sk]=it.durationSec;
+    }
   });
-  return Object.values(byUser).map(u=>({userName:u.userName,cell:u.cell,photo:u.photo,itemCount:u.items.size,first:u.first,last:u.last}))
-    .sort((a,b)=>(b.cell+b.photo)-(a.cell+a.photo));
+  const laborByUser={};
+  Object.keys(sessionMax).forEach(sk=>{ const user=sk.slice(0,sk.lastIndexOf('::')); laborByUser[user]=(laborByUser[user]||0)+sessionMax[sk]; });
+  return Object.keys(byUser).map(key=>{
+    const u=byUser[key];
+    return {userName:u.userName,cell:u.cell,photo:u.photo,itemCount:u.items.size,first:u.first,last:u.last,laborSec:laborByUser[key]||0};
+  }).sort((a,b)=>(b.cell+b.photo)-(a.cell+a.photo));
 }
 function jsActivityHtml(){
   if(jsActivityError) return `<div class="js-empty">${jsEsc(jsActivityError)}</div>`;
@@ -1590,12 +1624,13 @@ function jsActivityHtml(){
   const summaryHtml=summary.map(u=>
     `<div class="js-act-card"><div class="js-act-name">${jsEsc(u.userName)}</div>`+
     `<div class="js-act-stats">${u.cell} edit${u.cell===1?'':'s'} · ${u.photo} photo${u.photo===1?'':'s'} · ${u.itemCount} item${u.itemCount===1?'':'s'}</div>`+
+    (u.laborSec? `<div class="js-act-stats">⏱ ${jsEsc(jsFmtDuration(u.laborSec))} tracked</div>` : '')+
     `<div class="js-act-time">${jsEsc(jsFmtWhen(u.first))} – ${jsEsc(jsFmtWhen(u.last))}</div></div>`
   ).join('');
   const timelineHtml=items.map(it=>
     `<div class="js-act-row"><span class="js-act-when">${jsEsc(jsFmtWhen(it.capturedAt))}</span>`+
     `<span class="js-act-who">${jsEsc(it.userName||it.user||'')}</span>`+
-    `<span class="js-act-what">${it.action==='photo'?'📷':'✎'} ${jsEsc(it.rowLabel||'')}${it.columnLabel?' · '+jsEsc(it.columnLabel):''}</span></div>`
+    `<span class="js-act-what">${it.action==='photo'?'📷':'✎'} ${jsEsc(it.rowLabel||'')}${it.columnLabel?' · '+jsEsc(it.columnLabel):''}${it.durationSec!=null?' · '+jsEsc(jsFmtDuration(it.durationSec)):''}</span></div>`
   ).join('');
   return '<div class="js-act-sec-h">By person</div><div class="js-act-summary">'+summaryHtml+'</div>'
     +'<div class="js-act-sec-h" style="margin-top:18px">Timeline<span style="font-weight:400;color:var(--text3)"> · newest first, up to 500</span></div>'
@@ -1647,6 +1682,10 @@ function jsPickSearchResult(i){
 
 function jsOpenDetail(i){
   const s=jsData, r=s&&s.rows[i]; if(!r)return;
+  // Starts (or resumes, for the internal re-render after a save/upload
+  // succeeds) this item's labor-duration session — see jsComputeDuration.
+  jsOpenRowId=r._rowId;
+  if(!jsItemSessionStart[r._rowId]){ jsItemSessionStart[r._rowId]=Date.now(); jsItemSessionId[r._rowId]=jsRandId(); }
   const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
   let body='';
   if(checks.length){
@@ -1673,7 +1712,21 @@ function jsOpenDetail(i){
     `<div class="js-modal-body">${body||'<div class="js-empty">No details.</div>'}</div>`;
   document.getElementById('js-modal-backdrop').classList.add('open');
 }
-function jsCloseDetail(){const b=document.getElementById('js-modal-backdrop'); if(b)b.classList.remove('open');}
+function jsCloseDetail(){
+  const b=document.getElementById('js-modal-backdrop'); if(b)b.classList.remove('open');
+  if(jsOpenRowId){ delete jsItemSessionStart[jsOpenRowId]; delete jsItemSessionId[jsOpenRowId]; jsOpenRowId=null; }
+}
+// Elapsed time since this item's detail was opened, or null if there's no
+// open session for it or the gap is beyond JS_DURATION_CAP_SEC (almost
+// certainly a break/interruption, not continuous work on one item).
+function jsComputeDuration(rowId){
+  const start=jsItemSessionStart[rowId]; if(!start) return null;
+  const sec=Math.round((Date.now()-start)/1000);
+  return (sec>=0 && sec<=JS_DURATION_CAP_SEC)? sec : null;
+}
+// The current open session's id for this row, or null if there's none —
+// mirrors jsComputeDuration's guard so a save always sends both or neither.
+function jsCurrentSessionId(rowId){ return jsItemSessionStart[rowId]? (jsItemSessionId[rowId]||null) : null; }
 
 // Recomputes the progress bar/counter in place (after an edit changes a
 // done-defining field) without rebuilding the whole tab / closing the modal.
@@ -1774,7 +1827,7 @@ async function jsSyncOutbox(){
   const items=await jsOutboxAll();
   for(const item of items){
     try{
-      const meta={capturedAt:item.capturedAt,rowLabel:item.rowLabel,columnLabel:item.columnLabel,sheetName:item.sheetName};
+      const meta={capturedAt:item.capturedAt,rowLabel:item.rowLabel,columnLabel:item.columnLabel,sheetName:item.sheetName,durationSec:item.durationSec,sessionId:item.sessionId};
       if(item.kind==='cell') await jsSaveCellLive(item.sheetId,item.rowId,item.columnId,item.value,meta);
       else await jsUploadPhotoLive(item.sheetId,item.rowId,item.columnId,item.blob,meta);
       await jsOutboxDelete(item.id);
@@ -1837,7 +1890,7 @@ async function jsSaveField(i, colKey, value){
   setSt('Saving…','');
   const columnId=colKey.slice(1);
   const col=(s.columns||[]).find(c=>c.key===colKey);
-  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||''};
+  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||'',durationSec:jsComputeDuration(r._rowId),sessionId:jsCurrentSessionId(r._rowId)};
   try{
     await jsSaveCellLive(jsSheetId, r._rowId, columnId, value, meta);
     r[colKey]=value;
@@ -1872,7 +1925,7 @@ async function jsUploadPhoto(i, colKey, inputEl){
   const s=jsData, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
   const columnId=colKey.slice(1);
   const col=(s.columns||[]).find(c=>c.key===colKey);
-  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||''};
+  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||'',durationSec:jsComputeDuration(r._rowId),sessionId:jsCurrentSessionId(r._rowId)};
   setSt('Uploading…','');
   try{
     await jsUploadPhotoLive(jsSheetId, r._rowId, columnId, file, meta);

@@ -125,10 +125,14 @@ app.http('jobsheetActivityList', {
 
 // POST /api/jobsheet/cell — writes one cell (Notes text / status checkbox) back
 // to a row. Testers-only. Body: { sheetId, rowId, columnId, value, capturedAt,
-// rowLabel, columnLabel, sheetName }. The last four are attribution/job-costing
-// context (see jobsheetActivity.js) -- optional, but the client always sends
-// them; capturedAt is when the tech made the edit, which for an offline-queued
-// write can be well before this request actually reaches us.
+// rowLabel, columnLabel, sheetName, durationSec, sessionId }. The last six are
+// attribution/job-costing context (see jobsheetActivity.js) -- optional, but
+// the client always sends them; capturedAt is when the tech made the edit,
+// which for an offline-queued write can be well before this request actually
+// reaches us; durationSec is the item-open->save elapsed time, already capped
+// client-side and re-checked server-side; sessionId ties together every save
+// made during the same open, so the report can dedupe instead of summing each
+// save's duration (which would double-count -- see jsItemSessionId).
 app.http('jobsheetCell', {
   methods: ['POST'],
   authLevel: 'anonymous',
@@ -145,7 +149,8 @@ app.http('jobsheetCell', {
       await logJobSheetActivity({
         sheetId: body.sheetId, sheetName: body.sheetName, rowId: body.rowId, rowLabel: body.rowLabel,
         columnId: body.columnId, columnLabel: body.columnLabel, action: 'cell',
-        user: user.upn, userName: user.name, capturedAt: body.capturedAt,
+        user: user.upn, userName: user.name, capturedAt: body.capturedAt, durationSec: body.durationSec,
+        sessionId: body.sessionId,
       }, context);
       return { jsonBody: { ok: true } };
     } catch (e) {
@@ -194,7 +199,8 @@ app.http('jobsheetPhotoUpload', {
       await logJobSheetActivity({
         sheetId, sheetName: form.get('sheetName'), rowId, rowLabel: form.get('rowLabel'),
         columnId, columnLabel: form.get('columnLabel'), action: 'photo',
-        user: user.upn, userName: user.name, capturedAt: form.get('capturedAt'),
+        user: user.upn, userName: user.name, capturedAt: form.get('capturedAt'), durationSec: form.get('durationSec'),
+        sessionId: form.get('sessionId'),
       }, context);
       return { jsonBody: { ok: true } };
     } catch (e) {

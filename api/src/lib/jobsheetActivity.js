@@ -8,13 +8,25 @@ const { getContainer } = require('./cosmos');
 // write, in the same `dispatch` Cosmos container every other feature uses
 // (namespaced `jsact:<uuid>` so it never collides with jobs/plans/contacts).
 // Purpose per Dylan: internal job-costing data (labor time + pace per tech,
-// per item type), NOT client-facing -- so this is intentionally a write-only
-// log for now; no reporting UI reads it yet.
+// per item type), NOT client-facing. Read side is the tab's Activity report
+// (listJobSheetActivity below).
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'jsact:';
+// Labor-duration cap (seconds) -- an open-item->save gap beyond this is
+// almost certainly a break/lunch/interruption, not continuous work on one
+// item, so it's dropped (stored as null) rather than logged as real duration.
+// Mirrors the same cap enforced client-side (index.html JS_DURATION_CAP_SEC);
+// re-checked here too since a client-computed number is never trusted blindly.
+const DURATION_CAP_SEC = 20 * 60;
 
 function clean(s, max) {
   return String(s == null ? '' : s).slice(0, max);
+}
+
+function cleanDuration(v) {
+  if (v == null) return null;
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n >= 0 && n <= DURATION_CAP_SEC ? n : null;
 }
 
 // `capturedAt` is when the TECH performed the action, not when it reached the
@@ -43,6 +55,8 @@ async function logJobSheetActivity(entry, context) {
       action: entry.action === 'photo' ? 'photo' : 'cell',
       user: clean(entry.user, 200),
       userName: clean(entry.userName || entry.user, 200),
+      durationSec: cleanDuration(entry.durationSec),
+      sessionId: clean(entry.sessionId, 80),
       capturedAt,
       createdAt: new Date().toISOString(),
     };
@@ -62,7 +76,7 @@ async function listJobSheetActivity(sheetId) {
   const container = getContainer(CONTAINER_ID);
   const { resources } = await container.items
     .query({
-      query: 'SELECT TOP 500 c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC',
+      query: 'SELECT TOP 500 c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC',
       parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@sheetId', value: String(sheetId) }],
     })
     .fetchAll();
