@@ -1676,7 +1676,7 @@ function jsRenderOutboxBar(){
     +(jsOutboxItems.length? '<button type="button" class="btn btn-sm" onclick="jsSyncOutbox()"'+(jsSyncing?' disabled':'')+'>'+(jsSyncing?'Syncing…':'🔄 Sync now')+'</button>' : '')
     +'</div>'
     +(jsOutboxMsg? '<div class="js-outbox-row">'+jsEsc(jsOutboxMsg)+'</div>' : '')
-    +(failed.length? '<div class="js-outbox-list">'+failed.map(x=>'<div class="js-outbox-row">'+jsEsc((x.kind==='photo'?'📷 ':'✎ ')+(x.rowLabel||'')+' · '+(x.colLabel||''))+' — <span class="js-outbox-err">'+jsEsc(x.error||'failed')+'</span></div>').join('')+'</div>' : '');
+    +(failed.length? '<div class="js-outbox-list">'+failed.map(x=>'<div class="js-outbox-row">'+jsEsc((x.kind==='photo'?'📷 ':'✎ ')+(x.rowLabel||'')+' · '+(x.columnLabel||''))+' — <span class="js-outbox-err">'+jsEsc(x.error||'failed')+'</span></div>').join('')+'</div>' : '');
 }
 // Retries every queued item in order; stops (leaving the rest queued) the
 // moment one fails for a network reason, since that means we're still
@@ -1689,8 +1689,9 @@ async function jsSyncOutbox(){
   const items=await jsOutboxAll();
   for(const item of items){
     try{
-      if(item.kind==='cell') await jsSaveCellLive(item.sheetId,item.rowId,item.columnId,item.value);
-      else await jsUploadPhotoLive(item.sheetId,item.rowId,item.columnId,item.blob);
+      const meta={capturedAt:item.capturedAt,rowLabel:item.rowLabel,columnLabel:item.columnLabel,sheetName:item.sheetName};
+      if(item.kind==='cell') await jsSaveCellLive(item.sheetId,item.rowId,item.columnId,item.value,meta);
+      else await jsUploadPhotoLive(item.sheetId,item.rowId,item.columnId,item.blob,meta);
       await jsOutboxDelete(item.id);
     }catch(e){
       if(e.offline){ stoppedOffline=true; break; }
@@ -1710,17 +1711,22 @@ async function jsSyncOutbox(){
 // the outbox flush above. `navigator.onLine===false` is a fast-path (skip a
 // doomed fetch); a genuine fetch failure (offline, DNS, etc.) is the other
 // offline signal. Either way the thrown error carries `.offline=true` so
-// callers can tell "queue this" from "show this error".
-async function jsSaveCellLive(sheetId, rowId, columnId, value){
+// callers can tell "queue this" from "show this error". `meta` carries
+// attribution/job-costing context (capturedAt/rowLabel/columnLabel/sheetName)
+// that the backend logs alongside the write (see jobsheetActivity.js) --
+// capturedAt is when the TECH made the edit, not when this request lands, so
+// it's set once up front by the caller and carried through the outbox too.
+async function jsSaveCellLive(sheetId, rowId, columnId, value, meta){
   if(navigator.onLine===false){ const e=new Error('Offline'); e.offline=true; throw e; }
   let res;
   try{
     const token=await getApiToken();
-    res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sheetId,rowId,columnId,value})});
+    const body=Object.assign({sheetId,rowId,columnId,value},meta);
+    res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
   }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
   if(!res.ok){ let m='Save failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
 }
-async function jsUploadPhotoLive(sheetId, rowId, columnId, file){
+async function jsUploadPhotoLive(sheetId, rowId, columnId, file, meta){
   if(navigator.onLine===false){ const e=new Error('Offline'); e.offline=true; throw e; }
   let res;
   try{
@@ -1728,6 +1734,7 @@ async function jsUploadPhotoLive(sheetId, rowId, columnId, file){
     const fd=new FormData();
     fd.append('sheetId',sheetId); fd.append('rowId',rowId); fd.append('columnId',columnId);
     fd.append('file',file,file.name||'photo.jpg');
+    Object.keys(meta||{}).forEach(k=>{ if(meta[k]!=null) fd.append(k,meta[k]); });
     res=await fetch('/api/jobsheet/photo-upload',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
   }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
   if(!res.ok){ let m='Upload failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
@@ -1744,16 +1751,17 @@ async function jsSaveField(i, colKey, value){
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
   setSt('Saving…','');
   const columnId=colKey.slice(1);
+  const col=(s.columns||[]).find(c=>c.key===colKey);
+  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||''};
   try{
-    await jsSaveCellLive(jsSheetId, r._rowId, columnId, value);
+    await jsSaveCellLive(jsSheetId, r._rowId, columnId, value, meta);
     r[colKey]=value;
     setSt('Saved','ok'); setTimeout(()=>{ if(st&&st.textContent==='Saved') setSt('',''); },2000);
     jsRenderCards(); jsUpdateProgress();
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'cell');
-      const col=(s.columns||[]).find(c=>c.key===colKey);
-      await jsOutboxAdd({kind:'cell',sheetId:jsSheetId,rowId:r._rowId,columnId,value,rowLabel:String(r[jsIdent(s)]||''),colLabel:col?col.label:colKey});
+      await jsOutboxAdd(Object.assign({kind:'cell',sheetId:jsSheetId,rowId:r._rowId,columnId,value},meta));
       r[colKey]=value;
       setSt('Saved offline — will sync','ok');
       jsRenderCards(); jsUpdateProgress(); jsRefreshOutbox();
@@ -1778,17 +1786,18 @@ async function jsUploadPhoto(i, colKey, inputEl){
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
   const s=jsData, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
   const columnId=colKey.slice(1);
+  const col=(s.columns||[]).find(c=>c.key===colKey);
+  const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||''};
   setSt('Uploading…','');
   try{
-    await jsUploadPhotoLive(jsSheetId, r._rowId, columnId, file);
+    await jsUploadPhotoLive(jsSheetId, r._rowId, columnId, file, meta);
     jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId));
     jsRenderCards(); jsUpdateProgress();
     if(jsData.rows[i]) jsOpenDetail(i); // re-render the modal with the new photo
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'photo');
-      const col=(s.columns||[]).find(c=>c.key===colKey);
-      await jsOutboxAdd({kind:'photo',sheetId:jsSheetId,rowId:r._rowId,columnId,blob:file,rowLabel:String(r[jsIdent(s)]||''),colLabel:col?col.label:colKey});
+      await jsOutboxAdd(Object.assign({kind:'photo',sheetId:jsSheetId,rowId:r._rowId,columnId,blob:file},meta));
       setSt('Saved offline — will sync','ok');
       jsRefreshOutbox();
     } else {

@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
+const { logJobSheetActivity } = require('../lib/jobsheetActivity');
 
 // Auth failures (401/403/429) go through the shared handler; any other failure
 // (e.g. a Smartsheet API error) returns its real message here. This tab is
@@ -20,7 +21,9 @@ function jobsheetError(e, context) {
 // Smartsheet permissions -- there is no app-side workspace allow-list, so a
 // Tester can reach anything that token can see (same as every other
 // Smartsheet-backed feature in this app; Job Sheets is no longer special-cased
-// to one configured workspace).
+// to one configured workspace). Every successful write also logs who/when to
+// Cosmos (see jobsheetActivity.js) -- Smartsheet's own "modified by" is
+// useless here since every write comes from the one shared app token.
 
 // GET /api/jobsheet/workspaces — list every workspace the token can see, for
 // the tab's workspace picker.
@@ -100,7 +103,11 @@ app.http('jobsheetSheet', {
 });
 
 // POST /api/jobsheet/cell — writes one cell (Notes text / status checkbox) back
-// to a row. Testers-only. Body: { sheetId, rowId, columnId, value }.
+// to a row. Testers-only. Body: { sheetId, rowId, columnId, value, capturedAt,
+// rowLabel, columnLabel, sheetName }. The last four are attribution/job-costing
+// context (see jobsheetActivity.js) -- optional, but the client always sends
+// them; capturedAt is when the tech made the edit, which for an offline-queued
+// write can be well before this request actually reaches us.
 app.http('jobsheetCell', {
   methods: ['POST'],
   authLevel: 'anonymous',
@@ -114,6 +121,11 @@ app.http('jobsheetCell', {
         return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
       }
       await ss.updateJobSheetCell(body.sheetId, body.rowId, body.columnId, body.value);
+      await logJobSheetActivity({
+        sheetId: body.sheetId, sheetName: body.sheetName, rowId: body.rowId, rowLabel: body.rowLabel,
+        columnId: body.columnId, columnLabel: body.columnLabel, action: 'cell',
+        user: user.upn, userName: user.name, capturedAt: body.capturedAt,
+      }, context);
       return { jsonBody: { ok: true } };
     } catch (e) {
       return jobsheetError(e, context);
@@ -158,6 +170,11 @@ app.http('jobsheetPhotoUpload', {
       if (!bytes.length) return { status: 400, jsonBody: { error: 'Empty file' } };
       if (bytes.length > JS_PHOTO_MAX_BYTES) return { status: 400, jsonBody: { error: 'Photo is too large (max 15 MB)' } };
       await ss.addCellImage(sheetId, rowId, columnId, file.name || 'photo.jpg', file.type || 'image/jpeg', bytes);
+      await logJobSheetActivity({
+        sheetId, sheetName: form.get('sheetName'), rowId, rowLabel: form.get('rowLabel'),
+        columnId, columnLabel: form.get('columnLabel'), action: 'photo',
+        user: user.upn, userName: user.name, capturedAt: form.get('capturedAt'),
+      }, context);
       return { jsonBody: { ok: true } };
     } catch (e) {
       return jobsheetError(e, context);
