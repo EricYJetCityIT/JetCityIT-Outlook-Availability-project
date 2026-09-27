@@ -575,6 +575,9 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-row small{margin-left:auto;padding-left:8px;color:var(--text3);font-size:11.5px}
 .fm-pop input{width:100%;box-sizing:border-box;padding:7px 9px;font-size:14px;border-radius:6px;border:1.5px solid #D0D5DD;margin-bottom:8px;font-family:inherit}
 .fm-pop-btns{display:flex;gap:6px}
+.fm-card-row{display:flex;gap:8px;align-items:stretch}
+.fm-card-row .pp-card{flex:1;min-width:0}
+.fm-card-del{flex:0 0 auto;padding:0 16px;font-size:13px;justify-content:center}
 .fm-banner{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--text2);margin-bottom:12px}
 /* ── Job Sheets viewer (Testers preview, Phase 1: read-only, mock data) ── */
 #view-jobsheet h2{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.3px}
@@ -1554,11 +1557,11 @@ function fmPaintList(root){
   else if(fm.error) body=`<div class="empty"><p>${jsEsc(fm.error)}</p></div>`;
   else if(!fm.maps||!fm.maps.length) body='<div class="empty"><div class="empty-icon">🗺️</div><p>No floor maps yet.</p><small>Build one from a floor plan PDF and a job sheet.</small></div>';
   else body='<div class="pp-list">'+fm.maps.map(m=>
-    `<button class="pp-card" onclick="fmOpenMap('${jsEsc(fmIdOf(m.id))}')">`+
+    `<div class="fm-card-row"><button class="pp-card" onclick="fmOpenMap('${jsEsc(fmIdOf(m.id))}')">`+
       `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(m.name||'Floor map')}</div></div>`+
       `<div class="pp-card-sub">${jsEsc(m.sheetName||'')}</div>`+
       `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}</div>`+
-    `</button>`).join('')+'</div>';
+    `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor map" data-id="${jsEsc(fmIdOf(m.id))}" data-name="${jsEsc(m.name||'Floor map')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`).join('')+'</div>';
   root.innerHTML=
     '<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
       '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
@@ -1965,7 +1968,8 @@ function fmRenderToolbar(){
         `<button class="btn btn-sm" onclick="fmToggleEdit()">Done editing</button>`+
         `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">Delete map</button>`+
         `<div class="fm-hint">${fm.placeLabel? `Click the map where <b>${jsEsc(fm.placeLabel)}</b> goes.` : 'Click the map to add a pin · drag a pin to move it · click a pin to renumber or delete it · pick a "not on map" row to place it.'}</div>`
-      : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span><button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`);
+      : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span><button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
+        `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`);
 }
 async function fmInitLeaflet(){
   const host=document.getElementById('fm-leaflet'); if(!host||!fm.imgUrl) return;
@@ -2071,10 +2075,15 @@ async function fmSavePins(){
     fmRenderToolbar(); fmDrawPins(); fmRenderSide();
   }catch(e){ alert('Save failed: '+(e.message||e)); }
 }
-async function fmDeleteMap(){
-  if(!confirm('Delete "'+fm.map.name+'"? This removes the map and its floor plan image from the Smartsheet. The sheet\'s rows and photos are not touched.')) return;
-  try{ await fmFetch('DELETE','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id))); fm.dirty=false; fm.map=null; fmLoadList(); }
-  catch(e){ alert('Delete failed: '+(e.message||e)); }
+function fmDeleteMap(){ return fmDeleteMapById(fmIdOf(fm.map.id), fm.map.name, true); }
+// Shared by the map toolbar and the list's 🗑 buttons. Returns true if deleted.
+async function fmDeleteMapById(id, name, fromMap){
+  if(!confirm('Delete "'+name+'"? This removes the map and its floor plan image from the Smartsheet. The sheet\'s rows and photos are not touched.')) return false;
+  try{
+    await fmFetch('DELETE','/floormaps/'+encodeURIComponent(id));
+    if(fromMap){ fm.dirty=false; fm.editing=false; fm.map=null; }
+    fmLoadList(); return true;
+  }catch(e){ alert('Delete failed: '+(e.message||e)); return false; }
 }
 function fmBackToList(){
   if(fm.dirty && !confirm('You have unsaved pin changes. Leave without saving them?')) return;
