@@ -1608,7 +1608,8 @@ function fmPaintNew(root){
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">1</span>Job sheet</div>${sheetSec}</div>`+
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">2</span>Floor plan</div>${planSec}</div>`+
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">3</span>Find the desks</div>${detectSec}`+
-      (d.busy?`<div class="fm-status">${jsEsc(d.busy)}</div>`:'')+(d.err?`<div class="fm-status fm-warn">${jsEsc(d.err)}</div>`:'')+`</div>`+
+      (d.busy?`<div class="fm-status">${jsEsc(d.busy)}</div>`:'')+
+      (d.note&&!d.busy?`<div class="fm-status" style="color:var(--green-dark)">✓ ${jsEsc(d.note)}</div>`:'')+(d.err?`<div class="fm-status fm-warn">${jsEsc(d.err)}</div>`:'')+`</div>`+
     (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">4</span>Number the desks</div><div id="fm-review"></div></div>` : '')+
     (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">5</span>Save</div>`+
       `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input class="fm-input" style="flex:1;min-width:220px" placeholder="Map name" value="${jsEsc(d.name)}" oninput="fm.draft.name=this.value">`+
@@ -1649,7 +1650,7 @@ function fmClearSheet(){ const d=fm.draft; d.sheet=null; d.sheetRows=null; d.she
 async function fmPickPlan(input){
   const file=input.files&&input.files[0]; if(!file) return;
   const d=fm.draft;
-  d.fileName=file.name; d.err=''; d.busy='Rendering floor plan…'; d.boxes=null; d.labels=[]; d.crops=[]; d.pdf=null; d.pageCount=0; d.page=1;
+  d.fileName=file.name; d.err=''; d.note=''; d.pdfTexts=null; d.busy='Rendering floor plan…'; d.boxes=null; d.labels=[]; d.crops=[]; d.pdf=null; d.pageCount=0; d.page=1;
   fmPaint();
   try{
     if(/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)){
@@ -1667,7 +1668,7 @@ async function fmPickPlan(input){
   fmPaint();
 }
 async function fmPickPage(n){
-  const d=fm.draft; d.page=+n; d.busy='Rendering page '+n+'…'; d.boxes=null; d.labels=[]; d.crops=[]; fmPaint();
+  const d=fm.draft; d.page=+n; d.busy='Rendering page '+n+'…'; d.note=''; d.pdfTexts=null; d.boxes=null; d.labels=[]; d.crops=[]; fmPaint();
   try{ await fmRenderPdfPage(d.page); d.busy=''; }catch(e){ d.busy=''; d.err='Could not render that page: '+(e.message||e); }
   fmPaint();
 }
@@ -1680,6 +1681,56 @@ async function fmRenderPdfPage(n){
   ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
   await page.render({canvasContext:ctx, viewport:vp}).promise;
   fmSetSource(c, c.width, c.height);
+  // The detection canvas IS this render (same pixel space as `vp`), so the
+  // PDF's own markup can be mapped straight onto it.
+  const pm=await fmReadPdfMarkup(page, vp);
+  d.pdfTexts=pm.texts;
+  if(pm.markers.length) fmUseMarkers(pm.markers);
+}
+// Reads labels straight out of the PDF instead of recognizing pixels:
+//  - markers: short-text annotations (e.g. Bluebeam FreeText boxes typed "12")
+//    -> exact desk number + position, no detection needed;
+//  - texts: short vector-text runs, used to label color-detected boxes when
+//    the markup has been flattened into the page.
+async function fmReadPdfMarkup(page, vp){
+  const LABEL_RE=/^[A-Za-z0-9#.\- ]{1,12}$/;
+  const norm=(r)=>({x0:Math.min(r[0],r[2]), y0:Math.min(r[1],r[3]), x1:Math.max(r[0],r[2]), y1:Math.max(r[1],r[3])});
+  const markers=[], texts=[];
+  try{
+    (await page.getAnnotations()).forEach(a=>{
+      if(!a||!a.rect||/^(Link|Widget|Popup)$/.test(a.subtype||'')) return;
+      const label=String((a.contentsObj&&a.contentsObj.str)||a.contents||'').trim();
+      if(!LABEL_RE.test(label)) return;
+      markers.push({...norm(vp.convertToViewportRectangle(a.rect)), label});
+    });
+  }catch(e){ console.warn('PDF annotations unreadable', e); }
+  try{
+    (await page.getTextContent()).items.forEach(t=>{
+      const s=String(t.str||'').trim(); if(!LABEL_RE.test(s)) return;
+      const h=t.height||Math.hypot(t.transform[2],t.transform[3]);
+      texts.push({...norm(vp.convertToViewportRectangle([t.transform[4], t.transform[5], t.transform[4]+(t.width||0), t.transform[5]+h])), str:s});
+    });
+  }catch(e){ console.warn('PDF text unreadable', e); }
+  return {markers, texts};
+}
+function fmNaturalCmp(a,b){ return String(a).localeCompare(String(b),undefined,{numeric:true,sensitivity:'base'}); }
+function fmUseMarkers(markers){
+  const d=fm.draft, W=d.det.width, H=d.det.height;
+  const boxes=markers.map(m=>({x0:m.x0, y0:m.y0, x1:m.x1, y1:m.y1, cx:(m.x0+m.x1)/2/W, cy:(m.y0+m.y1)/2/H, label:m.label}))
+    .sort((a,b)=>fmNaturalCmp(a.label,b.label));
+  d.boxes=boxes; d.labels=boxes.map(b=>b.label); d.crops=boxes.map(fmCrop);
+  d.note=`Read ${boxes.length} numbered desk marker${boxes.length>1?'s':''} straight from the PDF. Check them below, or use "Find desks" to detect by color instead.`;
+  fmDrawPreview();
+}
+// Labels color-detected boxes from the PDF's vector text sitting inside them.
+function fmLabelsFromText(boxes, texts){
+  return boxes.map(b=>{
+    const px=(b.x1-b.x0)*0.25, py=(b.y1-b.y0)*0.25;
+    const inside=(texts||[]).filter(t=>{ const cx=(t.x0+t.x1)/2, cy=(t.y0+t.y1)/2;
+      return cx>=b.x0-px && cx<=b.x1+px && cy>=b.y0-py && cy<=b.y1+py; }).sort((a,c)=>a.x0-c.x0);
+    const s=inside.map(t=>t.str).join('').trim();
+    return /^[A-Za-z0-9#.\-]{1,12}$/.test(s)? s : '';
+  });
 }
 // Builds the three working canvases from the rendered plan: `det` (full
 // detection resolution), `disp` (what gets saved/shown on the map) and
@@ -1781,7 +1832,9 @@ async function fmRunDetect(){
   await new Promise(r=>setTimeout(r,30));
   try{
     const boxes=fmDetectBoxes(d.det, d.color, d.tol);
-    d.boxes=boxes; d.labels=boxes.map(()=> ''); d.crops=boxes.map(fmCrop);
+    d.boxes=boxes; d.labels=d.pdfTexts? fmLabelsFromText(boxes, d.pdfTexts) : boxes.map(()=> ''); d.crops=boxes.map(fmCrop);
+    const named=d.labels.filter(Boolean).length;
+    d.note= named? `Numbered ${named} of ${boxes.length} desks from the PDF's text. Check them below.` : '';
     d.busy=''; d.err= boxes.length? '' : 'No desks found in that color. Try another color, "Pick from plan", or a higher tolerance.';
     if(!boxes.length) d.boxes=null;
   }catch(e){ d.busy=''; d.err='Detection failed: '+(e.message||e); }
@@ -1843,6 +1896,8 @@ function fmUpdateReviewStatus(){
 }
 async function fmSaveDraft(){
   const d=fm.draft; if(!d||!d.sheet||!d.disp||d.saving) return;
+  const blank=(d.boxes||[]).filter((b,i)=>!(d.labels[i]||'').trim()).length;
+  if(blank && !confirm(`${blank} of ${d.boxes.length} desks have no number yet, so they won't match any row in the sheet. Save anyway? (You can number them later with Edit pins.)`)) return;
   d.saving=true; d.err=''; fmPaint();
   try{
     const blob=await new Promise((res,rej)=>d.disp.toBlob(b=>b?res(b):rej(new Error('Could not encode the floor plan image')),'image/jpeg',0.85));
@@ -1920,6 +1975,7 @@ async function fmInitLeaflet(){
   const W=fm.map.imgW||1000, H=fm.map.imgH||1000, bounds=[[0,0],[H,W]];
   const lm=L.map(host,{crs:L.CRS.Simple, minZoom:-6, maxZoom:3, zoomSnap:0.25, zoomDelta:0.5, attributionControl:false});
   L.imageOverlay(fm.imgUrl,bounds).addTo(lm);
+  lm.invalidateSize(); // measure the container now that it's in the page, so the first fit is centered
   lm.fitBounds(bounds);
   lm.setMinZoom(lm.getZoom()-1);
   lm.setMaxBounds(L.latLngBounds(bounds).pad(0.25));
@@ -1927,7 +1983,8 @@ async function fmInitLeaflet(){
   lm.on('preclick', ()=>{ fm.popupWasOpen=!!(fm.popup && lm.hasLayer(fm.popup)); });
   lm.on('click', fmMapClick);
   fm.lmap=lm; fmDrawPins();
-  setTimeout(()=>{ if(fm.lmap===lm) lm.invalidateSize(); },60);
+  // Re-fit once layout settles (fonts/scrollbars can change the container's size after first paint).
+  setTimeout(()=>{ if(fm.lmap===lm){ lm.invalidateSize(); lm.fitBounds(bounds); } },80);
 }
 function fmLatLng(p){ const W=fm.map.imgW, H=fm.map.imgH; return [H-p.y*H, p.x*W]; }
 function fmDrawPins(){
