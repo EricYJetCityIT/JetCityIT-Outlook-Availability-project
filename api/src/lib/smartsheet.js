@@ -840,17 +840,19 @@ async function fetchImageUrls(images) {
 }
 
 // Classifies a sheet's columns by shape so the viewer can adapt to any job
-// sheet: the primary column is the item identifier; columns named like a photo
-// (pic/photo/image/before/after/qa) are photos; checkboxes are status toggles;
-// everything else is free text. Hidden columns are dropped.
-function classifyJobSheetColumns(columns) {
+// sheet: the primary column is the item identifier; a column is a photo column
+// if any row actually holds a cell image in it (imageColumnIds) or it's named
+// like one (pic/picture/photo/image/before/after/qa); checkboxes are status
+// toggles; everything else is free text. Hidden columns are dropped.
+function classifyJobSheetColumns(columns, imageColumnIds) {
+  const withImages = imageColumnIds || new Set();
   return (columns || [])
     .filter((c) => !c.hidden)
     .map((c) => {
       const title = c.title || '';
       let type = 'text';
       if (c.primary) type = 'identifier';
-      else if (/\b(pic|photo|image|img|before|after|qa)\b/i.test(title)) type = 'photo';
+      else if (withImages.has(c.id) || /\b(pics?|pictures?|photos?|images?|imgs?|before|after|qa)\b/i.test(title)) type = 'photo';
       else if (c.type === 'CHECKBOX') type = 'checkbox';
       return { key: 'c' + c.id, columnId: c.id, label: title, type };
     });
@@ -864,7 +866,9 @@ function classifyJobSheetColumns(columns) {
 // QA Pic).
 async function fetchJobSheetView(sheetId) {
   const sheet = await fetchGenericSheet(sheetId);
-  const cols = classifyJobSheetColumns(sheet.columns || []);
+  const imageColumnIds = new Set();
+  (sheet.rows || []).forEach((row) => (row.cells || []).forEach((c) => { if (c.image && c.image.id) imageColumnIds.add(c.columnId); }));
+  const cols = classifyJobSheetColumns(sheet.columns || [], imageColumnIds);
   const photoCols = cols.filter((c) => c.type === 'photo');
   const cellAt = (row, columnId) => (row.cells || []).find((c) => c.columnId === columnId);
 
