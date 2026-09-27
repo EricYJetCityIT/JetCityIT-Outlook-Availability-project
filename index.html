@@ -519,6 +519,63 @@ body.is-tester #tab-jobsheet{display:inline-block}
    `is-tester` class. */
 #tab-floormap{display:none}
 body.is-tester #tab-floormap{display:inline-block}
+/* ── Floor Maps (floor plan + live QA-photo pins) ── */
+.fm-sec{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.fm-sec-h{font-size:15px;font-weight:600;margin-bottom:10px;color:var(--text);display:flex;align-items:center}
+.fm-step{display:inline-flex;width:22px;height:22px;border-radius:11px;background:var(--green);color:#fff;font-size:12px;align-items:center;justify-content:center;margin-right:8px;flex:0 0 auto}
+.fm-input{padding:10px 12px;border-radius:var(--radius-sm);border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;width:100%;box-sizing:border-box}
+.fm-results{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius-sm);max-height:240px;overflow-y:auto}
+.fm-results:empty{display:none}
+.fm-result{display:block;width:100%;text-align:left;padding:9px 12px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;font-family:inherit;color:var(--text);font-size:14px}
+.fm-result:hover{background:var(--surface2)}
+.fm-result small{display:block;color:var(--text3);font-size:12px}
+.fm-chosen{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--text)}
+.fm-chosen b{font-weight:600}
+.fm-muted{font-size:13px;color:var(--text3)}
+.fm-warn{color:#B45309}
+.fm-preview canvas{width:100%;height:auto;border:1px solid var(--border);border-radius:8px;display:block;background:#fff}
+.fm-preview.picking canvas{cursor:crosshair;outline:3px solid var(--green)}
+.fm-colors{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.fm-swatch{width:28px;height:28px;border-radius:14px;border:2px solid var(--border2);cursor:pointer;padding:0}
+.fm-swatch.on{outline:3px solid var(--green);outline-offset:2px}
+.fm-tol{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);flex-wrap:wrap}
+.fm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px}
+.fm-tile{position:relative;border:2px solid var(--border);border-radius:8px;padding:6px;background:var(--surface2)}
+.fm-tile img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:4px;display:block}
+.fm-tile input{margin-top:6px;width:100%;box-sizing:border-box;padding:6px 8px;font-size:14px;border-radius:6px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);text-align:center;font-weight:600;font-family:inherit}
+.fm-tile.ok{border-color:var(--green)}
+.fm-tile.bad{border-color:#F59E0B}
+.fm-tile.dup{border-color:var(--red)}
+.fm-tile-x{position:absolute;top:3px;right:3px;border:none;background:rgba(15,23,36,.6);color:#fff;border-radius:10px;width:20px;height:20px;cursor:pointer;line-height:20px;padding:0;font-size:13px}
+.fm-status{font-size:13px;color:var(--text2);margin:10px 0;line-height:1.6}
+.fm-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.fm-title{font-size:22px;font-weight:600;letter-spacing:-.3px;color:var(--text);margin:0}
+.fm-hint{font-size:12.5px;color:var(--text3);flex-basis:100%}
+.fm-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px}
+@media(max-width:820px){.fm-layout{grid-template-columns:minmax(0,1fr)}}
+.fm-map{height:min(72vh,720px);border-radius:12px;overflow:hidden;border:1px solid var(--border);background:#fff}
+.fm-map .leaflet-container{height:100%;width:100%;background:#fff;font:inherit}
+.fm-map.fm-editing .leaflet-container{cursor:crosshair}
+.fm-side{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:min(72vh,720px);overflow-y:auto;box-sizing:border-box}
+.fm-side h3{font-size:13px;font-weight:600;color:var(--text2);margin:12px 0 4px}
+.fm-pin-wrap{background:transparent;border:none}
+.fm-pin{position:absolute;transform:translate(-50%,-50%);min-width:24px;height:24px;padding:0 6px;box-sizing:border-box;border-radius:12px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
+.fm-pin-done{background:#16A37F}
+.fm-pin-todo{background:#64748B}
+.fm-pin-flag{background:#F04438}
+.fm-pin-nomatch{background:#F59E0B;border-style:dashed}
+.fm-pin-edit{outline:2px dashed #0F1724;outline-offset:1px}
+.fm-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--text3);margin:4px 0 8px}
+.fm-dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px;flex:0 0 auto;box-sizing:border-box}
+.fm-dot-done{background:#16A37F}.fm-dot-todo{background:#64748B}.fm-dot-flag{background:#F04438}.fm-dot-nomatch{background:#F59E0B}
+.fm-dot-unplaced{background:transparent;border:1.5px dashed var(--text3)}
+.fm-row{display:flex;align-items:center;width:100%;text-align:left;padding:7px 8px;border:none;background:none;border-radius:6px;cursor:pointer;font-family:inherit;color:var(--text);font-size:13.5px}
+.fm-row:hover{background:var(--surface2)}
+.fm-row.placing{background:var(--green-light)}
+.fm-row small{margin-left:auto;padding-left:8px;color:var(--text3);font-size:11.5px}
+.fm-pop input{width:100%;box-sizing:border-box;padding:7px 9px;font-size:14px;border-radius:6px;border:1.5px solid #D0D5DD;margin-bottom:8px;font-family:inherit}
+.fm-pop-btns{display:flex;gap:6px}
+.fm-banner{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--text2);margin-bottom:12px}
 /* ── Job Sheets viewer (Testers preview, Phase 1: read-only, mock data) ── */
 #view-jobsheet h2{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.3px}
 .js-banner{display:flex;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--text3);margin-bottom:18px}
@@ -829,12 +886,10 @@ if('serviceWorker' in navigator){
     </button>
   </div>
 
-  <!-- FLOOR MAPS VIEW (private "Testers" group only — TESTER_UPNS). Placeholder
-       shell for the floor-plan → QA-photo mapper; no data or endpoints yet. -->
-  <div class="view" id="view-floormap">
-    <div class="section-head"><div><h1>Floor Maps</h1><p>Private preview — visible only to the Testers group.</p></div></div>
-    <div class="empty"><div class="empty-icon">🗺️</div><p>Floor plan + photo maps coming soon.</p></div>
-  </div>
+  <!-- FLOOR MAPS VIEW (private "Testers" group only — TESTER_UPNS). A floor
+       plan with a clickable pin per desk, matched to a job sheet's rows + live
+       QA photos. Rendered by renderFloormap(); data from /api/floormaps. -->
+  <div class="view" id="view-floormap"><div id="fm-root"></div></div>
 
   <!-- JOB SHEETS VIEW (private "Testers" group only — TESTER_UPNS). Phase 1 is
        app-side only: no Smartsheet connection yet. This view is the gated shell
@@ -1405,7 +1460,597 @@ function switchTab(id){
   if(id==='crew')renderCrewView();
   if(id==='planning')renderPlanning();
   if(id==='jobsheet')renderJobsheet();
+  if(id==='floormap')renderFloormap();
 }
+
+// ── Floor Maps (Testers group) ──────────────────────────────────────────────
+// Turns an annotated floor plan (PDF or image, desks marked with a solid
+// highlight color) + a job sheet into a clickable map: one pin per desk,
+// colored by that desk's row in the sheet, tapping a pin shows its live QA
+// photos. Flow: pick sheet -> load plan -> detect highlight boxes by color ->
+// number each box (review grid) -> save. Pins store only x/y (0..1 of the
+// image) + a label; they're matched to sheet rows BY LABEL when the map is
+// viewed, so photos/status are always live from /api/jobsheet/sheet. Map docs
+// + the rendered plan image come from the Testers-gated /api/floormaps.
+let fm={mode:'list', maps:null, loading:false, error:'', draft:null,
+  map:null, sheet:null, sheetError:'', imgUrl:null, editing:false, dirty:false, query:'', placeLabel:null,
+  L:null, lmap:null, markers:[], rowIndex:null};
+const FM_COLORS=[
+  {key:'yellow',label:'Yellow',rgb:[255,255,0]},
+  {key:'orange',label:'Orange',rgb:[255,165,0]},
+  {key:'pink',label:'Pink',rgb:[255,105,180]},
+  {key:'green',label:'Green',rgb:[0,255,0]},
+  {key:'blue',label:'Blue',rgb:[0,176,255]},
+];
+const FM_DETECT_MAX=6000;  // px, longest side of the detection render
+const FM_DISPLAY_MAX=4096; // px, longest side of the stored map image (phone-safe canvas size)
+const FM_PREVIEW_MAX=1600; // px, the in-page setup preview
+// A checkbox whose name means "something's wrong" turns a pin red.
+const FM_FLAG_RE=/\b(mismatch\w*|issues?|damage\w*|problems?|fail\w*|broken|missing|defects?)\b/i;
+
+function fmRoot(){ return document.getElementById('fm-root'); }
+function fmNorm(s){
+  return String(s==null?'':s).trim().toLowerCase()
+    .replace(/^(desk|station|seat|ws|#)\s*[-#:.]?\s*/,'')
+    .replace(/^0+(?=\d)/,'');
+}
+function fmIdOf(mapId){ return String(mapId||'').replace(/^floormap:/,''); }
+function fmClamp01(v){ return Math.min(1,Math.max(0,v)); }
+
+async function fmFetch(method, path, body){
+  const token=await getApiToken();
+  const headers={'X-Jetcity-Authorization':'Bearer '+token};
+  const opts={method, headers};
+  if(body instanceof FormData){ opts.body=body; }
+  else if(body!==undefined){ headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  const res=await fetch('/api'+path, opts);
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  return res.json();
+}
+async function fmFetchBlob(path){
+  const token=await getApiToken();
+  const res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  if(!res.ok){ let m='Image failed to load ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  return res.blob();
+}
+
+let fmPdfJsPromise=null;
+function fmEnsurePdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(fmPdfJsPromise) return fmPdfJsPromise;
+  fmPdfJsPromise=new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='/vendor/pdf.min.js';
+    s.onload=()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.min.js'; resolve(window.pdfjsLib); }catch(e){ reject(e); } };
+    s.onerror=()=>{ fmPdfJsPromise=null; reject(new Error('Failed to load PDF library')); };
+    document.head.appendChild(s);
+  });
+  return fmPdfJsPromise;
+}
+
+// Entry point (called by switchTab).
+function renderFloormap(){
+  if(fm.mode==='list' && fm.maps===null && !fm.loading){ fmLoadList(); return; }
+  fmPaint();
+}
+function fmPaint(){
+  const root=fmRoot(); if(!root) return;
+  fmTeardownMap(); // the repaint replaces the map's container, so drop the old Leaflet instance
+  if(fm.mode==='new') return fmPaintNew(root);
+  if(fm.mode==='map') return fmPaintMap(root);
+  fmPaintList(root);
+}
+
+// ── List ──
+async function fmLoadList(){
+  fm.mode='list'; fm.loading=true; fm.error=''; fmPaint();
+  try{ const d=await fmFetch('GET','/floormaps'); fm.maps=d.maps||[]; }
+  catch(e){ fm.error=e.message||'Failed to load floor maps'; fm.maps=fm.maps||[]; }
+  fm.loading=false; fmPaint();
+}
+function fmPaintList(root){
+  let body;
+  if(fm.loading) body='<div class="empty"><p>Loading…</p></div>';
+  else if(fm.error) body=`<div class="empty"><p>${jsEsc(fm.error)}</p></div>`;
+  else if(!fm.maps||!fm.maps.length) body='<div class="empty"><div class="empty-icon">🗺️</div><p>No floor maps yet.</p><small>Build one from a floor plan PDF and a job sheet.</small></div>';
+  else body='<div class="pp-list">'+fm.maps.map(m=>
+    `<button class="pp-card" onclick="fmOpenMap('${jsEsc(fmIdOf(m.id))}')">`+
+      `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(m.name||'Floor map')}</div></div>`+
+      `<div class="pp-card-sub">${jsEsc(m.sheetName||'')}</div>`+
+      `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}</div>`+
+    `</button>`).join('')+'</div>';
+  root.innerHTML=
+    '<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
+      '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
+      '<button class="btn btn-primary" onclick="fmNew()">+ New floor map</button></div>'+body;
+}
+
+// ── New map: setup ──
+function fmNew(){
+  fm.draft={name:'', sheet:null, sheetRows:null, sheetErr:'', search:'', results:[], searchReq:0, searchTimer:null,
+    fileName:'', pdf:null, pageCount:0, page:1, det:null, disp:null, prev:null,
+    color:FM_COLORS[0].rgb.slice(), colorKey:'yellow', tol:90, picking:false,
+    boxes:null, labels:[], crops:[], busy:'', err:'', saving:false};
+  fm.mode='new'; fmPaint();
+}
+function fmCancelNew(){
+  if(fm.draft && (fm.draft.boxes||fm.draft.det) && !confirm('Discard this floor map?')) return;
+  fm.draft=null; fmLoadList();
+}
+
+function fmPaintNew(root){
+  const d=fm.draft;
+  const sheetSec=d.sheet
+    ? `<div class="fm-chosen"><span>📄 <b>${jsEsc(d.sheet.name)}</b></span>`+
+        (d.sheetRows? `<span class="fm-muted">${d.sheetRows.rows.length} rows</span>` : (d.sheetErr? `<span class="fm-warn">${jsEsc(d.sheetErr)}</span>` : '<span class="fm-muted">Loading rows…</span>'))+
+        `<button class="btn btn-sm" onclick="fmClearSheet()">Change</button></div>`
+    : `<input class="fm-input" type="search" placeholder="Search Smartsheet for the job sheet…" value="${jsEsc(d.search)}" oninput="fmSearchSheets(this.value)">`+
+      `<div class="fm-results" id="fm-sheet-results"></div>`;
+  const pageSel= d.pageCount>1
+    ? `<label class="fm-muted" style="margin-left:8px">Page <select class="js-select" style="padding:6px 10px" onchange="fmPickPage(this.value)">${Array.from({length:d.pageCount},(_,k)=>`<option value="${k+1}"${k+1===d.page?' selected':''}>${k+1}</option>`).join('')}</select></label>` : '';
+  const planSec=
+    `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">`+
+      `<label class="btn btn-sm">${d.det?'Choose a different file':'Choose floor plan (PDF or image)'}<input type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp" style="display:none" onchange="fmPickPlan(this)"></label>`+
+      (d.fileName? `<span class="fm-muted">${jsEsc(d.fileName)}</span>` : '')+pageSel+
+    `</div>`+
+    `<div class="fm-preview${d.picking?' picking':''}" id="fm-preview-host"></div>`;
+  const swatches=FM_COLORS.map(c=>`<button class="fm-swatch${d.colorKey===c.key?' on':''}" title="${c.label}" style="background:rgb(${c.rgb.join(',')})" onclick="fmSetColor('${c.key}')"></button>`).join('')+
+    (d.colorKey==='custom'? `<button class="fm-swatch on" title="Picked from plan" style="background:rgb(${d.color.join(',')})"></button>` : '');
+  const detectSec= d.det
+    ? `<div class="fm-colors"><span class="fm-muted">Desk highlight color:</span>${swatches}`+
+        `<button class="btn btn-sm${d.picking?' btn-primary':''}" onclick="fmTogglePick()">${d.picking?'Click a desk box on the plan…':'🎯 Pick from plan'}</button></div>`+
+      `<div class="fm-tol">Tolerance <input type="range" min="30" max="160" value="${d.tol}" oninput="fm.draft.tol=+this.value;this.nextElementSibling.textContent=this.value"><span>${d.tol}</span>`+
+        `<button class="btn btn-sm btn-primary" onclick="fmRunDetect()">Find desks</button>`+
+        `<button class="btn btn-sm btn-ghost" onclick="fmSkipDetect()">Skip, I'll place pins by hand</button></div>`
+    : '<div class="fm-muted">Load a floor plan first.</div>';
+  root.innerHTML=
+    '<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmCancelNew()">← Back</button><h2 class="fm-title">New floor map</h2></div>'+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">1</span>Job sheet</div>${sheetSec}</div>`+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">2</span>Floor plan</div>${planSec}</div>`+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">3</span>Find the desks</div>${detectSec}`+
+      (d.busy?`<div class="fm-status">${jsEsc(d.busy)}</div>`:'')+(d.err?`<div class="fm-status fm-warn">${jsEsc(d.err)}</div>`:'')+`</div>`+
+    (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">4</span>Number the desks</div><div id="fm-review"></div></div>` : '')+
+    (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">5</span>Save</div>`+
+      `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input class="fm-input" style="flex:1;min-width:220px" placeholder="Map name" value="${jsEsc(d.name)}" oninput="fm.draft.name=this.value">`+
+      `<button class="btn btn-primary" ${d.saving||!d.sheet?'disabled':''} onclick="fmSaveDraft()">${d.saving?'Saving…':'Save floor map'}</button></div>`+
+      (!d.sheet?'<div class="fm-status fm-warn">Pick a job sheet (step 1) before saving.</div>':'')+`</div>` : '');
+  const host=document.getElementById('fm-preview-host');
+  if(host && d.prev){ host.appendChild(d.prev); d.prev.onclick=fmPreviewClick; }
+  if(d.boxes) fmPaintReview();
+  if(!d.sheet) fmRenderSheetResults();
+}
+
+function fmSearchSheets(q){
+  const d=fm.draft; d.search=q; clearTimeout(d.searchTimer);
+  if(!q.trim()){ d.results=[]; fmRenderSheetResults(); return; }
+  d.searchTimer=setTimeout(async()=>{
+    const req=++d.searchReq;
+    try{ const r=await jsApi('/jobsheet/search?q='+encodeURIComponent(q.trim())); if(req!==d.searchReq)return; d.results=r.results||[]; }
+    catch(e){ if(req!==d.searchReq)return; d.results=[]; }
+    fmRenderSheetResults();
+  },300);
+}
+function fmRenderSheetResults(){
+  const el=document.getElementById('fm-sheet-results'); if(!el) return;
+  const d=fm.draft;
+  el.innerHTML=(d.results||[]).map((s,k)=>`<button class="fm-result" onclick="fmChooseSheet(${k})">${jsEsc(s.name)}${s.workspaceName?`<small>${jsEsc(s.workspaceName)}</small>`:''}</button>`).join('');
+}
+async function fmChooseSheet(k){
+  const d=fm.draft, s=d.results[k]; if(!s) return;
+  d.sheet={id:s.id, name:s.name}; d.sheetRows=null; d.sheetErr='';
+  if(!d.name) d.name=s.name;
+  fmPaint();
+  try{ d.sheetRows=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(s.id)); }
+  catch(e){ d.sheetErr=e.message||'Failed to load sheet'; }
+  if(fm.draft===d && fm.mode==='new') fmPaint();
+}
+function fmClearSheet(){ const d=fm.draft; d.sheet=null; d.sheetRows=null; d.sheetErr=''; fmPaint(); }
+
+async function fmPickPlan(input){
+  const file=input.files&&input.files[0]; if(!file) return;
+  const d=fm.draft;
+  d.fileName=file.name; d.err=''; d.busy='Rendering floor plan…'; d.boxes=null; d.labels=[]; d.crops=[]; d.pdf=null; d.pageCount=0; d.page=1;
+  fmPaint();
+  try{
+    if(/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)){
+      const lib=await fmEnsurePdfJs();
+      d.pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()), isEvalSupported:false}).promise;
+      d.pageCount=d.pdf.numPages;
+      await fmRenderPdfPage(1);
+    } else {
+      const bmp=await createImageBitmap(file);
+      fmSetSource(bmp, bmp.width, bmp.height);
+      if(bmp.close) bmp.close();
+    }
+    d.busy='';
+  }catch(e){ d.busy=''; d.err='Could not read that file: '+(e.message||e); }
+  fmPaint();
+}
+async function fmPickPage(n){
+  const d=fm.draft; d.page=+n; d.busy='Rendering page '+n+'…'; d.boxes=null; d.labels=[]; d.crops=[]; fmPaint();
+  try{ await fmRenderPdfPage(d.page); d.busy=''; }catch(e){ d.busy=''; d.err='Could not render that page: '+(e.message||e); }
+  fmPaint();
+}
+async function fmRenderPdfPage(n){
+  const d=fm.draft, page=await d.pdf.getPage(n);
+  const vp1=page.getViewport({scale:1});
+  const vp=page.getViewport({scale:FM_DETECT_MAX/Math.max(vp1.width,vp1.height)});
+  const c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+  const ctx=c.getContext('2d',{willReadFrequently:true});
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+  await page.render({canvasContext:ctx, viewport:vp}).promise;
+  fmSetSource(c, c.width, c.height);
+}
+// Builds the three working canvases from the rendered plan: `det` (full
+// detection resolution), `disp` (what gets saved/shown on the map) and
+// `prev` (the setup preview, which also draws the detected boxes).
+function fmSetSource(src, w, h){
+  const d=fm.draft;
+  const mk=(max)=>{ const s=Math.min(1,max/Math.max(w,h)); const c=document.createElement('canvas');
+    c.width=Math.max(1,Math.round(w*s)); c.height=Math.max(1,Math.round(h*s));
+    const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+    ctx.imageSmoothingQuality='high'; ctx.drawImage(src,0,0,c.width,c.height); return c; };
+  d.det=(src instanceof HTMLCanvasElement && Math.max(w,h)<=FM_DETECT_MAX)? src : mk(FM_DETECT_MAX);
+  d.disp=mk(FM_DISPLAY_MAX);
+  d.prev=mk(FM_PREVIEW_MAX);
+  d.prev.style.touchAction='manipulation';
+}
+function fmDrawPreview(){
+  const d=fm.draft, c=d.prev; if(!c) return;
+  const ctx=c.getContext('2d'); ctx.drawImage(d.disp,0,0,c.width,c.height);
+  if(!d.boxes) return;
+  const sx=c.width/d.det.width, sy=c.height/d.det.height;
+  ctx.lineWidth=2; ctx.strokeStyle='#E11D8F';
+  d.boxes.forEach(b=>{ ctx.strokeRect(b.x0*sx-2, b.y0*sy-2, (b.x1-b.x0+1)*sx+4, (b.y1-b.y0+1)*sy+4); });
+}
+
+function fmSetColor(key){ const c=FM_COLORS.find(x=>x.key===key); if(!c) return; const d=fm.draft; d.color=c.rgb.slice(); d.colorKey=key; d.picking=false; fmPaint(); }
+function fmTogglePick(){ fm.draft.picking=!fm.draft.picking; fmPaint(); }
+function fmPreviewClick(e){
+  const d=fm.draft; if(!d||!d.picking||!d.det) return;
+  const r=e.currentTarget.getBoundingClientRect();
+  const x=Math.round((e.clientX-r.left)/r.width*d.det.width), y=Math.round((e.clientY-r.top)/r.height*d.det.height);
+  const R=2, x0=Math.max(0,x-R), y0=Math.max(0,y-R);
+  const px=d.det.getContext('2d',{willReadFrequently:true}).getImageData(x0,y0,R*2+1,R*2+1).data;
+  let rs=0,gs=0,bs=0,n=0; for(let i=0;i<px.length;i+=4){ rs+=px[i]; gs+=px[i+1]; bs+=px[i+2]; n++; }
+  d.color=[Math.round(rs/n),Math.round(gs/n),Math.round(bs/n)]; d.colorKey='custom'; d.picking=false;
+  fmPaint();
+}
+
+// Finds solid blocks of the highlight color: threshold every pixel against the
+// color (per-channel tolerance), flood-fill connected regions, then keep the
+// ones shaped like a label box (big enough, mostly filled, not a thin line).
+// Deterministic, and the box count is itself a sanity check against the sheet.
+function fmDetectBoxes(canvas, rgb, tol){
+  const W=canvas.width, H=canvas.height, N=W*H;
+  const data=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,W,H).data;
+  const mask=new Uint8Array(N); const cr=rgb[0], cg=rgb[1], cb=rgb[2];
+  for(let i=0,p=0;i<N;i++,p+=4){
+    if(Math.abs(data[p]-cr)<=tol && Math.abs(data[p+1]-cg)<=tol && Math.abs(data[p+2]-cb)<=tol) mask[i]=1;
+  }
+  const minArea=Math.max(40, Math.round(N*4e-6));
+  let comps=[]; const st=[];
+  for(let i=0;i<N;i++){
+    if(mask[i]!==1) continue;
+    let x0=W,x1=0,y0=H,y1=0,count=0; mask[i]=2; st.push(i);
+    while(st.length){
+      const j=st.pop(), x=j%W, y=(j-x)/W; count++;
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+      if(x>0&&mask[j-1]===1){mask[j-1]=2;st.push(j-1);}
+      if(x<W-1&&mask[j+1]===1){mask[j+1]=2;st.push(j+1);}
+      if(y>0&&mask[j-W]===1){mask[j-W]=2;st.push(j-W);}
+      if(y<H-1&&mask[j+W]===1){mask[j+W]=2;st.push(j+W);}
+    }
+    if(count>=minArea) comps.push({x0,y0,x1,y1,count});
+  }
+  // A numeral that touches the box edge can split one box into pieces: merge
+  // regions whose bounding boxes touch/overlap (within a few px).
+  const g=Math.max(2, Math.round(Math.max(W,H)/2000));
+  let merged=true;
+  while(merged){
+    merged=false;
+    outer: for(let a=0;a<comps.length;a++) for(let b=a+1;b<comps.length;b++){
+      const A=comps[a], B=comps[b];
+      if(A.x0-g<=B.x1 && B.x0-g<=A.x1 && A.y0-g<=B.y1 && B.y0-g<=A.y1){
+        comps[a]={x0:Math.min(A.x0,B.x0),y0:Math.min(A.y0,B.y0),x1:Math.max(A.x1,B.x1),y1:Math.max(A.y1,B.y1),count:A.count+B.count};
+        comps.splice(b,1); merged=true; break outer;
+      }
+    }
+  }
+  comps=comps.filter(c=>{ const w=c.x1-c.x0+1, h=c.y1-c.y0+1;
+    return c.count/(w*h)>=0.3 && Math.max(w/h,h/w)<=6; });
+  if(comps.length>=3){
+    const areas=comps.map(c=>(c.x1-c.x0+1)*(c.y1-c.y0+1)).sort((a,b)=>a-b), med=areas[areas.length>>1];
+    comps=comps.filter(c=>{ const a=(c.x1-c.x0+1)*(c.y1-c.y0+1); return a>=med/10 && a<=med*10; });
+  }
+  const rowH=comps.length? comps.map(c=>c.y1-c.y0+1).sort((a,b)=>a-b)[comps.length>>1]*1.5 : 1;
+  return comps.map(c=>({...c, cx:(c.x0+c.x1+1)/2/W, cy:(c.y0+c.y1+1)/2/H}))
+    .sort((a,b)=> (Math.floor(a.y0/rowH)-Math.floor(b.y0/rowH)) || (a.x0-b.x0));
+}
+function fmCrop(b){
+  const d=fm.draft, w=b.x1-b.x0+1, h=b.y1-b.y0+1, side=Math.max(w,h)*1.8;
+  const cx=(b.x0+b.x1)/2, cy=(b.y0+b.y1)/2;
+  const c=document.createElement('canvas'); c.width=c.height=120;
+  const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,120,120);
+  ctx.drawImage(d.det, cx-side/2, cy-side/2, side, side, 0, 0, 120, 120);
+  return c.toDataURL('image/png');
+}
+async function fmRunDetect(){
+  const d=fm.draft; if(!d.det) return;
+  d.err=''; d.busy='Finding desks…'; d.picking=false; fmPaint();
+  await new Promise(r=>setTimeout(r,30));
+  try{
+    const boxes=fmDetectBoxes(d.det, d.color, d.tol);
+    d.boxes=boxes; d.labels=boxes.map(()=> ''); d.crops=boxes.map(fmCrop);
+    d.busy=''; d.err= boxes.length? '' : 'No desks found in that color. Try another color, "Pick from plan", or a higher tolerance.';
+    if(!boxes.length) d.boxes=null;
+  }catch(e){ d.busy=''; d.err='Detection failed: '+(e.message||e); }
+  fmDrawPreview(); fmPaint();
+  const first=document.querySelector('#fm-review input'); if(first) first.focus();
+}
+function fmSkipDetect(){ const d=fm.draft; d.boxes=[]; d.labels=[]; d.crops=[]; d.err=''; fmDrawPreview(); fmPaint(); }
+
+// ── New map: review (number each detected box) ──
+function fmSheetIdentifiers(sheet){
+  const idk=sheet? jsIdent(sheet) : null; if(!idk) return [];
+  return sheet.rows.map(r=>String(r[idk]||'').trim()).filter(Boolean);
+}
+function fmPaintReview(){
+  const el=document.getElementById('fm-review'); if(!el) return;
+  const d=fm.draft, ids=fmSheetIdentifiers(d.sheetRows);
+  el.innerHTML=
+    (d.boxes.length? `<div class="fm-muted" style="margin-bottom:10px">Type the number shown in each box. Enter jumps to the next one; × removes a false match.</div>` :
+      `<div class="fm-muted">No pins yet. After saving, use <b>Edit pins</b> on the map to click each desk and place it by hand.</div>`)+
+    `<datalist id="fm-ids">${ids.map(v=>`<option value="${jsEsc(v)}">`).join('')}</datalist>`+
+    '<div class="fm-grid">'+d.boxes.map((b,i)=>
+      `<div class="fm-tile" id="fm-tile-${i}"><img src="${d.crops[i]}" alt="Desk box ${i+1}">`+
+      `<input value="${jsEsc(d.labels[i])}" list="fm-ids" placeholder="#" oninput="fmSetLabel(${i},this.value)" onkeydown="fmTileKey(event,${i})">`+
+      `<button class="fm-tile-x" title="Not a desk" onclick="fmRemoveBox(${i})">×</button></div>`).join('')+'</div>'+
+    '<div class="fm-status" id="fm-review-status"></div>';
+  fmUpdateReviewStatus();
+}
+function fmSetLabel(i,v){ fm.draft.labels[i]=v; fmUpdateReviewStatus(); }
+function fmTileKey(e,i){
+  if(e.key!=='Enter') return; e.preventDefault();
+  const next=document.querySelector('#fm-tile-'+(i+1)+' input'); if(next){ next.focus(); next.select(); }
+}
+function fmRemoveBox(i){ const d=fm.draft; d.boxes.splice(i,1); d.labels.splice(i,1); d.crops.splice(i,1); fmDrawPreview(); fmPaintReview(); }
+function fmUpdateReviewStatus(){
+  const d=fm.draft, el=document.getElementById('fm-review-status');
+  const ids=fmSheetIdentifiers(d.sheetRows), idSet=new Set(ids.map(fmNorm));
+  const counts={}; d.labels.forEach(l=>{ const n=fmNorm(l); if(n) counts[n]=(counts[n]||0)+1; });
+  let labeled=0, matched=0, dups=0;
+  d.labels.forEach((l,i)=>{
+    const n=fmNorm(l), tile=document.getElementById('fm-tile-'+i); if(!tile) return;
+    tile.classList.remove('ok','bad','dup');
+    if(!n) return; labeled++;
+    if(counts[n]>1){ tile.classList.add('dup'); dups++; }
+    else if(!d.sheetRows || idSet.has(n)){ tile.classList.add('ok'); if(d.sheetRows) matched++; }
+    else tile.classList.add('bad');
+  });
+  if(!el) return;
+  const placed=new Set(Object.keys(counts));
+  const missing=ids.filter(v=>!placed.has(fmNorm(v)));
+  let html=`<b>${d.boxes.length}</b> desks found · <b>${labeled}</b> numbered`;
+  if(d.sheetRows) html+=` · <b>${matched}</b> match a row in the sheet`;
+  if(dups) html+=` · <span class="fm-warn">${dups} duplicate numbers</span>`;
+  if(d.sheetRows){
+    const unmatched=labeled-matched-dups;
+    if(unmatched>0) html+=`<br><span class="fm-warn">${unmatched} numbered box${unmatched>1?'es':''} with no matching row (orange)</span>`;
+    if(missing.length) html+=`<br><span class="fm-warn">${missing.length} sheet row${missing.length>1?'s':''} not on the map: ${jsEsc(missing.slice(0,40).join(', '))}${missing.length>40?'…':''}</span>`;
+  }
+  el.innerHTML=html;
+}
+async function fmSaveDraft(){
+  const d=fm.draft; if(!d||!d.sheet||!d.disp||d.saving) return;
+  d.saving=true; d.err=''; fmPaint();
+  try{
+    const blob=await new Promise((res,rej)=>d.disp.toBlob(b=>b?res(b):rej(new Error('Could not encode the floor plan image')),'image/jpeg',0.85));
+    const pins=(d.boxes||[]).map((b,i)=>({x:b.cx, y:b.cy, label:(d.labels[i]||'').trim()}));
+    const fd=new FormData();
+    fd.append('meta', JSON.stringify({name:(d.name||'').trim()||d.sheet.name, sheetId:d.sheet.id, sheetName:d.sheet.name, imgW:d.disp.width, imgH:d.disp.height, pins}));
+    fd.append('image', blob, 'floormap.jpg');
+    const r=await fmFetch('POST','/floormaps', fd);
+    fm.draft=null; fm.maps=null;
+    fmOpenMap(fmIdOf(r.map.id));
+  }catch(e){ d.saving=false; d.err='Save failed: '+(e.message||e); fmPaint(); }
+}
+
+// ── Map view ──
+function fmTeardownMap(){
+  if(fm.lmap){ try{ fm.lmap.remove(); }catch(e){} fm.lmap=null; }
+  fm.markers=[];
+  if(fm.mode!=='map' && fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
+}
+async function fmOpenMap(id){
+  fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
+  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null;
+  fm.loading=true; fm.error=''; fmPaint();
+  try{
+    const r=await fmFetch('GET','/floormaps/'+encodeURIComponent(id)); fm.map=r.map;
+    const [sheet, blob]=await Promise.all([
+      jsApi('/jobsheet/sheet?id='+encodeURIComponent(fm.map.sheetId)).catch(e=>{ fm.sheetError=e.message||'Failed to load the job sheet'; return null; }),
+      fmFetchBlob('/floormaps/'+encodeURIComponent(id)+'/image'),
+    ]);
+    fm.sheet=sheet; fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob);
+  }catch(e){ fm.error=e.message||'Failed to load floor map'; }
+  fm.loading=false; fmPaint();
+}
+function fmBuildRowIndex(){
+  fm.rowIndex=new Map();
+  const s=fm.sheet, idk=s&&jsIdent(s); if(!idk) return;
+  s.rows.forEach(r=>{ const n=fmNorm(r[idk]); if(n && !fm.rowIndex.has(n)) fm.rowIndex.set(n,r); });
+}
+function fmRowFor(label){ const n=fmNorm(label); return n&&fm.rowIndex? fm.rowIndex.get(n)||null : null; }
+function fmFlagged(r){ return jsCols(fm.sheet,'checkbox').some(c=>FM_FLAG_RE.test(c.label) && r[c.key]); }
+function fmRowState(r){ if(fmFlagged(r)) return 'flag'; return jsDone(fm.sheet,r)? 'done' : 'todo'; }
+function fmPinState(p){ const r=fmRowFor(p.label); return r? fmRowState(r) : 'nomatch'; }
+
+function fmPaintMap(root){
+  if(fm.loading){ root.innerHTML='<div class="empty"><p>Loading floor map…</p></div>'; return; }
+  if(fm.error||!fm.map){
+    root.innerHTML=`<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmLoadList()">← All floor maps</button></div><div class="empty"><p>${jsEsc(fm.error||'Floor map not found')}</p></div>`;
+    return;
+  }
+  root.innerHTML=
+    '<div class="fm-toolbar" id="fm-toolbar"></div>'+
+    (fm.sheetError? `<div class="fm-banner fm-warn">Couldn't load the job sheet (${jsEsc(fm.sheetError)}). Pins are shown without photos or status.</div>` : '')+
+    `<div class="fm-layout"><div class="fm-map${fm.editing?' fm-editing':''}" id="fm-leaflet"></div><aside class="fm-side" id="fm-side"></aside></div>`+
+    '<div class="js-modal-backdrop" id="fm-modal-backdrop" onclick="if(event.target===this)fmCloseDetail()"><div class="js-modal" id="fm-modal"></div></div>';
+  fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
+}
+function fmRenderToolbar(){
+  const el=document.getElementById('fm-toolbar'); if(!el) return;
+  const m=fm.map;
+  el.innerHTML=
+    '<button class="btn btn-sm" onclick="fmBackToList()">← All floor maps</button>'+
+    `<h2 class="fm-title" style="flex:1;min-width:180px">${jsEsc(m.name)}</h2>`+
+    (fm.editing
+      ? `<button class="btn btn-sm btn-primary" ${fm.dirty?'':'disabled'} onclick="fmSavePins()">Save changes</button>`+
+        `<button class="btn btn-sm" onclick="fmToggleEdit()">Done editing</button>`+
+        `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">Delete map</button>`+
+        `<div class="fm-hint">${fm.placeLabel? `Click the map where <b>${jsEsc(fm.placeLabel)}</b> goes.` : 'Click the map to add a pin · drag a pin to move it · click a pin to renumber or delete it · pick a "not on map" row to place it.'}</div>`
+      : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span><button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`);
+}
+async function fmInitLeaflet(){
+  const host=document.getElementById('fm-leaflet'); if(!host||!fm.imgUrl) return;
+  let L; try{ L=await ensureLeaflet(); }catch(e){ host.innerHTML=`<div class="empty"><p>${jsEsc(e.message)}</p></div>`; return; }
+  if(document.getElementById('fm-leaflet')!==host) return; // repainted while loading
+  fm.L=L;
+  const W=fm.map.imgW||1000, H=fm.map.imgH||1000, bounds=[[0,0],[H,W]];
+  const lm=L.map(host,{crs:L.CRS.Simple, minZoom:-6, maxZoom:3, zoomSnap:0.25, zoomDelta:0.5, attributionControl:false});
+  L.imageOverlay(fm.imgUrl,bounds).addTo(lm);
+  lm.fitBounds(bounds);
+  lm.setMinZoom(lm.getZoom()-1);
+  lm.setMaxBounds(L.latLngBounds(bounds).pad(0.25));
+  // A click that just dismisses an open pin popup must not also drop a new pin.
+  lm.on('preclick', ()=>{ fm.popupWasOpen=!!(fm.popup && lm.hasLayer(fm.popup)); });
+  lm.on('click', fmMapClick);
+  fm.lmap=lm; fmDrawPins();
+  setTimeout(()=>{ if(fm.lmap===lm) lm.invalidateSize(); },60);
+}
+function fmLatLng(p){ const W=fm.map.imgW, H=fm.map.imgH; return [H-p.y*H, p.x*W]; }
+function fmDrawPins(){
+  if(!fm.lmap||!fm.L) return;
+  const L=fm.L, W=fm.map.imgW, H=fm.map.imgH;
+  fm.markers.forEach(m=>m.remove()); fm.markers=[];
+  fm.map.pins.forEach((p,i)=>{
+    const icon=L.divIcon({className:'fm-pin-wrap', iconSize:[0,0],
+      html:`<div class="fm-pin fm-pin-${fmPinState(p)}${fm.editing?' fm-pin-edit':''}">${jsEsc(p.label||'?')}</div>`});
+    const mk=L.marker(fmLatLng(p),{icon, draggable:fm.editing, keyboard:false, riseOnHover:true}).addTo(fm.lmap);
+    mk.on('click',()=>{ if(fm.editing) fmEditPin(i); else fmOpenPin(i); });
+    mk.on('dragend',()=>{ const ll=mk.getLatLng(); p.x=fmClamp01(ll.lng/W); p.y=fmClamp01((H-ll.lat)/H); fmMarkDirty(); });
+    fm.markers.push(mk);
+  });
+}
+function fmRenderSide(){
+  const el=document.getElementById('fm-side'); if(!el) return;
+  const s=fm.sheet, idk=s&&jsIdent(s), pins=fm.map.pins;
+  const pinCount={}; pins.forEach(p=>{ const n=fmNorm(p.label); if(n) pinCount[n]=(pinCount[n]||0)+1; });
+  const tally={done:0,todo:0,flag:0,nomatch:0}; pins.forEach(p=>tally[fmPinState(p)]++);
+  const q=fm.query.trim().toLowerCase();
+  const rows=(s&&idk? s.rows:[]).filter(r=>String(r[idk]||'').trim()).filter(r=>!q||String(r[idk]).toLowerCase().includes(q));
+  const onMap=rows.filter(r=>pinCount[fmNorm(r[idk])]), offMap=rows.filter(r=>!pinCount[fmNorm(r[idk])]);
+  const orphans=pins.filter(p=>!fmRowFor(p.label)).filter(p=>!q||String(p.label).toLowerCase().includes(q));
+  const rowBtn=(r,placed)=>{ const label=String(r[idk]).trim();
+    return `<button class="fm-row${fm.placeLabel===label?' placing':''}" data-l="${jsEsc(label)}" onclick="fmFocusLabel(this.dataset.l)">`+
+      `<span class="fm-dot fm-dot-${placed?fmRowState(r):'unplaced'}"></span>${jsEsc(label)}${placed?'':'<small>not on map</small>'}</button>`; };
+  el.innerHTML=
+    `<input class="fm-input" type="search" placeholder="Find a desk…" value="${jsEsc(fm.query)}" oninput="fm.query=this.value;fmRenderSide();fmRefocusSideSearch()">`+
+    `<div class="fm-legend" style="margin-top:10px"><span><span class="fm-dot fm-dot-done"></span>Done ${tally.done}</span><span><span class="fm-dot fm-dot-todo"></span>Open ${tally.todo}</span>`+
+      `<span><span class="fm-dot fm-dot-flag"></span>Flagged ${tally.flag}</span>${tally.nomatch?`<span><span class="fm-dot fm-dot-nomatch"></span>No row ${tally.nomatch}</span>`:''}</div>`+
+    (offMap.length? `<h3>Not on map (${offMap.length})</h3>`+offMap.map(r=>rowBtn(r,false)).join('') : '')+
+    (orphans.length? `<h3>Pins with no matching row (${orphans.length})</h3>`+orphans.map(p=>`<button class="fm-row" data-l="${jsEsc(p.label)}" onclick="fmFocusLabel(this.dataset.l)"><span class="fm-dot fm-dot-nomatch"></span>${jsEsc(p.label||'?')}</button>`).join('') : '')+
+    `<h3>On map (${onMap.length})</h3>`+(onMap.length? onMap.map(r=>rowBtn(r,true)).join('') : '<div class="fm-muted">None yet.</div>');
+}
+function fmRefocusSideSearch(){ const i=document.querySelector('#fm-side input'); if(i){ i.focus(); const v=i.value; i.setSelectionRange(v.length,v.length); } }
+function fmFocusLabel(label){
+  const n=fmNorm(label), i=fm.map.pins.findIndex(p=>fmNorm(p.label)===n);
+  if(i<0){
+    if(fm.editing){ fm.placeLabel=label; fmRenderToolbar(); fmRenderSide(); return; }
+    fmShowDetail(label, fmRowFor(label)); return;
+  }
+  if(fm.lmap) fm.lmap.flyTo(fmLatLng(fm.map.pins[i]), Math.max(fm.lmap.getZoom(), fm.lmap.getMinZoom()+3), {duration:.5});
+  if(fm.editing) fmEditPin(i); else fmOpenPin(i);
+}
+function fmMapClick(e){
+  if(!fm.editing) return;
+  if(fm.popupWasOpen){ fm.popupWasOpen=false; return; }
+  const W=fm.map.imgW, H=fm.map.imgH;
+  const p={x:fmClamp01(e.latlng.lng/W), y:fmClamp01((H-e.latlng.lat)/H), label:fm.placeLabel||''};
+  const wasPlacing=!!fm.placeLabel; fm.placeLabel=null;
+  fm.map.pins.push(p); fmMarkDirty(); fmDrawPins(); fmRenderSide(); fmRenderToolbar();
+  if(!wasPlacing) fmEditPin(fm.map.pins.length-1);
+}
+function fmEditPin(i){
+  const p=fm.map.pins[i]; if(!p||!fm.lmap) return;
+  const ids=fmSheetIdentifiers(fm.sheet);
+  fm.popup=fm.L.popup({minWidth:190, autoPan:true}).setLatLng(fmLatLng(p)).setContent(
+    `<div class="fm-pop"><input id="fm-pop-input" value="${jsEsc(p.label)}" placeholder="Desk #" list="fm-ids-map">`+
+    `<datalist id="fm-ids-map">${ids.map(v=>`<option value="${jsEsc(v)}">`).join('')}</datalist>`+
+    `<div class="fm-pop-btns"><button class="btn btn-sm btn-primary" onclick="fmPopSave(${i})">Save</button><button class="btn btn-sm btn-danger" onclick="fmPopDelete(${i})">Delete</button></div></div>`
+  ).openOn(fm.lmap);
+  setTimeout(()=>{ const inp=document.getElementById('fm-pop-input'); if(inp){ inp.focus(); inp.select(); inp.onkeydown=e=>{ if(e.key==='Enter') fmPopSave(i); }; } },40);
+}
+function fmPopSave(i){
+  const inp=document.getElementById('fm-pop-input'), p=fm.map.pins[i]; if(!p) return;
+  p.label=(inp?inp.value:'').trim().slice(0,40); fm.lmap.closePopup(); fmMarkDirty(); fmDrawPins(); fmRenderSide();
+}
+function fmPopDelete(i){ fm.map.pins.splice(i,1); fm.lmap.closePopup(); fmMarkDirty(); fmDrawPins(); fmRenderSide(); }
+function fmMarkDirty(){ if(!fm.dirty){ fm.dirty=true; fmRenderToolbar(); } }
+function fmToggleEdit(){
+  if(fm.editing && fm.dirty && !confirm('You have unsaved pin changes. Stop editing without saving them?')) return;
+  if(fm.editing && fm.dirty){ fmOpenMap(fmIdOf(fm.map.id)); return; } // discard: reload the saved pins
+  fm.editing=!fm.editing; fm.placeLabel=null;
+  const host=document.getElementById('fm-leaflet'); if(host) host.classList.toggle('fm-editing', fm.editing);
+  if(fm.lmap) fm.lmap.closePopup();
+  fmRenderToolbar(); fmDrawPins(); fmRenderSide();
+}
+async function fmSavePins(){
+  if(!fm.dirty) return;
+  try{
+    const r=await fmFetch('PUT','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id)), {pins:fm.map.pins});
+    fm.map=r.map; fm.dirty=false; fm.maps=null;
+    fmRenderToolbar(); fmDrawPins(); fmRenderSide();
+  }catch(e){ alert('Save failed: '+(e.message||e)); }
+}
+async function fmDeleteMap(){
+  if(!confirm('Delete "'+fm.map.name+'"? This removes the map and its floor plan image from the Smartsheet. The sheet\'s rows and photos are not touched.')) return;
+  try{ await fmFetch('DELETE','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id))); fm.dirty=false; fm.map=null; fmLoadList(); }
+  catch(e){ alert('Delete failed: '+(e.message||e)); }
+}
+function fmBackToList(){
+  if(fm.dirty && !confirm('You have unsaved pin changes. Leave without saving them?')) return;
+  fm.dirty=false; fm.editing=false; fm.map=null; fm.mode='list';
+  if(fm.maps===null) fmLoadList(); else fmPaint();
+}
+
+// ── Pin detail (read-only; edits + photo capture live in Job Sheets) ──
+function fmOpenPin(i){ const p=fm.map.pins[i]; if(p) fmShowDetail(p.label, fmRowFor(p.label)); }
+function fmShowDetail(label, r){
+  const s=fm.sheet, modal=document.getElementById('fm-modal'); if(!modal) return;
+  let body;
+  if(!r){
+    body=`<div class="js-empty">No row in <b>${jsEsc(fm.map.sheetName||'the sheet')}</b> matches “${jsEsc(label||'?')}”.</div>`;
+  } else {
+    body='';
+    const checks=jsCols(s,'checkbox'), photos=jsCols(s,'photo'), texts=jsCols(s,'text');
+    if(checks.length) body+='<div><div class="js-field-label">Status</div><div class="js-pills">'+checks.map(c=> r[c.key]
+      ? `<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>` : `<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div></div>';
+    if(photos.length) body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+photos.map(c=>{ const v=r[c.key];
+      const img= jsIsUrl(v)? `<a href="${jsEsc(v)}" target="_blank" rel="noopener"><img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}"></a>`
+        : `<div class="js-photo-lg${v?'':' js-photo-lg-empty'}">${JS_CAM}<span>${v?jsEsc(c.label):'No '+jsEsc(c.label.toLowerCase())}</span></div>`;
+      return `<figure style="margin:0">${img}<figcaption style="font-size:12px;color:var(--text3);margin-top:4px">${jsEsc(c.label)}</figcaption></figure>`; }).join('')+'</div></div>';
+    texts.forEach(c=>{ if(r[c.key]) body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="font-size:14px;color:var(--text);white-space:pre-wrap">${jsEsc(r[c.key])}</div></div>`; });
+    if(!body) body='<div class="js-empty">No details.</div>';
+  }
+  modal.innerHTML=
+    `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(label||'?')}</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>`+
+    `<div class="js-modal-body">${body}</div>`;
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+}
+function fmCloseDetail(){ const b=document.getElementById('fm-modal-backdrop'); if(b) b.classList.remove('open'); }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ const b=document.getElementById('fm-modal-backdrop'); if(b&&b.classList.contains('open')) fmCloseDetail(); } });
 
 // ── Job Sheets viewer (Testers group) ───────────────────────────────────────
 // Two-level picker (workspace → sheet, both live from Smartsheet) over a job's

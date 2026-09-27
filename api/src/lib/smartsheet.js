@@ -977,8 +977,52 @@ async function addCellImage(sheetId, rowId, columnId, fileName, contentType, byt
   return res.json();
 }
 
+// ── Floor Maps tab (Testers group) ─────────────────────────────────────────
+// A floor map's background image (the rendered floor plan) is stored as a
+// SHEET-level attachment on the job sheet the map is built from, so the plan
+// lives with the job's data instead of in this repo or a new storage account.
+// Same simple-upload header shape as addRowAttachment, on an arbitrary sheet.
+async function addSheetAttachment(sheetId, fileName, contentType, bytes) {
+  const safeName = String(fileName || 'file').replace(/["\r\n\\]/g, '_');
+  const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  const res = await fetch(
+    `${SMARTSHEET_API_BASE}/sheets/${encodeURIComponent(sheetId)}/attachments`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        'Content-Type': contentType || 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${safeName}"`,
+        'Content-Length': String(buf.length),
+      },
+      body: buf,
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet attach error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.result || data;
+}
+
+// Removes one attachment from a sheet (a floor map's image, when the map is
+// deleted). A 404 means it's already gone, which counts as success.
+async function deleteSheetAttachment(sheetId, attachmentId) {
+  const res = await fetch(
+    `${SMARTSHEET_API_BASE}/sheets/${encodeURIComponent(sheetId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` } }
+  );
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet attachment delete error ${res.status}: ${text}`);
+  }
+}
+
 module.exports = {
   fetchSheet,
+  addSheetAttachment,
+  deleteSheetAttachment,
   fetchAllWorkspaces,
   searchSheets,
   fetchWorkspaceSheets,
