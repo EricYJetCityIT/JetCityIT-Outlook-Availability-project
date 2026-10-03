@@ -1477,7 +1477,7 @@ function switchTab(id){
 // + the rendered plan image come from the Testers-gated /api/floormaps.
 let fm={mode:'list', maps:null, loading:false, error:'', draft:null,
   map:null, sheet:null, sheetError:'', imgUrl:null, editing:false, dirty:false, query:'', placeLabel:null,
-  L:null, lmap:null, markers:[], rowIndex:null};
+  L:null, lmap:null, markers:[], rowIndex:null, act:null};
 const FM_COLORS=[
   {key:'yellow',label:'Yellow',rgb:[255,255,0]},
   {key:'orange',label:'Orange',rgb:[255,165,0]},
@@ -1922,15 +1922,20 @@ function fmTeardownMap(){
 }
 async function fmOpenMap(id){
   fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
-  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null;
+  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null;
   fm.loading=true; fm.error=''; fmPaint();
   try{
     const r=await fmFetch('GET','/floormaps/'+encodeURIComponent(id)); fm.map=r.map;
-    const [sheet, blob]=await Promise.all([
+    const [sheet, blob, acts]=await Promise.all([
       jsApi('/jobsheet/sheet?id='+encodeURIComponent(fm.map.sheetId)).catch(e=>{ fm.sheetError=e.message||'Failed to load the job sheet'; return null; }),
       fmFetchBlob('/floormaps/'+encodeURIComponent(id)+'/image'),
+      // Who-did-what log for this sheet. Best-effort: if it fails the map still
+      // works, it just shows no attribution (null = not loaded, [] = none logged).
+      jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(fm.map.sheetId)+'&limit=5000').then(d=>d.items||[]).catch(()=>null),
     ]);
     fm.sheet=sheet; fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob);
+    fm.act=acts? fmBuildActivity(acts) : null;
+    if(fm.act) fm.act.truncated=acts.length>=5000; // server returns only the newest 5000
   }catch(e){ fm.error=e.message||'Failed to load floor map'; }
   fm.loading=false; fmPaint();
 }
@@ -1968,7 +1973,9 @@ function fmRenderToolbar(){
         `<button class="btn btn-sm" onclick="fmToggleEdit()">Done editing</button>`+
         `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">Delete map</button>`+
         `<div class="fm-hint">${fm.placeLabel? `Click the map where <b>${jsEsc(fm.placeLabel)}</b> goes.` : 'Click the map to add a pin · drag a pin to move it · click a pin to renumber or delete it · pick a "not on map" row to place it.'}</div>`
-      : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span><button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
+      : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span>`+
+        (fm.act? '<button class="btn btn-sm" onclick="fmShowTechSummary()">👥 Tech summary</button>' : '')+
+        `<button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
         `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`);
 }
 async function fmInitLeaflet(){
@@ -2091,6 +2098,103 @@ function fmBackToList(){
   if(fm.maps===null) fmLoadList(); else fmPaint();
 }
 
+// ── Who worked / photographed a desk, and desk-to-desk pace ──
+// Source: the Job Sheets attribution log (/api/jobsheet/activity), the same data
+// as that tab's Activity report. Smartsheet itself can't say who did what (every
+// write uses one shared app token), so only work done THROUGH THIS APP is
+// attributed; photos/edits made straight in Smartsheet show as unattributed.
+// Entries match pins BY LABEL (rowLabel is the sheet's identifier value when the
+// tech acted), the same way pins match sheet rows.
+// A tech's entries, in time order, are grouped into "visits" (a run of entries on
+// one desk). The gap from desk A to the next desk B is B's arrival (its first
+// save minus that save's open->save time, when known) minus A's last save,
+// floored at 0. Gaps over FM_GAP_CAP_SEC are dropped as breaks (same 20-minute
+// cap the labor-time numbers use; its own constant here because the Job Sheets
+// one is declared further down this script).
+const FM_GAP_CAP_SEC=20*60;
+function fmBuildActivity(items){
+  const byLabel=new Map(), byUser=new Map();
+  (items||[]).forEach(it=>{
+    const n=fmNorm(it.rowLabel), t=Date.parse(it.capturedAt);
+    if(!n||isNaN(t)) return;
+    const uk=it.user||it.userName||'unknown';
+    const e={n, label:String(it.rowLabel).trim(), col:it.columnLabel||'', action:it.action==='photo'?'photo':'cell',
+      uk, name:it.userName||it.user||'Unknown', at:it.capturedAt, t, dur:(it.durationSec==null?null:it.durationSec), sid:it.sessionId||''};
+    if(!byLabel.has(n)) byLabel.set(n,{entries:[],visits:[]});
+    byLabel.get(n).entries.push(e);
+    if(!byUser.has(uk)) byUser.set(uk,[]);
+    byUser.get(uk).push(e);
+  });
+  byLabel.forEach(d=>d.entries.sort((a,b)=>a.t-b.t));
+  const techs=[];
+  byUser.forEach(arr=>{
+    arr.sort((a,b)=>a.t-b.t);
+    const visits=[];
+    arr.forEach(e=>{
+      const open=e.t-(e.dur==null?0:e.dur*1000), last=visits[visits.length-1];
+      if(last && last.n===e.n){ last.end=Math.max(last.end,e.t); last.start=Math.min(last.start,open); last.entries.push(e); }
+      else visits.push({n:e.n, label:e.label, name:e.name, start:open, end:e.t, entries:[e], deskSec:null, gapSec:null, prevLabel:''});
+    });
+    let gapSum=0, gapN=0, deskSum=0, deskN=0, photos=0;
+    visits.forEach((v,i)=>{
+      // Time on the desk: longest open->save per session (several saves in one
+      // open all measure "since open", so summing them would double-count).
+      const sm={}; v.entries.forEach(e=>{ if(e.sid && e.dur!=null && (sm[e.sid]==null||e.dur>sm[e.sid])) sm[e.sid]=e.dur; });
+      const sids=Object.keys(sm);
+      if(sids.length){ v.deskSec=sids.reduce((s,k)=>s+sm[k],0); deskSum+=v.deskSec; deskN++; }
+      if(i>0){
+        const prev=visits[i-1];
+        const g=Math.max(0,Math.round((v.start-prev.end)/1000));
+        if(g<=FM_GAP_CAP_SEC){ v.gapSec=g; v.prevLabel=prev.label; gapSum+=g; gapN++; }
+      }
+      v.entries.forEach(e=>{ if(e.action==='photo') photos++; });
+      byLabel.get(v.n).visits.push(v);
+    });
+    techs.push({name:arr[arr.length-1].name, desks:new Set(visits.map(v=>v.n)).size, photos,
+      avgDeskSec:deskN? Math.round(deskSum/deskN) : null, avgGapSec:gapN? Math.round(gapSum/gapN) : null, gapN,
+      first:arr[0].at, last:arr[arr.length-1].at});
+  });
+  byLabel.forEach(d=>d.visits.sort((a,b)=>a.start-b.start));
+  techs.sort((a,b)=>b.desks-a.desks || String(a.name).localeCompare(String(b.name)));
+  return {byLabel, techs};
+}
+// The "Activity" block inside a pin's popup: every photo/edit on this desk with
+// who + when, then each tech's time on the desk and how long they took to get
+// there from the previous desk.
+function fmActivityHtml(label){
+  if(!fm.act) return '';
+  const d=fm.act.byLabel.get(fmNorm(label)), head='<div class="js-field-label">Activity</div>';
+  if(!d||!d.entries.length) return '<div>'+head+'<div style="font-size:13px;color:var(--text3)">No tech activity logged for this desk. (Work done outside this app isn\'t attributed.)</div></div>';
+  const rows=d.entries.map(e=>
+    `<div class="js-act-row"><span class="js-act-when">${jsEsc(jsFmtWhen(e.at))}</span><span class="js-act-who">${jsEsc(e.name)}</span>`+
+    `<span class="js-act-what">${e.action==='photo'?'📷 Photo':'✎ Edit'}${e.col?' · '+jsEsc(e.col):''}</span></div>`).join('');
+  const visits=d.visits.map(v=>{
+    const bits=[];
+    if(v.deskSec!=null) bits.push(jsFmtDuration(v.deskSec)+' on this desk');
+    if(v.gapSec!=null) bits.push('arrived '+jsFmtDuration(v.gapSec)+' after desk '+v.prevLabel);
+    return bits.length? `<div style="font-size:12.5px;color:var(--text2);margin-top:6px"><b>${jsEsc(v.name)}</b> · ${jsEsc(bits.join(' · '))}</div>` : '';
+  }).join('');
+  return '<div>'+head+'<div class="js-act-timeline">'+rows+'</div>'+visits+'</div>';
+}
+// Per-tech summary for this map's sheet (opened from the toolbar).
+function fmShowTechSummary(){
+  const modal=document.getElementById('fm-modal'); if(!modal||!fm.act) return;
+  const t=fm.act.techs;
+  const cards=t.map(u=>
+    `<div class="js-act-card"><div class="js-act-name">${jsEsc(u.name)}</div>`+
+    `<div class="js-act-stats">${u.desks} desk${u.desks===1?'':'s'} · ${u.photos} photo${u.photos===1?'':'s'}</div>`+
+    (u.avgDeskSec!=null? `<div class="js-act-stats">⏱ ${jsEsc(jsFmtDuration(u.avgDeskSec))} avg on a desk</div>` : '')+
+    (u.avgGapSec!=null? `<div class="js-act-stats">➜ ${jsEsc(jsFmtDuration(u.avgGapSec))} avg between desks <span style="color:var(--text3)">(${u.gapN} measured)</span></div>`
+      : '<div class="js-act-stats" style="color:var(--text3)">No desk-to-desk gaps measured</div>')+
+    `<div class="js-act-time">${jsEsc(jsFmtWhen(u.first))} – ${jsEsc(jsFmtWhen(u.last))}</div></div>`).join('');
+  modal.innerHTML=
+    '<div class="js-modal-head"><div class="js-modal-title">Tech summary</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>'+
+    '<div class="js-modal-body">'+(t.length? '<div class="js-act-summary">'+cards+'</div>' : '<div class="js-empty">No activity logged yet for this sheet.</div>')+
+    '<div style="font-size:12px;color:var(--text3);margin-top:14px">Between desks = from a tech\'s last save on one desk to arriving at the next. Gaps over 20 minutes are treated as breaks and left out. Only work done through this app is counted.'+
+    (fm.act.truncated? '<br><b style="color:var(--red)">Heads up:</b> this sheet has more than 5,000 logged saves, so only the newest 5,000 are included and the oldest work is missing from these numbers.' : '')+'</div></div>';
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+}
+
 // ── Pin detail (read-only; edits + photo capture live in Job Sheets) ──
 function fmOpenPin(i){ const p=fm.map.pins[i]; if(p) fmShowDetail(p.label, fmRowFor(p.label)); }
 function fmShowDetail(label, r){
@@ -2110,6 +2214,7 @@ function fmShowDetail(label, r){
     texts.forEach(c=>{ if(r[c.key]) body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="font-size:14px;color:var(--text);white-space:pre-wrap">${jsEsc(r[c.key])}</div></div>`; });
     if(!body) body='<div class="js-empty">No details.</div>';
   }
+  body+=fmActivityHtml(label);
   modal.innerHTML=
     `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(label||'?')}</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>`+
     `<div class="js-modal-body">${body}</div>`;

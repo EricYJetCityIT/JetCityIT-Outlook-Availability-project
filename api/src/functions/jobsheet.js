@@ -113,9 +113,13 @@ app.http('jobsheetActivityList', {
     try {
       const user = await requireUser(request);
       requireTester(user);
-      const sheetId = new URL(request.url).searchParams.get('sheetId');
+      const params = new URL(request.url).searchParams;
+      const sheetId = params.get('sheetId');
       if (!sheetId) return { status: 400, jsonBody: { error: 'Missing sheetId' } };
-      const items = await listJobSheetActivity(sheetId);
+      // Optional ?limit=N (default 500, clamped to 5000 in listJobSheetActivity).
+      // Floor Maps asks for more so a big floor's attribution isn't cut off.
+      const limit = parseInt(params.get('limit') || '', 10);
+      const items = await listJobSheetActivity(sheetId, Number.isFinite(limit) ? limit : undefined);
       return { jsonBody: { items } };
     } catch (e) {
       return jobsheetError(e, context);

@@ -68,15 +68,22 @@ async function logJobSheetActivity(entry, context) {
   }
 }
 
-// Fetches one sheet's activity log, newest first, capped at 500 rows (this is
-// a reporting read, not the source of truth -- 500 is plenty for a per-job
-// report). Only the fields the report actually uses are selected, so a log
-// doc's internal bookkeeping (id/type/createdAt) never leaves this module.
-async function listJobSheetActivity(sheetId) {
+// Fetches one sheet's activity log, newest first (this is a reporting read,
+// not the source of truth). Defaults to 500 rows, plenty for the Job Sheets
+// report; a caller that needs the whole picture of a large job (the Floor Maps
+// per-desk attribution and pin-to-pin pace) can ask for more, up to
+// MAX_LIST_LIMIT. `limit` is forced to an integer in range before it's put in
+// the query text (TOP takes a literal), so it can never inject anything. Only
+// the fields the report actually uses are selected, so a log doc's internal
+// bookkeeping (id/type/createdAt) never leaves this module.
+const DEFAULT_LIST_LIMIT = 500;
+const MAX_LIST_LIMIT = 5000;
+async function listJobSheetActivity(sheetId, limit) {
+  const n = Number.isInteger(limit) ? Math.min(MAX_LIST_LIMIT, Math.max(1, limit)) : DEFAULT_LIST_LIMIT;
   const container = getContainer(CONTAINER_ID);
   const { resources } = await container.items
     .query({
-      query: 'SELECT TOP 500 c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC',
+      query: `SELECT TOP ${n} c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC`,
       parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@sheetId', value: String(sheetId) }],
     })
     .fetchAll();
