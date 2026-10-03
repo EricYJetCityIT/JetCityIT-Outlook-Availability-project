@@ -559,6 +559,7 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-side{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:min(72vh,720px);overflow-y:auto;box-sizing:border-box}
 .fm-side h3{font-size:13px;font-weight:600;color:var(--text2);margin:12px 0 4px}
 .fm-pin-wrap{background:transparent;border:none}
+.fm-route-lbl{position:absolute;transform:translate(-50%,-50%);padding:1px 7px;border-radius:10px;background:#fff;border:1.5px solid #2563EB;color:#1E3A8A;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .fm-pin{position:absolute;transform:translate(-50%,-50%);min-width:24px;height:24px;padding:0 6px;box-sizing:border-box;border-radius:12px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .fm-pin-done{background:#16A37F}
 .fm-pin-todo{background:#64748B}
@@ -1477,7 +1478,7 @@ function switchTab(id){
 // + the rendered plan image come from the Testers-gated /api/floormaps.
 let fm={mode:'list', maps:null, loading:false, error:'', draft:null,
   map:null, sheet:null, sheetError:'', imgUrl:null, editing:false, dirty:false, query:'', placeLabel:null,
-  L:null, lmap:null, markers:[], rowIndex:null, act:null};
+  L:null, lmap:null, markers:[], rowIndex:null, act:null, techFilter:'', routeLayer:null};
 const FM_COLORS=[
   {key:'yellow',label:'Yellow',rgb:[255,255,0]},
   {key:'orange',label:'Orange',rgb:[255,165,0]},
@@ -1917,12 +1918,12 @@ async function fmSaveDraft(){
 // ── Map view ──
 function fmTeardownMap(){
   if(fm.lmap){ try{ fm.lmap.remove(); }catch(e){} fm.lmap=null; }
-  fm.markers=[];
+  fm.markers=[]; fm.routeLayer=null;
   if(fm.mode!=='map' && fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
 }
 async function fmOpenMap(id){
   fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
-  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null;
+  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null; fm.techFilter='';
   fm.loading=true; fm.error=''; fmPaint();
   try{
     const r=await fmFetch('GET','/floormaps/'+encodeURIComponent(id)); fm.map=r.map;
@@ -2002,7 +2003,9 @@ function fmDrawPins(){
   if(!fm.lmap||!fm.L) return;
   const L=fm.L, W=fm.map.imgW, H=fm.map.imgH;
   fm.markers.forEach(m=>m.remove()); fm.markers=[];
+  const touched=fmTechTouched(); // desks the picked tech worked, or null = show all
   fm.map.pins.forEach((p,i)=>{
+    if(touched && !touched.has(fmNorm(p.label))) return;
     const icon=L.divIcon({className:'fm-pin-wrap', iconSize:[0,0],
       html:`<div class="fm-pin fm-pin-${fmPinState(p)}${fm.editing?' fm-pin-edit':''}">${jsEsc(p.label||'?')}</div>`});
     const mk=L.marker(fmLatLng(p),{icon, draggable:fm.editing, keyboard:false, riseOnHover:true}).addTo(fm.lmap);
@@ -2010,6 +2013,37 @@ function fmDrawPins(){
     mk.on('dragend',()=>{ const ll=mk.getLatLng(); p.x=fmClamp01(ll.lng/W); p.y=fmClamp01((H-ll.lat)/H); fmMarkDirty(); });
     fm.markers.push(mk);
   });
+  fmDrawRoute();
+}
+// Tech filter: only active in view mode (editing needs every pin on screen).
+function fmPickedTech(){
+  if(!fm.techFilter||fm.editing||!fm.act) return null;
+  return fm.act.techs.find(t=>t.uk===fm.techFilter)||null;
+}
+function fmTechTouched(){ const t=fmPickedTech(); return t? new Set(t.visits.map(v=>v.n)) : null; }
+function fmSetTech(uk){
+  fm.techFilter=uk||'';
+  if(fm.lmap) fm.lmap.closePopup();
+  fmDrawPins(); fmRenderSide();
+}
+// The picked tech's path through the desks, in the order they worked them:
+// a solid blue line labeled with the time between desks when that gap was
+// measured, dashed gray when it was a break/unmeasurable. Hops to a desk that
+// has no pin on this map are skipped.
+function fmDrawRoute(){
+  if(fm.routeLayer){ try{ fm.routeLayer.remove(); }catch(e){} fm.routeLayer=null; }
+  const t=fmPickedTech(); if(!t||!fm.lmap||!fm.L) return;
+  const L=fm.L, pinFor=new Map(), g=L.layerGroup();
+  fm.map.pins.forEach(p=>{ const n=fmNorm(p.label); if(n && !pinFor.has(n)) pinFor.set(n,p); });
+  for(let i=1;i<t.visits.length;i++){
+    const a=pinFor.get(t.visits[i-1].n), b=pinFor.get(t.visits[i].n), v=t.visits[i];
+    if(!a||!b) continue;
+    const A=fmLatLng(a), B=fmLatLng(b), measured=v.gapSec!=null;
+    L.polyline([A,B],{color:measured?'#2563EB':'#94A3B8', weight:measured?3:2, opacity:.85, dashArray:measured?null:'6 6', interactive:false}).addTo(g);
+    if(measured) L.marker([(A[0]+B[0])/2,(A[1]+B[1])/2],{interactive:false, keyboard:false,
+      icon:L.divIcon({className:'fm-pin-wrap', iconSize:[0,0], html:`<div class="fm-route-lbl">${jsEsc(jsFmtDuration(v.gapSec))}</div>`})}).addTo(g);
+  }
+  g.addTo(fm.lmap); fm.routeLayer=g;
 }
 function fmRenderSide(){
   const el=document.getElementById('fm-side'); if(!el) return;
@@ -2025,6 +2059,11 @@ function fmRenderSide(){
       `<span class="fm-dot fm-dot-${placed?fmRowState(r):'unplaced'}"></span>${jsEsc(label)}${placed?'':'<small>not on map</small>'}</button>`; };
   el.innerHTML=
     `<input class="fm-input" type="search" placeholder="Find a desk…" value="${jsEsc(fm.query)}" oninput="fm.query=this.value;fmRenderSide();fmRefocusSideSearch()">`+
+    ((fm.act&&fm.act.techs.length&&!fm.editing)?
+      `<select class="fm-input" style="margin-top:8px" onchange="fmSetTech(this.value)"><option value="">All techs</option>`+
+        fm.act.techs.map(t=>`<option value="${jsEsc(t.uk)}"${t.uk===fm.techFilter?' selected':''}>${jsEsc(t.name)} (${t.desks} desk${t.desks===1?'':'s'})</option>`).join('')+'</select>'+
+      (fm.techFilter? '<div class="fm-muted" style="margin-top:6px;font-size:12px">Only this tech\'s desks are shown. Blue line = their path between desks, label = time between them; dashed gray = a break or unmeasured.</div>' : '')
+      : '')+
     `<div class="fm-legend" style="margin-top:10px"><span><span class="fm-dot fm-dot-done"></span>Done ${tally.done}</span><span><span class="fm-dot fm-dot-todo"></span>Open ${tally.todo}</span>`+
       `<span><span class="fm-dot fm-dot-flag"></span>Flagged ${tally.flag}</span>${tally.nomatch?`<span><span class="fm-dot fm-dot-nomatch"></span>No row ${tally.nomatch}</span>`:''}</div>`+
     (offMap.length? `<h3>Not on map (${offMap.length})</h3>`+offMap.map(r=>rowBtn(r,false)).join('') : '')+
@@ -2070,6 +2109,7 @@ function fmToggleEdit(){
   if(fm.editing && fm.dirty && !confirm('You have unsaved pin changes. Stop editing without saving them?')) return;
   if(fm.editing && fm.dirty){ fmOpenMap(fmIdOf(fm.map.id)); return; } // discard: reload the saved pins
   fm.editing=!fm.editing; fm.placeLabel=null;
+  if(fm.editing) fm.techFilter=''; // editing needs every pin visible
   const host=document.getElementById('fm-leaflet'); if(host) host.classList.toggle('fm-editing', fm.editing);
   if(fm.lmap) fm.lmap.closePopup();
   fmRenderToolbar(); fmDrawPins(); fmRenderSide();
@@ -2129,6 +2169,7 @@ function fmBuildActivity(items){
   const techs=[];
   byUser.forEach(arr=>{
     arr.sort((a,b)=>a.t-b.t);
+    const uk=arr[0].uk;
     const visits=[];
     arr.forEach(e=>{
       const open=e.t-(e.dur==null?0:e.dur*1000), last=visits[visits.length-1];
@@ -2150,7 +2191,7 @@ function fmBuildActivity(items){
       v.entries.forEach(e=>{ if(e.action==='photo') photos++; });
       byLabel.get(v.n).visits.push(v);
     });
-    techs.push({name:arr[arr.length-1].name, desks:new Set(visits.map(v=>v.n)).size, photos,
+    techs.push({uk, visits, name:arr[arr.length-1].name, desks:new Set(visits.map(v=>v.n)).size, photos,
       avgDeskSec:deskN? Math.round(deskSum/deskN) : null, avgGapSec:gapN? Math.round(gapSum/gapN) : null, gapN,
       first:arr[0].at, last:arr[arr.length-1].at});
   });
