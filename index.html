@@ -1511,15 +1511,107 @@ async function fmFetch(method, path, body){
   const opts={method, headers};
   if(body instanceof FormData){ opts.body=body; }
   else if(body!==undefined){ headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
-  const res=await fetch('/api'+path, opts);
-  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  let res; try{ res=await fetch('/api'+path, opts); }catch(netErr){ const oe=new Error('No connection'); oe.offline=true; throw oe; }
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} const he=new Error(m); he.status=res.status; throw he; }
   return res.json();
 }
 async function fmFetchBlob(path){
   const token=await getApiToken();
-  const res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  let res; try{ res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); }catch(netErr){ const oe=new Error('No connection'); oe.offline=true; throw oe; }
   if(!res.ok){ let m='Image failed to load ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
   return res.blob();
+}
+
+// ── Offline copy of a floor map ──────────────────────────────────────────────
+// Every map you open (or "Save for offline" from the list) is kept on this
+// device in IndexedDB: the map doc (pins), the floor-plan image, the job sheet
+// rows, and the activity log. With no signal the map opens from that copy; with
+// signal it opens instantly from the copy and quietly refreshes behind it.
+// Photos are NOT stored (their links are short-lived and heavy) -- offline they
+// show as a placeholder. Edits made offline use the existing offline outbox.
+// Cached per device and only ever written by a signed-in Tester; there's no
+// app sign-out, so the list has a "Remove saved copies" button.
+const FM_CACHE_DB='jcit-floormap-cache', FM_CACHE_STORE='kv';
+let fmCacheDbP=null;
+function fmCacheDb(){
+  if(!fmCacheDbP) fmCacheDbP=new Promise((resolve,reject)=>{
+    const req=indexedDB.open(FM_CACHE_DB,1);
+    req.onupgradeneeded=()=>req.result.createObjectStore(FM_CACHE_STORE);
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>{ fmCacheDbP=null; reject(req.error); };
+  });
+  return fmCacheDbP;
+}
+async function fmCacheOp(mode, fn){
+  try{
+    const db=await fmCacheDb();
+    return await new Promise((resolve,reject)=>{
+      const tx=db.transaction(FM_CACHE_STORE,mode), st=tx.objectStore(FM_CACHE_STORE), req=fn(st);
+      tx.oncomplete=()=>resolve(req&&req.result!==undefined? req.result : true);
+      tx.onerror=()=>reject(tx.error); tx.onabort=()=>reject(tx.error||new Error('aborted'));
+    });
+  }catch(e){ return null; } // a missing/blocked/full cache must never break the live app
+}
+const fmCacheGet=key=>fmCacheOp('readonly',st=>st.get(key)).then(v=>v===true?null:v);
+const fmCachePut=(key,val)=>fmCacheOp('readwrite',st=>st.put(val,key)).then(v=>!!v);
+const fmCacheDel=key=>fmCacheOp('readwrite',st=>st.delete(key));
+const fmCacheClear=()=>fmCacheOp('readwrite',st=>st.clear());
+async function fmCachedIds(){
+  const keys=await fmCacheOp('readonly',st=>st.getAllKeys());
+  return new Set(Array.isArray(keys)? keys.filter(k=>String(k).indexOf('map:')===0).map(k=>String(k).slice(4)) : []);
+}
+// Only genuine connection failures (tagged .offline by the fetch wrappers) count;
+// a plain TypeError is a bug and must surface as one, not as "offline".
+function fmIsOffline(e){ return !!(e && e.offline) || navigator.onLine===false; }
+// A saved copy belongs to whoever saved it. It's ignored on another account and
+// dropped if the server says this account no longer has access (403/401).
+const fmOwner=()=>String((typeof msalAccount!=='undefined'&&msalAccount&&msalAccount.username)||'').toLowerCase();
+const fmNoAccess=e=>!!(e&&(e.status===403||e.status===401));
+function fmRaceTimeout(p,ms){ return Promise.race([p,new Promise(r=>setTimeout(()=>r(null),ms))]); }
+// The saved map is two records so reloading the sheet doesn't rewrite the multi-MB
+// plan image: 'map:<id>' (pins, rows, activity) and 'img:<id>' (the image).
+async function fmCacheGetMap(id){
+  const m=await fmCacheGet('map:'+id);
+  if(!m||!m.map||!m.sheet||m.owner!==fmOwner()) return null;
+  const im=await fmCacheGet('img:'+id);
+  if(!im||!im.blob||im.attachmentId!==m.map.attachmentId) return null;
+  return Object.assign({},m,{blob:im.blob});
+}
+function fmCacheDelMap(id){ return Promise.all([fmCacheDel('map:'+id),fmCacheDel('img:'+id)]); }
+// Photo links expire and can't be fetched offline, so only "this cell has a
+// photo" is kept (true) -- the popup already renders that as a photo tile.
+function fmSheetForCache(sheet){
+  const copy=JSON.parse(JSON.stringify(sheet)), keys=jsCols(sheet,'photo').map(c=>c.key);
+  copy.rows.forEach(r=>keys.forEach(k=>{ if(jsIsUrl(r[k])) r[k]=true; }));
+  return copy;
+}
+// Edits still waiting in the offline outbox aren't on the server (or in a saved
+// copy) yet; lay them over the sheet so a desk the tech already ticked stays ticked.
+async function fmOverlayOutbox(sheet,sid){
+  try{ for(const it of await jsOutboxAll()){ if(it.kind==='cell' && String(it.sheetId)===String(sid)){ const r=sheet.rows.find(x=>x._rowId===it.rowId); if(r) r['c'+it.columnId]=it.value; } } }catch(e){}
+}
+// Save the SERVER's view of the sheet (callers must pass it before laying the
+// offline outbox over it), so a queued edit that later fails never lingers in
+// the saved copy. The image is written first and only when it changed, so a map
+// record never exists without its image.
+async function fmCacheSaveMap(id,b){
+  const rec={map:b.map, sheet:fmSheetForCache(b.sheet), acts:b.acts||null, savedAt:Date.now(), owner:fmOwner()};
+  if(!b.reusedBlob && !(await fmCachePut('img:'+id,{attachmentId:b.map.attachmentId, blob:b.blob}))) return false;
+  return fmCachePut('map:'+id,rec);
+}
+// Everything one map needs, fetched fresh. If the saved copy already holds the
+// same plan image (it's fixed at creation) the image isn't downloaded again.
+async function fmFetchMapBundle(id,cached){
+  const r=await fmFetch('GET','/floormaps/'+encodeURIComponent(id)), map=r.map;
+  const reuse=!!(cached&&cached.blob&&cached.map&&cached.map.attachmentId&&cached.map.attachmentId===map.attachmentId);
+  let sheetError='';
+  const [sheet,blob,acts]=await Promise.all([
+    jsApi('/jobsheet/sheet?id='+encodeURIComponent(map.sheetId)).catch(e=>{ if(fmIsOffline(e)) throw e; sheetError=e.message||'Failed to load the job sheet'; return null; }),
+    reuse? Promise.resolve(cached.blob) : fmFetchBlob('/floormaps/'+encodeURIComponent(id)+'/image'),
+    // Best-effort: the map works without the who-did-what log.
+    jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(map.sheetId)+'&limit=5000').then(d=>d.items||[]).catch(()=>null),
+  ]);
+  return {map,sheet,blob,acts,sheetError,reusedBlob:reuse};
 }
 
 let fmPdfJsPromise=null;
@@ -1551,10 +1643,43 @@ function fmPaint(){
 
 // ── List ──
 async function fmLoadList(){
-  fm.mode='list'; fm.loading=true; fm.error=''; fmPaint();
-  try{ const d=await fmFetch('GET','/floormaps'); fm.maps=d.maps||[]; }
-  catch(e){ fm.error=e.message||'Failed to load floor maps'; fm.maps=fm.maps||[]; }
-  fm.loading=false; fmPaint();
+  fm.mode='list'; fm.loading=true; fm.error=''; fm.listOfflineAt=null; fmPaint();
+  fm.openToken=null;
+  try{ const d=await fmFetch('GET','/floormaps'); fm.maps=d.maps||[]; fmCachePut('list',{maps:fm.maps,savedAt:Date.now(),owner:fmOwner()}); }
+  catch(e){
+    fm.maps=fm.maps||[];
+    if(fmIsOffline(e)){
+      const c=await fmRaceTimeout(fmCacheGet('list'),3000);
+      if(c&&c.maps&&c.owner===fmOwner()){ fm.maps=c.maps; fm.listOfflineAt=c.savedAt; }
+      else fm.error='No connection, and no maps have been saved on this device yet.';
+    } else if(fmNoAccess(e)){ fmCacheClear(); fm.maps=[]; fm.error='You no longer have access to Floor Maps.'; }
+    else fm.error=e.message||'Failed to load floor maps';
+  }
+  fm.cachedIds=await fmCachedIds();
+  fm.loading=false; if(fm.mode==='list') fmPaint();
+}
+// Saves every map in the list to this device (map, plan image, sheet rows) so
+// they open with no signal. Needs a connection; maps already saved are refreshed.
+async function fmSaveAllOffline(){
+  if(fm.saveAll || !fm.maps || !fm.maps.length) return;
+  fm.saveMsg=''; fm.saveAll={done:0,total:fm.maps.length,failed:0}; fmPaint();
+  let offline=false;
+  for(const m of fm.maps){
+    const id=fmIdOf(m.id);
+    try{
+      const cached=await fmCacheGetMap(id), b=await fmFetchMapBundle(id,cached);
+      if(!b.sheet) throw new Error(b.sheetError||'Job sheet unavailable');
+      if(!(await fmCacheSaveMap(id,b))) throw new Error('Not enough storage on this device');
+    }catch(e){ fm.saveAll.failed++; if(fmIsOffline(e)){ offline=true; break; } }
+    fm.saveAll.done++; if(fm.mode==='list') fmPaint();
+  }
+  const f=fm.saveAll.failed, n=fm.saveAll.total;
+  fm.saveMsg= offline? 'You\'re offline — connect to save maps for offline use.' : (f? (n-f)+' of '+n+' maps saved; '+f+' couldn\'t be saved.' : '✓ All '+n+' map'+(n===1?'':'s')+' saved on this device — they\'ll open without signal.');
+  fm.saveAll=null; fm.cachedIds=await fmCachedIds(); if(fm.mode==='list') fmPaint();
+}
+async function fmClearOffline(){
+  if(!confirm('Remove all saved floor maps from this device? They\'ll need a signal to open again.')) return;
+  await fmCacheClear(); fm.cachedIds=new Set(); fm.saveMsg='Saved copies removed from this device.'; if(fm.mode==='list') fmPaint();
 }
 function fmPaintList(root){
   let body;
@@ -1565,12 +1690,19 @@ function fmPaintList(root){
     `<div class="fm-card-row"><button class="pp-card" onclick="fmOpenMap('${jsEsc(fmIdOf(m.id))}')">`+
       `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(m.name||'Floor map')}</div></div>`+
       `<div class="pp-card-sub">${jsEsc(m.sheetName||'')}</div>`+
-      `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}</div>`+
+      `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}`+
+        `${fm.cachedIds&&fm.cachedIds.has(fmIdOf(m.id))?'<span style="color:var(--green-dark)">✓ Saved offline</span>':''}</div>`+
     `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor map" data-id="${jsEsc(fmIdOf(m.id))}" data-name="${jsEsc(m.name||'Floor map')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`).join('')+'</div>';
   root.innerHTML=
     '<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
       '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
-      '<button class="btn btn-primary" onclick="fmNew()">+ New floor map</button></div>'+body;
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+        (fm.maps&&fm.maps.length? '<button class="btn" '+(fm.saveAll?'disabled':'')+' onclick="fmSaveAllOffline()">'+(fm.saveAll? 'Saving '+fm.saveAll.done+' of '+fm.saveAll.total+'…' : '⬇ Save for offline')+'</button>' : '')+
+        '<button class="btn btn-primary" onclick="fmNew()">+ New floor map</button></div></div>'+
+    (fm.listOfflineAt? '<div class="fm-banner fm-warn">📴 Offline — showing the list saved '+jsEsc(new Date(fm.listOfflineAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'. Maps marked “Saved offline” will open.</div>' : '')+
+    (fm.saveMsg? '<div class="fm-banner">'+jsEsc(fm.saveMsg)+'</div>' : '')+
+    body+
+    (fm.cachedIds&&fm.cachedIds.size? '<div style="margin-top:14px"><button class="btn btn-sm btn-ghost" onclick="fmClearOffline()">Remove saved copies from this device</button></div>' : '');
 }
 
 // ── New map: setup ──
@@ -1928,21 +2060,82 @@ function fmTeardownMap(){
 async function fmOpenMap(id){
   fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
   fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null; fm.techFilter='';
+  fm.offline=false; fm.cachedAt=null; fm.refreshing=false; fm.refreshError='';
   fm.loading=true; fm.error=''; fmPaint();
+  const tok=fm.openToken={}; // lets a slow load notice the tech has since opened/left another map
+  // Saved copy first: opens instantly (and with no signal), then refreshes behind it.
+  const cached=await fmRaceTimeout(fmCacheGetMap(id),3000); // a stuck cache must never block the live path
+  if(fm.openToken!==tok) return;
+  if(cached){
+    await fmOverlayOutbox(cached.sheet,cached.map.sheetId);
+    if(fm.openToken!==tok) return;
+    fmApply(cached.map,cached.sheet,cached.blob,cached.acts,'',cached.savedAt);
+    jsRefreshOutbox();
+    fmRefreshOpen(id,tok,cached); // background; not awaited
+    return;
+  }
+  // Never saved on this device: needs the network, and is saved for next time.
   try{
-    const r=await fmFetch('GET','/floormaps/'+encodeURIComponent(id)); fm.map=r.map;
-    const [sheet, blob, acts]=await Promise.all([
-      jsApi('/jobsheet/sheet?id='+encodeURIComponent(fm.map.sheetId)).catch(e=>{ fm.sheetError=e.message||'Failed to load the job sheet'; return null; }),
-      fmFetchBlob('/floormaps/'+encodeURIComponent(id)+'/image'),
-      // Who-did-what log for this sheet. Best-effort: if it fails the map still
-      // works, it just shows no attribution (null = not loaded, [] = none logged).
-      jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(fm.map.sheetId)+'&limit=5000').then(d=>d.items||[]).catch(()=>null),
-    ]);
-    fm.sheet=sheet; fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob);
-    fm.act=acts? fmBuildActivity(acts) : null;
-    if(fm.act) fm.act.truncated=acts.length>=5000; // server returns only the newest 5000
-  }catch(e){ fm.error=e.message||'Failed to load floor map'; }
-  fm.loading=false; fmPaint();
+    const b=await fmFetchMapBundle(id,null);
+    if(fm.openToken!==tok) return;
+    fmApply(b.map,b.sheet,b.blob,b.acts,b.sheetError,null);
+    if(b.sheet) fmCacheSaveMap(id,b);
+  }catch(e){
+    if(fm.openToken!==tok) return;
+    fm.error=fmIsOffline(e)? 'No connection, and this map hasn\'t been saved on this device yet. Open it once with signal (or use "Save for offline" on the list) and it will work offline after that.' : (e.message||'Failed to load floor map');
+    fm.loading=false; fmPaint();
+  }
+}
+function fmSetActs(acts){
+  fm.rawActs=acts||null;
+  fm.act=acts? fmBuildActivity(acts) : null;
+  if(fm.act) fm.act.truncated=acts.length>=5000; // server returns only the newest 5000
+}
+// Puts a loaded map on screen. `cachedAt` is set when it came from the saved copy.
+function fmApply(map,sheet,blob,acts,sheetError,cachedAt){
+  if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
+  fm.map=map; fm.sheet=sheet; fm.sheetError=sheetError||'';
+  fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob); fmSetActs(acts);
+  fm.cachedAt=cachedAt||null; fm.loading=false; fm.error=''; fmPaint();
+}
+// After showing the saved copy: fetch fresh data and swap it in. Pins aren't
+// replaced while the tech is editing them; if the plan image is unchanged the
+// map isn't rebuilt (no flicker/re-zoom), only pins/progress/side panel update.
+async function fmRefreshOpen(id,tok,cached){
+  fm.refreshing=true; fm.refreshError=''; fmRenderBanner();
+  try{
+    const b=await fmFetchMapBundle(id,cached);
+    if(fm.openToken!==tok || fm.mode!=='map') return;
+    if(b.sheet) fmCacheSaveMap(id,b); // the server's view, before any queued edits are laid over it
+    const sheet=b.sheet||fm.sheet;
+    if(b.sheet){ await fmOverlayOutbox(b.sheet,b.map.sheetId); if(fm.openToken!==tok || fm.mode!=='map') return; }
+    fm.refreshing=false;
+    const map=(fm.editing||fm.dirty)? fm.map : b.map;
+    if(b.reusedBlob){
+      fm.map=map; fm.sheet=sheet; fm.sheetError=b.sheetError; fm.cachedAt=null; fm.offline=false;
+      fmBuildRowIndex(); fmSetActs(b.acts||fm.rawActs); fmRenderBanner(); fmAfterEdit();
+    } else fmApply(map,sheet,b.blob,b.acts||fm.rawActs,b.sheetError,null);
+  }catch(e){
+    if(fm.openToken!==tok || fm.mode!=='map') return;
+    fm.refreshing=false;
+    if(fmNoAccess(e)){ // access was removed: drop the saved copy and stop showing it
+      fmCacheDelMap(id); fm.map=null; fm.sheet=null; fm.error='You no longer have access to Floor Maps.'; fm.loading=false; fmPaint(); return;
+    }
+    if(fmIsOffline(e)) fm.offline=true; else fm.refreshError=String(e.message||e).slice(0,120);
+    fmRenderBanner();
+  }
+}
+function fmRenderBanner(){
+  const el=document.getElementById('fm-banner'); if(!el) return;
+  const t=fm.cachedAt? new Date(fm.cachedAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+  let h='';
+  if(fm.sheetError) h+=`<div class="fm-banner fm-warn">Couldn't load the job sheet (${jsEsc(fm.sheetError)}). Pins are shown without photos or status.</div>`;
+  if(fm.cachedAt){
+    if(fm.offline) h+=`<div class="fm-banner fm-warn">📴 Offline — showing the copy saved ${jsEsc(t)}. Ticks, notes and photos you add are kept on this phone and sync when you're back in range. Photos show as placeholders until then.</div>`;
+    else if(fm.refreshError) h+=`<div class="fm-banner fm-warn">Couldn't update (${jsEsc(fm.refreshError)}) — showing the copy saved ${jsEsc(t)}.</div>`;
+    else h+=`<div class="fm-banner">Showing the copy saved ${jsEsc(t)} · updating…</div>`;
+  }
+  el.innerHTML=h;
 }
 function fmBuildRowIndex(){
   fm.rowIndex=new Map();
@@ -1963,10 +2156,10 @@ function fmPaintMap(root){
   root.innerHTML=
     '<div class="fm-toolbar" id="fm-toolbar"></div>'+
     '<div class="js-outbox-bar" id="fm-outbox-bar" style="display:none"></div>'+
-    (fm.sheetError? `<div class="fm-banner fm-warn">Couldn't load the job sheet (${jsEsc(fm.sheetError)}). Pins are shown without photos or status.</div>` : '')+
+    '<div id="fm-banner"></div>'+
     `<div class="fm-layout"><div class="fm-map${fm.editing?' fm-editing':''}" id="fm-leaflet"></div><aside class="fm-side" id="fm-side"></aside></div>`+
     '<div class="js-modal-backdrop" id="fm-modal-backdrop" onclick="if(event.target===this)fmCloseDetail()"><div class="js-modal" id="fm-modal"></div></div>';
-  fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
+  fmRenderBanner(); fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
   jsRefreshOutbox(); // show any changes still queued offline
 }
 function fmRenderToolbar(){
@@ -2171,13 +2364,14 @@ async function fmDeleteMapById(id, name, fromMap){
   if(!confirm('Delete "'+name+'"? This removes the map and its floor plan image from the Smartsheet. The sheet\'s rows and photos are not touched.')) return false;
   try{
     await fmFetch('DELETE','/floormaps/'+encodeURIComponent(id));
+    fmCacheDelMap(id); // the deleted map's saved copy goes with it
     if(fromMap){ fm.dirty=false; fm.editing=false; fm.map=null; }
     fmLoadList(); return true;
   }catch(e){ alert('Delete failed: '+(e.message||e)); return false; }
 }
 function fmBackToList(){
   if(fm.dirty && !confirm('You have unsaved pin changes. Leave without saving them?')) return;
-  fm.dirty=false; fm.editing=false; fm.map=null; fm.mode='list';
+  fm.dirty=false; fm.editing=false; fm.map=null; fm.mode='list'; fm.openToken=null; // cancels any refresh still in flight
   if(fm.maps===null) fmLoadList(); else fmPaint();
 }
 
@@ -2292,20 +2486,22 @@ function fmShowDetail(label, r){
   if(!r){
     body=`<div class="js-empty">No row in <b>${jsEsc(fm.map.sheetName||'the sheet')}</b> matches “${jsEsc(label||'?')}”.</div>`;
   } else {
-    const i=s.rows.indexOf(r);
+    // Handlers address this desk by its Smartsheet row id, not its position, so a
+    // background refresh that re-orders the sheet can't redirect an edit to another desk.
+    const rid=jsEsc(String(r._rowId));
     if(r._rowId!=null){ fm.openRowId=r._rowId; if(!jsItemSessionStart[r._rowId]){ jsItemSessionStart[r._rowId]=Date.now(); jsItemSessionId[r._rowId]=jsRandId(); } }
     body='';
     const checks=jsCols(s,'checkbox'), photos=jsCols(s,'photo'), texts=jsCols(s,'text');
     if(checks.length) body+='<div><div class="js-field-label">Status</div><div style="display:grid;gap:8px">'+checks.map(c=>
-      `<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="fmSaveField(${i},'${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
+      `<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="fmSaveField('${rid}','${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
     if(photos.length) body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+photos.map(c=>{ const v=r[c.key];
       const img= jsIsUrl(v)? `<a href="${jsEsc(v)}" target="_blank" rel="noopener"><img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}"></a>`
         : `<div class="js-photo-lg${v?'':' js-photo-lg-empty'}">${JS_CAM}<span>${v?jsEsc(c.label):'No '+jsEsc(c.label.toLowerCase())}</span></div>`;
       const addLabel=(jsIsUrl(v)||v)?'Replace':'📷 Add photo';
       return `<figure style="margin:0">${img}<figcaption style="font-size:12px;color:var(--text3);margin-top:4px;display:flex;align-items:center;gap:8px"><span>${jsEsc(c.label)}</span>`+
-        `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="fmUploadPhoto(${i},'${c.key}',this)"></label></figcaption>`+
+        `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="fmUploadPhoto('${rid}','${c.key}',this)"></label></figcaption>`+
         `<div class="js-save-status" data-for="${c.key}"></div></figure>`; }).join('')+'</div></div>';
-    texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="fmSaveField(${i},'${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
+    texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="fmSaveField('${rid}','${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
     if(!body) body='<div class="js-empty">No details.</div>';
   }
   body+=fmActivityHtml(label);
@@ -2340,9 +2536,13 @@ async function fmReloadSheet(){
   if(!fm.map||fm.map.sheetId!==sid) return;
   // Edits still waiting in the offline outbox aren't on the server yet; lay them
   // back over the fresh data so a desk the tech already ticked doesn't flip back.
-  try{ for(const it of await jsOutboxAll()){ if(it.kind==='cell' && String(it.sheetId)===String(sid)){ const r=s.rows.find(x=>x._rowId===it.rowId); if(r) r['c'+it.columnId]=it.value; } } }catch(e){}
+  const forCache=fmSheetForCache(s); // the server's view, taken before queued edits are laid over it
+  await fmOverlayOutbox(s,sid);
   if(!fm.map||fm.map.sheetId!==sid) return;
   fm.sheet=s; fmBuildRowIndex(); fmAfterEdit();
+  // Keep the saved copy's rows current too (small record; the image isn't rewritten).
+  const key='map:'+fmIdOf(fm.map.id), c=await fmCacheGet(key);
+  if(c && c.owner===fmOwner()){ c.sheet=forCache; c.savedAt=Date.now(); fmCachePut(key,c); }
 }
 function fmAfterEdit(){
   if(fm.mode!=='map'||!fm.map) return;
@@ -2351,8 +2551,9 @@ function fmAfterEdit(){
 // One status tick / notes edit -> Smartsheet via the Job Sheets cell route.
 // Applied locally right away (pin recolors, progress moves); a network failure
 // queues it in the shared offline outbox; a real rejection reverts a tick.
-async function fmSaveField(i,colKey,value){
-  const s=fm.sheet, r=s&&s.rows[i]; if(!r) return;
+function fmRowById(rid){ const s=fm.sheet; return s? s.rows.find(x=>String(x._rowId)===String(rid))||null : null; }
+async function fmSaveField(rid,colKey,value){
+  const s=fm.sheet, r=fmRowById(rid); if(!r) return;
   if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
   const setSt=fmStatusSetter(colKey); setSt('Saving…','');
   const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
@@ -2373,9 +2574,9 @@ async function fmSaveField(i,colKey,value){
 // The completion photo: opens the phone camera, uploads into the desk's photo
 // cell, then re-opens the desk showing the new picture (and a green pin if the
 // photo is what marks the desk done). Offline: queued with the file itself.
-async function fmUploadPhoto(i,colKey,inputEl){
+async function fmUploadPhoto(rid,colKey,inputEl){
   const file=inputEl.files&&inputEl.files[0]; if(!file) return;
-  const s=fm.sheet, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
+  const s=fm.sheet, r=fmRowById(rid); if(!r){ inputEl.value=''; return; }
   const setSt=fmStatusSetter(colKey), label=String(r[jsIdent(s)]||'');
   const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
   setSt('Uploading…','');
@@ -2443,8 +2644,8 @@ function jsFilteredRows(s){const q=jsQuery.trim().toLowerCase();const idk=jsIden
 
 async function jsApi(path){
   const token=await getApiToken();
-  const res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  let res; try{ res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); }catch(netErr){ const oe=new Error('No connection'); oe.offline=true; throw oe; }
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} const he=new Error(m); he.status=res.status; throw he; }
   return res.json();
 }
 
@@ -5395,23 +5596,38 @@ async function loadMyRole(){
     const res=await fetch('/api/me',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
     if(res.ok){
       const me=await res.json();
-      currentUserIsEditor=!!me.isEditor;
-      currentUserIsFinance=!!me.isFinance;
-      currentUserIsPlanner=!!me.isPlanner;
-      currentUserIsTester=!!me.isTester;
-      // Read-only users get `is-viewer` (write controls hide); editors get
-      // `is-editor`, which reveals the Manager-view tab (hidden by default).
-      // Non-editors never see the Manager tab at all.
-      document.body.classList.toggle('is-viewer', !currentUserIsEditor);
-      document.body.classList.toggle('is-editor', currentUserIsEditor);
-      // `is-finance` reveals the Invoice tab for the FINANCE_UPNS group only.
-      document.body.classList.toggle('is-finance', currentUserIsFinance);
-      // `is-planner` reveals the Project Planning tab for the Project Planners group (PLANNER_UPNS) only.
-      document.body.classList.toggle('is-planner', currentUserIsPlanner);
-      // `is-tester` reveals the Job Sheets + Floor Maps tabs for the Testers group (TESTER_UPNS) only.
-      document.body.classList.toggle('is-tester', currentUserIsTester);
+      applyMyRole(me);
+      // Remember it for this browser session only (same scope as the sign-in
+      // itself) so a reload with no signal still shows the right tabs. UX only:
+      // the API re-checks every request, so a stale flag can't grant access.
+      try{ sessionStorage.setItem('jc-me', JSON.stringify({u: msalAccount&&msalAccount.username, me})); }catch(_){}
     }
-  }catch(e){ console.error('Failed to load role:',e); }
+  }catch(e){
+    console.error('Failed to load role:',e);
+    // Couldn't reach the API (e.g. no signal): fall back to the role we saw
+    // earlier this session, but only for the same signed-in account.
+    try{
+      const c=JSON.parse(sessionStorage.getItem('jc-me')||'null');
+      if(c && c.me && msalAccount && c.u===msalAccount.username) applyMyRole(c.me);
+    }catch(_){}
+  }
+}
+function applyMyRole(me){
+  currentUserIsEditor=!!me.isEditor;
+  currentUserIsFinance=!!me.isFinance;
+  currentUserIsPlanner=!!me.isPlanner;
+  currentUserIsTester=!!me.isTester;
+  // Read-only users get `is-viewer` (write controls hide); editors get
+  // `is-editor`, which reveals the Manager-view tab (hidden by default).
+  // Non-editors never see the Manager tab at all.
+  document.body.classList.toggle('is-viewer', !currentUserIsEditor);
+  document.body.classList.toggle('is-editor', currentUserIsEditor);
+  // `is-finance` reveals the Invoice tab for the FINANCE_UPNS group only.
+  document.body.classList.toggle('is-finance', currentUserIsFinance);
+  // `is-planner` reveals the Project Planning tab for the Project Planners group (PLANNER_UPNS) only.
+  document.body.classList.toggle('is-planner', currentUserIsPlanner);
+  // `is-tester` reveals the Job Sheets + Floor Maps tabs for the Testers group (TESTER_UPNS) only.
+  document.body.classList.toggle('is-tester', currentUserIsTester);
 }
 
 // ── Graph API helpers ─────────────────────────────────────────────────────────
@@ -5432,6 +5648,9 @@ async function getApiToken(){
     const r = await msalInstance.acquireTokenSilent({ scopes: API_SCOPES, account: msalAccount });
     return r.accessToken;
   } catch(e) {
+    // No connection: a sign-in popup can't load anyway (and would hang the
+    // caller), so fail fast and let the caller treat it as "offline".
+    if(navigator.onLine === false){ const oe = new Error('Offline'); oe.offline = true; throw oe; }
     const r = await msalInstance.acquireTokenPopup({ scopes: API_SCOPES, account: msalAccount });
     return r.accessToken;
   }
