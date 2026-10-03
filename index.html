@@ -559,6 +559,10 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-side{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:min(72vh,720px);overflow-y:auto;box-sizing:border-box}
 .fm-side h3{font-size:13px;font-weight:600;color:var(--text2);margin:12px 0 4px}
 .fm-pin-wrap{background:transparent;border:none}
+.fm-prog{flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.fm-prog-bar{flex:1;min-width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
+.fm-prog-fill{height:100%;background:#16A37F;border-radius:4px;transition:width .3s}
+.fm-prog-txt{font-size:13px;color:var(--text2)}
 .fm-route-lbl{position:absolute;transform:translate(-50%,-50%);padding:1px 7px;border-radius:10px;background:#fff;border:1.5px solid #2563EB;color:#1E3A8A;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .fm-pin{position:absolute;transform:translate(-50%,-50%);min-width:24px;height:24px;padding:0 6px;box-sizing:border-box;border-radius:12px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .fm-pin-done{background:#16A37F}
@@ -1478,7 +1482,7 @@ function switchTab(id){
 // + the rendered plan image come from the Testers-gated /api/floormaps.
 let fm={mode:'list', maps:null, loading:false, error:'', draft:null,
   map:null, sheet:null, sheetError:'', imgUrl:null, editing:false, dirty:false, query:'', placeLabel:null,
-  L:null, lmap:null, markers:[], rowIndex:null, act:null, techFilter:'', routeLayer:null};
+  L:null, lmap:null, markers:[], rowIndex:null, act:null, techFilter:'', routeLayer:null, lastLabel:'', openRowId:null};
 const FM_COLORS=[
   {key:'yellow',label:'Yellow',rgb:[255,255,0]},
   {key:'orange',label:'Orange',rgb:[255,165,0]},
@@ -1958,10 +1962,12 @@ function fmPaintMap(root){
   }
   root.innerHTML=
     '<div class="fm-toolbar" id="fm-toolbar"></div>'+
+    '<div class="js-outbox-bar" id="fm-outbox-bar" style="display:none"></div>'+
     (fm.sheetError? `<div class="fm-banner fm-warn">Couldn't load the job sheet (${jsEsc(fm.sheetError)}). Pins are shown without photos or status.</div>` : '')+
     `<div class="fm-layout"><div class="fm-map${fm.editing?' fm-editing':''}" id="fm-leaflet"></div><aside class="fm-side" id="fm-side"></aside></div>`+
     '<div class="js-modal-backdrop" id="fm-modal-backdrop" onclick="if(event.target===this)fmCloseDetail()"><div class="js-modal" id="fm-modal"></div></div>';
   fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
+  jsRefreshOutbox(); // show any changes still queued offline
 }
 function fmRenderToolbar(){
   const el=document.getElementById('fm-toolbar'); if(!el) return;
@@ -1977,7 +1983,44 @@ function fmRenderToolbar(){
       : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span>`+
         (fm.act? '<button class="btn btn-sm" onclick="fmShowTechSummary()">👥 Tech summary</button>' : '')+
         `<button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
-        `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`);
+        `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`+fmProgressHtml());
+}
+// Done / open / flagged tally over pins that have a matching sheet row (a pin
+// with no row can't be completed, so it isn't counted).
+function fmProgress(){
+  const t={done:0,todo:0,flag:0};
+  fm.map.pins.forEach(p=>{ const k=fmPinState(p); if(t[k]!=null) t[k]++; });
+  t.total=t.done+t.todo+t.flag; return t;
+}
+function fmProgressHtml(){
+  if(fm.editing||!fm.sheet) return '';
+  const p=fmProgress(); if(!p.total) return '';
+  const pct=Math.round(p.done/p.total*100), next=fmNextOpenIndex();
+  return '<div class="fm-prog"><div class="fm-prog-bar"><div class="fm-prog-fill" style="width:'+pct+'%"></div></div>'+
+    '<span class="fm-prog-txt"><b>'+p.done+' of '+p.total+'</b> desks done · '+pct+'%'+(p.flag?' · <span style="color:#F04438">'+p.flag+' flagged</span>':'')+'</span>'+
+    '<button class="btn btn-sm btn-primary" '+(next<0?'disabled':'')+' onclick="fmGoNext()">➜ Next open desk</button></div>';
+}
+// The closest unfinished desk to the one the tech last had open (so they can
+// walk the floor without hunting), or the lowest-numbered one to start. Pins on
+// a row that's done/flagged/unmatched are skipped; the current desk is skipped.
+function fmNextOpenIndex(){
+  const cur=fmNorm(fm.lastLabel||''), W=fm.map.imgW||1, H=fm.map.imgH||1;
+  const cands=[]; fm.map.pins.forEach((p,i)=>{ if(fmPinState(p)==='todo' && fmNorm(p.label)!==cur) cands.push(i); });
+  if(!cands.length) return -1;
+  const from=cur? fm.map.pins.find(p=>fmNorm(p.label)===cur) : null;
+  if(from){
+    const d=i=>{ const p=fm.map.pins[i]; return Math.hypot((p.x-from.x)*W,(p.y-from.y)*H); };
+    return cands.reduce((best,i)=>d(i)<d(best)?i:best);
+  }
+  return cands.reduce((best,i)=>fmNaturalCmp(fm.map.pins[i].label,fm.map.pins[best].label)<0?i:best);
+}
+function fmGoNext(){
+  const i=fmNextOpenIndex(); if(i<0) return;
+  if(fm.techFilter){ fm.techFilter=''; fmDrawPins(); fmRenderSide(); } // make sure the next desk's pin is on screen
+  fmCloseDetail();
+  const p=fm.map.pins[i];
+  if(fm.lmap) fm.lmap.flyTo(fmLatLng(p), Math.max(fm.lmap.getZoom(), fm.lmap.getMinZoom()+3), {duration:.5});
+  fmOpenPin(i);
 }
 async function fmInitLeaflet(){
   const host=document.getElementById('fm-leaflet'); if(!host||!fm.imgUrl) return;
@@ -2238,30 +2281,117 @@ function fmShowTechSummary(){
 
 // ── Pin detail (read-only; edits + photo capture live in Job Sheets) ──
 function fmOpenPin(i){ const p=fm.map.pins[i]; if(p) fmShowDetail(p.label, fmRowFor(p.label)); }
+// A desk's popup. Techs complete the desk right here: status ticks, notes and
+// the completion photo save through the same Job Sheets paths (live, or queued
+// offline) and are attributed + timed the same way. Opening a desk starts (or
+// resumes) its labor-duration session, shared with Job Sheets (jsComputeDuration).
 function fmShowDetail(label, r){
   const s=fm.sheet, modal=document.getElementById('fm-modal'); if(!modal) return;
+  fm.lastLabel=label;
   let body;
   if(!r){
     body=`<div class="js-empty">No row in <b>${jsEsc(fm.map.sheetName||'the sheet')}</b> matches “${jsEsc(label||'?')}”.</div>`;
   } else {
+    const i=s.rows.indexOf(r);
+    if(r._rowId!=null){ fm.openRowId=r._rowId; if(!jsItemSessionStart[r._rowId]){ jsItemSessionStart[r._rowId]=Date.now(); jsItemSessionId[r._rowId]=jsRandId(); } }
     body='';
     const checks=jsCols(s,'checkbox'), photos=jsCols(s,'photo'), texts=jsCols(s,'text');
-    if(checks.length) body+='<div><div class="js-field-label">Status</div><div class="js-pills">'+checks.map(c=> r[c.key]
-      ? `<span class="js-pill js-pill-on">✓ ${jsEsc(c.label)}</span>` : `<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div></div>';
+    if(checks.length) body+='<div><div class="js-field-label">Status</div><div style="display:grid;gap:8px">'+checks.map(c=>
+      `<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="fmSaveField(${i},'${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
     if(photos.length) body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+photos.map(c=>{ const v=r[c.key];
       const img= jsIsUrl(v)? `<a href="${jsEsc(v)}" target="_blank" rel="noopener"><img class="js-photo-full" src="${jsEsc(v)}" alt="${jsEsc(c.label)}"></a>`
         : `<div class="js-photo-lg${v?'':' js-photo-lg-empty'}">${JS_CAM}<span>${v?jsEsc(c.label):'No '+jsEsc(c.label.toLowerCase())}</span></div>`;
-      return `<figure style="margin:0">${img}<figcaption style="font-size:12px;color:var(--text3);margin-top:4px">${jsEsc(c.label)}</figcaption></figure>`; }).join('')+'</div></div>';
-    texts.forEach(c=>{ if(r[c.key]) body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><div style="font-size:14px;color:var(--text);white-space:pre-wrap">${jsEsc(r[c.key])}</div></div>`; });
+      const addLabel=(jsIsUrl(v)||v)?'Replace':'📷 Add photo';
+      return `<figure style="margin:0">${img}<figcaption style="font-size:12px;color:var(--text3);margin-top:4px;display:flex;align-items:center;gap:8px"><span>${jsEsc(c.label)}</span>`+
+        `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="fmUploadPhoto(${i},'${c.key}',this)"></label></figcaption>`+
+        `<div class="js-save-status" data-for="${c.key}"></div></figure>`; }).join('')+'</div></div>';
+    texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="fmSaveField(${i},'${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
     if(!body) body='<div class="js-empty">No details.</div>';
   }
   body+=fmActivityHtml(label);
+  if(r){
+    body+= fmNextOpenIndex()>=0? '<div><button class="btn btn-primary" style="width:100%" onclick="fmGoNext()">➜ Next open desk</button></div>'
+         : (fmRowState(r)==='todo'? '<div class="fm-muted" style="text-align:center">This is the last open desk.</div>'
+            : (fmProgress().total? '<div class="fm-muted" style="text-align:center">🎉 No open desks left.</div>' : ''));
+  }
   modal.innerHTML=
     `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(label||'?')}</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>`+
     `<div class="js-modal-body">${body}</div>`;
   document.getElementById('fm-modal-backdrop').classList.add('open');
 }
-function fmCloseDetail(){ const b=document.getElementById('fm-modal-backdrop'); if(b) b.classList.remove('open'); }
+function fmCloseDetail(){
+  const b=document.getElementById('fm-modal-backdrop'); if(b) b.classList.remove('open');
+  if(fm.openRowId!=null){ delete jsItemSessionStart[fm.openRowId]; delete jsItemSessionId[fm.openRowId]; fm.openRowId=null; }
+}
+function fmStatusSetter(colKey){
+  const st=document.querySelector('#fm-modal .js-save-status[data-for="'+colKey+'"]');
+  return (t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
+}
+function fmMeta(r,colKey){
+  const s=fm.sheet, col=(s.columns||[]).find(c=>c.key===colKey);
+  return {capturedAt:new Date().toISOString(), rowLabel:String(r[jsIdent(s)]||''), columnLabel:col?col.label:colKey,
+    sheetName:s.name||fm.map.sheetName||'', durationSec:jsComputeDuration(r._rowId), sessionId:jsCurrentSessionId(r._rowId)};
+}
+// Re-reads the sheet (photos come back as fresh URLs only on a re-fetch) and
+// repaints pins, tally and progress. Ignored if the tech has since left the map.
+async function fmReloadSheet(){
+  const sid=fm.map&&fm.map.sheetId; if(!sid) return;
+  const s=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(sid));
+  if(!fm.map||fm.map.sheetId!==sid) return;
+  // Edits still waiting in the offline outbox aren't on the server yet; lay them
+  // back over the fresh data so a desk the tech already ticked doesn't flip back.
+  try{ for(const it of await jsOutboxAll()){ if(it.kind==='cell' && String(it.sheetId)===String(sid)){ const r=s.rows.find(x=>x._rowId===it.rowId); if(r) r['c'+it.columnId]=it.value; } } }catch(e){}
+  if(!fm.map||fm.map.sheetId!==sid) return;
+  fm.sheet=s; fmBuildRowIndex(); fmAfterEdit();
+}
+function fmAfterEdit(){
+  if(fm.mode!=='map'||!fm.map) return;
+  fmDrawPins(); fmRenderSide(); fmRenderToolbar();
+}
+// One status tick / notes edit -> Smartsheet via the Job Sheets cell route.
+// Applied locally right away (pin recolors, progress moves); a network failure
+// queues it in the shared offline outbox; a real rejection reverts a tick.
+async function fmSaveField(i,colKey,value){
+  const s=fm.sheet, r=s&&s.rows[i]; if(!r) return;
+  if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
+  const setSt=fmStatusSetter(colKey); setSt('Saving…','');
+  const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
+  try{
+    await jsSaveCellLive(sheetId,r._rowId,columnId,value,meta);
+    r[colKey]=value; setSt('Saved','ok'); fmAfterEdit();
+  }catch(e){
+    if(e.offline){
+      await jsOutboxSupersede(sheetId,r._rowId,columnId,'cell');
+      await jsOutboxAdd(Object.assign({kind:'cell',sheetId,rowId:r._rowId,columnId,value},meta));
+      r[colKey]=value; setSt('Saved offline — will sync','ok'); fmAfterEdit(); jsRefreshOutbox();
+    } else {
+      setSt(e.message||'Save failed','err');
+      const inp=document.querySelector('#fm-modal input[type="checkbox"][data-key="'+colKey+'"]'); if(inp) inp.checked=!!r[colKey];
+    }
+  }
+}
+// The completion photo: opens the phone camera, uploads into the desk's photo
+// cell, then re-opens the desk showing the new picture (and a green pin if the
+// photo is what marks the desk done). Offline: queued with the file itself.
+async function fmUploadPhoto(i,colKey,inputEl){
+  const file=inputEl.files&&inputEl.files[0]; if(!file) return;
+  const s=fm.sheet, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
+  const setSt=fmStatusSetter(colKey), label=String(r[jsIdent(s)]||'');
+  const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
+  setSt('Uploading…','');
+  try{
+    await jsUploadPhotoLive(sheetId,r._rowId,columnId,file,meta);
+    try{ await fmReloadSheet(); if(fm.map&&fm.map.sheetId===sheetId) fmShowDetail(label, fmRowFor(label)); }
+    catch(e2){ setSt('Uploaded — reload the map to see it','ok'); }
+  }catch(e){
+    if(e.offline){
+      await jsOutboxSupersede(sheetId,r._rowId,columnId,'photo');
+      await jsOutboxAdd(Object.assign({kind:'photo',sheetId,rowId:r._rowId,columnId,blob:file},meta));
+      setSt('Saved offline — will sync','ok'); jsRefreshOutbox();
+    } else setSt(e.message||'Upload failed','err');
+  }
+  inputEl.value='';
+}
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ const b=document.getElementById('fm-modal-backdrop'); if(b&&b.classList.contains('open')) fmCloseDetail(); } });
 
 // ── Job Sheets viewer (Testers group) ───────────────────────────────────────
@@ -2678,8 +2808,13 @@ async function jsRefreshOutbox(){
   try{ jsOutboxItems=await jsOutboxAll(); }catch(e){ jsOutboxItems=[]; }
   jsRenderOutboxBar();
 }
+// The queue is shared: the same status/Sync-now bar shows on Job Sheets and on
+// a Floor Maps map (each tab has its own element, so ids stay unique).
 function jsRenderOutboxBar(){
-  const el=document.getElementById('js-outbox-bar'); if(!el) return;
+  ['js-outbox-bar','fm-outbox-bar'].forEach(id=>jsRenderOutboxBarInto(document.getElementById(id)));
+}
+function jsRenderOutboxBarInto(el){
+  if(!el) return;
   if(!jsOutboxItems.length && !jsOutboxMsg){ el.innerHTML=''; el.style.display='none'; return; }
   el.style.display='block';
   const failed=jsOutboxItems.filter(x=>x.status==='failed');
@@ -2717,6 +2852,8 @@ async function jsSyncOutbox(){
   // Refresh the open sheet so newly-synced edits/photos show their real
   // server state instead of the optimistic local one.
   if(jsSheetId){ try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId)); jsRenderCards(); jsUpdateProgress(); }catch(e){} }
+  // Same for an open floor map (its pins/progress read the same sheet).
+  if(fm.mode==='map' && fm.map && fm.sheet){ try{ await fmReloadSheet(); }catch(e){} }
 }
 
 // The actual network calls, shared by the interactive save/upload paths and
