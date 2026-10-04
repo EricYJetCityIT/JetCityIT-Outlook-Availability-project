@@ -559,6 +559,21 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-side{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:min(72vh,720px);overflow-y:auto;box-sizing:border-box}
 .fm-side h3{font-size:13px;font-weight:600;color:var(--text2);margin:12px 0 4px}
 .fm-pin-wrap{background:transparent;border:none}
+#fm-print{display:none}
+.fm-rep-table{width:100%;border-collapse:collapse;font-size:12px}
+.fm-rep-table th,.fm-rep-table td{border:1px solid var(--border);padding:4px 7px;text-align:left;vertical-align:top}
+.fm-rep-table th{background:var(--surface2);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+@media print{
+  body.fm-printing > *:not(#fm-print){display:none!important}
+  body.fm-printing #fm-print{display:block!important;color:#000;background:#fff;font:12px/1.35 system-ui,sans-serif;padding:0}
+  body.fm-printing .fm-rep-table{font-size:10.5px}
+  body.fm-printing .fm-rep-table th,body.fm-printing .fm-rep-table td{border:1px solid #bbb;color:#000}
+  body.fm-printing .fm-rep-table tr{page-break-inside:avoid}
+  body.fm-printing .fm-rep-table thead{display:table-header-group}
+}
+.fm-chip{display:inline-flex;align-items:center;padding:3px 9px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);border-radius:14px;font:inherit;font-size:12px;cursor:pointer}
+.fm-chip.on{border-color:var(--text);color:var(--text);font-weight:700;background:var(--surface2)}
+.fm-prog-eta{font-size:13px;color:var(--text3);cursor:help}
 .fm-prog{flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .fm-prog-bar{flex:1;min-width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
 .fm-prog-fill{height:100%;background:#16A37F;border-radius:4px;transition:width .3s}
@@ -1482,7 +1497,7 @@ function switchTab(id){
 // + the rendered plan image come from the Testers-gated /api/floormaps.
 let fm={mode:'list', maps:null, loading:false, error:'', draft:null,
   map:null, sheet:null, sheetError:'', imgUrl:null, editing:false, dirty:false, query:'', placeLabel:null,
-  L:null, lmap:null, markers:[], rowIndex:null, act:null, techFilter:'', routeLayer:null, lastLabel:'', openRowId:null};
+  L:null, lmap:null, markers:[], rowIndex:null, act:null, techFilter:'', statusFilter:'', routeLayer:null, lastLabel:'', openRowId:null};
 const FM_COLORS=[
   {key:'yellow',label:'Yellow',rgb:[255,255,0]},
   {key:'orange',label:'Orange',rgb:[255,165,0]},
@@ -2059,7 +2074,7 @@ function fmTeardownMap(){
 }
 async function fmOpenMap(id){
   fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
-  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null; fm.techFilter='';
+  fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null; fm.techFilter=''; fm.statusFilter='';
   fm.offline=false; fm.cachedAt=null; fm.refreshing=false; fm.refreshError='';
   fm.loading=true; fm.error=''; fmPaint();
   const tok=fm.openToken={}; // lets a slow load notice the tech has since opened/left another map
@@ -2175,6 +2190,7 @@ function fmRenderToolbar(){
         `<div class="fm-hint">${fm.placeLabel? `Click the map where <b>${jsEsc(fm.placeLabel)}</b> goes.` : 'Click the map to add a pin · drag a pin to move it · click a pin to renumber or delete it · pick a "not on map" row to place it.'}</div>`
       : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span>`+
         (fm.act? '<button class="btn btn-sm" onclick="fmShowTechSummary()">👥 Tech summary</button>' : '')+
+        (fm.sheet? '<button class="btn btn-sm" onclick="fmShowReport()">📄 Closeout report</button>' : '')+
         `<button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
         `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`+fmProgressHtml());
 }
@@ -2188,9 +2204,10 @@ function fmProgress(){
 function fmProgressHtml(){
   if(fm.editing||!fm.sheet) return '';
   const p=fmProgress(); if(!p.total) return '';
-  const pct=Math.round(p.done/p.total*100), next=fmNextOpenIndex();
+  const pct=Math.round(p.done/p.total*100), next=fmNextOpenIndex(), eta=fmEta();
   return '<div class="fm-prog"><div class="fm-prog-bar"><div class="fm-prog-fill" style="width:'+pct+'%"></div></div>'+
     '<span class="fm-prog-txt"><b>'+p.done+' of '+p.total+'</b> desks done · '+pct+'%'+(p.flag?' · <span style="color:#F04438">'+p.flag+' flagged</span>':'')+'</span>'+
+    (eta? '<span class="fm-prog-eta" title="'+jsEsc('Estimate: '+eta.open+' open desks × about '+jsFmtDuration(eta.per)+' per desk'+(eta.withGap?' (including walking between desks)':'')+', from '+eta.n+' desks timed on this sheet. It is total work left — with several techs on the floor it will finish sooner.')+'">≈ '+fmFmtHM(eta.sec)+' of work left</span>' : '')+
     '<button class="btn btn-sm btn-primary" '+(next<0?'disabled':'')+' onclick="fmGoNext()">➜ Next open desk</button></div>';
 }
 // The closest unfinished desk to the one the tech last had open (so they can
@@ -2241,7 +2258,7 @@ function fmDrawPins(){
   fm.markers.forEach(m=>m.remove()); fm.markers=[];
   const touched=fmTechTouched(); // desks the picked tech worked, or null = show all
   fm.map.pins.forEach((p,i)=>{
-    if(touched && !touched.has(fmNorm(p.label))) return;
+    if(!fmPinVisible(p,touched)) return;
     const icon=L.divIcon({className:'fm-pin-wrap', iconSize:[0,0],
       html:`<div class="fm-pin fm-pin-${fmPinState(p)}${fm.editing?' fm-pin-edit':''}">${jsEsc(p.label||'?')}</div>`});
     const mk=L.marker(fmLatLng(p),{icon, draggable:fm.editing, keyboard:false, riseOnHover:true}).addTo(fm.lmap);
@@ -2257,6 +2274,18 @@ function fmPickedTech(){
   return fm.act.techs.find(t=>t.uk===fm.techFilter)||null;
 }
 function fmTechTouched(){ const t=fmPickedTech(); return t? new Set(t.visits.map(v=>v.n)) : null; }
+// Status filter (open / flagged / done): like the tech filter it only applies in
+// view mode, and the two combine (a tech's open desks, etc.).
+function fmStatusActive(){ return (fm.editing||!fm.statusFilter)? '' : fm.statusFilter; }
+function fmPinVisible(p,touched){
+  if(touched && !touched.has(fmNorm(p.label))) return false;
+  const f=fmStatusActive(); return !f || fmPinState(p)===f;
+}
+function fmSetStatus(v){
+  fm.statusFilter=(fm.statusFilter===v)? '' : v; // tapping the active chip clears it
+  if(fm.lmap) fm.lmap.closePopup();
+  fmDrawPins(); fmRenderSide();
+}
 function fmSetTech(uk){
   fm.techFilter=uk||'';
   if(fm.lmap) fm.lmap.closePopup();
@@ -2273,7 +2302,7 @@ function fmDrawRoute(){
   fm.map.pins.forEach(p=>{ const n=fmNorm(p.label); if(n && !pinFor.has(n)) pinFor.set(n,p); });
   for(let i=1;i<t.visits.length;i++){
     const a=pinFor.get(t.visits[i-1].n), b=pinFor.get(t.visits[i].n), v=t.visits[i];
-    if(!a||!b) continue;
+    if(!a||!b||!fmPinVisible(a,null)||!fmPinVisible(b,null)) continue; // no line to a hidden pin
     const A=fmLatLng(a), B=fmLatLng(b), measured=v.gapSec!=null;
     L.polyline([A,B],{color:measured?'#2563EB':'#94A3B8', weight:measured?3:2, opacity:.85, dashArray:measured?null:'6 6', interactive:false}).addTo(g);
     if(measured) L.marker([(A[0]+B[0])/2,(A[1]+B[1])/2],{interactive:false, keyboard:false,
@@ -2300,8 +2329,13 @@ function fmRenderSide(){
         fm.act.techs.map(t=>`<option value="${jsEsc(t.uk)}"${t.uk===fm.techFilter?' selected':''}>${jsEsc(t.name)} (${t.desks} desk${t.desks===1?'':'s'})</option>`).join('')+'</select>'+
       (fm.techFilter? '<div class="fm-muted" style="margin-top:6px;font-size:12px">Only this tech\'s desks are shown. Blue line = their path between desks, label = time between them; dashed gray = a break or unmeasured.</div>' : '')
       : '')+
-    `<div class="fm-legend" style="margin-top:10px"><span><span class="fm-dot fm-dot-done"></span>Done ${tally.done}</span><span><span class="fm-dot fm-dot-todo"></span>Open ${tally.todo}</span>`+
-      `<span><span class="fm-dot fm-dot-flag"></span>Flagged ${tally.flag}</span>${tally.nomatch?`<span><span class="fm-dot fm-dot-nomatch"></span>No row ${tally.nomatch}</span>`:''}</div>`+
+    // Done / Open / Flagged double as filters in view mode (tap again to clear).
+    `<div class="fm-legend" style="margin-top:10px">`+
+      [['done','Done',tally.done],['todo','Open',tally.todo],['flag','Flagged',tally.flag]].map(([k,l,n])=> fm.editing
+        ? `<span><span class="fm-dot fm-dot-${k}"></span>${l} ${n}</span>`
+        : `<button type="button" class="fm-chip${fm.statusFilter===k?' on':''}" onclick="fmSetStatus('${k}')"><span class="fm-dot fm-dot-${k}"></span>${l} ${n}</button>`).join('')+
+      `${tally.nomatch?`<span><span class="fm-dot fm-dot-nomatch"></span>No row ${tally.nomatch}</span>`:''}</div>`+
+    (fmStatusActive()? `<div class="fm-muted" style="font-size:12px;margin-bottom:4px">Showing only ${fmStatusActive()==='todo'?'open':fmStatusActive()==='flag'?'flagged':'done'} desks. Tap the same chip to show all.</div>` : '')+
     (offMap.length? `<h3>Not on map (${offMap.length})</h3>`+offMap.map(r=>rowBtn(r,false)).join('') : '')+
     (orphans.length? `<h3>Pins with no matching row (${orphans.length})</h3>`+orphans.map(p=>`<button class="fm-row" data-l="${jsEsc(p.label)}" onclick="fmFocusLabel(this.dataset.l)"><span class="fm-dot fm-dot-nomatch"></span>${jsEsc(p.label||'?')}</button>`).join('') : '')+
     `<h3>On map (${onMap.length})</h3>`+(onMap.length? onMap.map(r=>rowBtn(r,true)).join('') : '<div class="fm-muted">None yet.</div>');
@@ -2345,7 +2379,7 @@ function fmToggleEdit(){
   if(fm.editing && fm.dirty && !confirm('You have unsaved pin changes. Stop editing without saving them?')) return;
   if(fm.editing && fm.dirty){ fmOpenMap(fmIdOf(fm.map.id)); return; } // discard: reload the saved pins
   fm.editing=!fm.editing; fm.placeLabel=null;
-  if(fm.editing) fm.techFilter=''; // editing needs every pin visible
+  if(fm.editing){ fm.techFilter=''; fm.statusFilter=''; } // editing needs every pin visible
   const host=document.getElementById('fm-leaflet'); if(host) host.classList.toggle('fm-editing', fm.editing);
   if(fm.lmap) fm.lmap.closePopup();
   fmRenderToolbar(); fmDrawPins(); fmRenderSide();
@@ -2404,6 +2438,7 @@ function fmBuildActivity(items){
   });
   byLabel.forEach(d=>d.entries.sort((a,b)=>a.t-b.t));
   const techs=[];
+  let tDeskSum=0, tDeskN=0, tGapSum=0, tGapN=0, tTechs=0; // team-wide pace, for the time-left estimate
   byUser.forEach(arr=>{
     arr.sort((a,b)=>a.t-b.t);
     const uk=arr[0].uk;
@@ -2414,6 +2449,7 @@ function fmBuildActivity(items){
       else visits.push({n:e.n, label:e.label, name:e.name, start:open, end:e.t, entries:[e], deskSec:null, gapSec:null, prevLabel:''});
     });
     let gapSum=0, gapN=0, deskSum=0, deskN=0, photos=0;
+    tTechs++;
     visits.forEach((v,i)=>{
       // Time on the desk: longest open->save per session (several saves in one
       // open all measure "since open", so summing them would double-count).
@@ -2428,13 +2464,28 @@ function fmBuildActivity(items){
       v.entries.forEach(e=>{ if(e.action==='photo') photos++; });
       byLabel.get(v.n).visits.push(v);
     });
+    tDeskSum+=deskSum; tDeskN+=deskN; tGapSum+=gapSum; tGapN+=gapN;
     techs.push({uk, visits, name:arr[arr.length-1].name, desks:new Set(visits.map(v=>v.n)).size, photos,
       avgDeskSec:deskN? Math.round(deskSum/deskN) : null, avgGapSec:gapN? Math.round(gapSum/gapN) : null, gapN,
       first:arr[0].at, last:arr[arr.length-1].at});
   });
   byLabel.forEach(d=>d.visits.sort((a,b)=>a.start-b.start));
   techs.sort((a,b)=>b.desks-a.desks || String(a.name).localeCompare(String(b.name)));
-  return {byLabel, techs};
+  return {byLabel, techs, team:{deskN:tDeskN, avgDeskSec:tDeskN? tDeskSum/tDeskN : null, gapN:tGapN, avgGapSec:tGapN? tGapSum/tGapN : null, techs:tTechs}};
+}
+// Time left = open desks x the team's average time per desk (+ average gap
+// between desks when enough were measured). Needs at least 3 timed desks to say
+// anything. It's the total WORK left at the pace so far, so with several techs
+// on the floor the clock time will be shorter.
+function fmEta(){
+  const t=fm.act&&fm.act.team, open=fm.sheet? fmProgress().todo : 0;
+  if(!t||t.deskN<3||!open) return null;
+  const per=t.avgDeskSec+(t.gapN>=3? t.avgGapSec : 0);
+  return {sec:Math.round(open*per), per:Math.round(per), open, n:t.deskN, withGap:t.gapN>=3};
+}
+function fmFmtHM(sec){
+  let m=Math.max(1,Math.round(sec/60)); const h=Math.floor(m/60); m%=60;
+  return h? h+'h'+(m? ' '+m+'m' : '') : m+'m';
 }
 // The "Activity" block inside a pin's popup: every photo/edit on this desk with
 // who + when, then each tech's time on the desk and how long they took to get
@@ -2475,6 +2526,96 @@ function fmShowTechSummary(){
 
 // ── Pin detail (read-only; edits + photo capture live in Job Sheets) ──
 function fmOpenPin(i){ const p=fm.map.pins[i]; if(p) fmShowDetail(p.label, fmRowFor(p.label)); }
+// ── Closeout report ──
+// One row per sheet row (every desk, pinned or not) plus any pin with no sheet
+// row: status, photos on file, who photographed / worked it, last activity, time
+// on the desk, notes. Built from what's already loaded (sheet rows + activity
+// log), so it also works from a saved offline copy (photos then show as "on
+// file" instead of thumbnails). Who/when only covers work done through this app.
+const FM_STATUS_TEXT={done:'Done',todo:'Open',flag:'Flagged',norow:'No sheet row'};
+function fmReportData(){
+  const s=fm.sheet; if(!s) return null;
+  const idk=jsIdent(s), photos=jsCols(s,'photo'), texts=jsCols(s,'text');
+  const pinN=new Set(fm.map.pins.map(p=>fmNorm(p.label)).filter(Boolean)), seen=new Set(), rows=[];
+  s.rows.forEach(r=>{
+    const label=String(r[idk]||'').trim(); if(!label) return;
+    const n=fmNorm(label); seen.add(n);
+    const a=fm.act&&fm.act.byLabel.get(n), entries=a? a.entries : [];
+    rows.push({label, status:fmRowState(r), onMap:pinN.has(n),
+      photoCount:photos.filter(c=>r[c.key]).length, photoTotal:photos.length,
+      thumb:(photos.map(c=>r[c.key]).find(v=>jsIsUrl(v))||''),
+      photoBy:[...new Set(entries.filter(e=>e.action==='photo').map(e=>e.name))],
+      who:[...new Set(entries.map(e=>e.name))],
+      lastAt:entries.length? entries[entries.length-1].at : '',
+      deskSec:a? (a.visits.reduce((t,v)=>t+(v.deskSec||0),0)||null) : null,
+      notes:texts.map(c=>r[c.key]).filter(Boolean).join(' | ')});
+  });
+  fm.map.pins.forEach(p=>{ const n=fmNorm(p.label); if(n && !seen.has(n)){ seen.add(n);
+    rows.push({label:String(p.label).trim(), status:'norow', onMap:true, photoCount:0, photoTotal:photos.length, thumb:'', photoBy:[], who:[], lastAt:'', deskSec:null, notes:''}); } });
+  rows.sort((a,b)=>fmNaturalCmp(a.label,b.label));
+  const t={done:0,todo:0,flag:0,norow:0}; rows.forEach(r=>t[r.status]++);
+  const counted=t.done+t.todo+t.flag;
+  return {rows, tally:t, pct:counted? Math.round(t.done/counted*100) : 0, techs:fm.act? fm.act.techs.length : 0, truncated:!!(fm.act&&fm.act.truncated), at:new Date()};
+}
+const fmWhen=iso=>iso? (jsFmtWhen(iso)||'') : '';
+function fmCsvCell(v){
+  let s=String(v==null?'':v);
+  if(/^[=+\-@\t\r]/.test(s)) s="'"+s; // spreadsheet formula guard (notes are free text)
+  return '"'+s.replace(/"/g,'""')+'"';
+}
+function fmReportCsv(d){
+  const head=['Desk','Status','On map','Photos on file','Photographed by','Worked by','Last activity','Time on desk','Notes'];
+  const lines=[head].concat(d.rows.map(r=>[r.label,FM_STATUS_TEXT[r.status],r.onMap?'Yes':'No',r.photoCount+' of '+r.photoTotal,r.photoBy.join('; '),r.who.join('; '),fmWhen(r.lastAt),r.deskSec!=null?jsFmtDuration(r.deskSec):'',r.notes]));
+  return '﻿'+lines.map(l=>l.map(fmCsvCell).join(',')).join('\r\n');
+}
+function fmReportName(){ return String(fm.map.name||'floor-map').replace(/[^\w\-]+/g,'_').replace(/^_+|_+$/g,'')||'floor-map'; }
+function fmDownloadCsv(){
+  const d=fmReportData(); if(!d) return;
+  const blob=new Blob([fmReportCsv(d)],{type:'text/csv;charset=utf-8'}), a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=fmReportName()+'-closeout-'+d.at.toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function fmReportSummaryHtml(d){
+  const t=d.tally;
+  return '<b>'+t.done+' of '+(t.done+t.todo+t.flag)+'</b> desks done · '+d.pct+'% · '+t.todo+' open · '+t.flag+' flagged'+(t.norow?' · '+t.norow+' pin'+(t.norow===1?'':'s')+' with no sheet row':'')+
+    (d.techs? ' · '+d.techs+' tech'+(d.techs===1?'':'s')+' logged' : '');
+}
+function fmReportTableHtml(d,withThumbs){
+  const body=d.rows.map(r=>
+    '<tr><td><b>'+jsEsc(r.label)+'</b>'+(r.onMap?'':'<br><small>not on map</small>')+'</td><td>'+jsEsc(FM_STATUS_TEXT[r.status])+'</td>'+
+    '<td>'+(withThumbs&&r.thumb? '<img src="'+jsEsc(r.thumb)+'" alt="" style="height:44px;border-radius:3px;vertical-align:middle"> ' : '')+r.photoCount+' of '+r.photoTotal+'</td>'+
+    '<td>'+jsEsc(r.photoBy.join(', ')||'—')+'</td><td>'+jsEsc(r.who.join(', ')||'—')+'</td><td>'+jsEsc(fmWhen(r.lastAt)||'—')+'</td>'+
+    '<td>'+(r.deskSec!=null? jsEsc(jsFmtDuration(r.deskSec)) : '—')+'</td><td>'+jsEsc(r.notes)+'</td></tr>').join('');
+  return '<table class="fm-rep-table"><thead><tr><th>Desk</th><th>Status</th><th>Photos</th><th>Photographed by</th><th>Worked by</th><th>Last activity</th><th>Time on desk</th><th>Notes</th></tr></thead><tbody>'+body+'</tbody></table>';
+}
+function fmShowReport(){
+  const modal=document.getElementById('fm-modal'), d=fmReportData(); if(!modal||!d) return;
+  modal.innerHTML=
+    '<div class="js-modal-head"><div class="js-modal-title">Closeout report</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>'+
+    '<div class="js-modal-body"><div style="font-size:13px;color:var(--text2)">'+jsEsc(fm.map.name||'')+' · '+jsEsc(fm.map.sheetName||'')+'<br>'+fmReportSummaryHtml(d)+'</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="fmDownloadCsv()">⬇ Download CSV</button><button class="btn btn-sm" onclick="fmPrintReport()">🖨 Print / save as PDF</button></div>'+
+    (d.truncated? '<div class="fm-muted" style="font-size:12px;color:var(--red)">Only the newest 5,000 logged saves were loaded, so who/when for the oldest work may be missing.</div>' : '')+
+    '<div style="overflow-x:auto;max-height:46vh;overflow-y:auto">'+fmReportTableHtml(d,false)+'</div>'+
+    '<div class="fm-muted" style="font-size:12px">Who/when only covers work done through this app; photos or edits made directly in Smartsheet have no author.</div></div>';
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+}
+// Print view: a dedicated block shown only while printing (everything else on
+// the page is hidden by CSS), with photo thumbnails when the links are available.
+async function fmPrintReport(){
+  const d=fmReportData(); if(!d) return;
+  let host=document.getElementById('fm-print'); if(host) host.remove();
+  host=document.createElement('div'); host.id='fm-print';
+  host.innerHTML='<h1 style="font-size:20px;margin:0 0 4px">'+jsEsc(fm.map.name||'Floor map')+' — closeout report</h1>'+
+    '<div style="font-size:12px;margin-bottom:10px">'+jsEsc(fm.map.sheetName||'')+' · generated '+jsEsc(d.at.toLocaleString())+'<br>'+fmReportSummaryHtml(d)+'</div>'+fmReportTableHtml(d,true);
+  document.body.appendChild(host);
+  // Give thumbnails a moment to load so they make it onto the page.
+  await fmRaceTimeout(Promise.all([...host.querySelectorAll('img')].map(i=>i.complete? 0 : new Promise(r=>{ i.onload=i.onerror=r; }))),4000);
+  const done=()=>{ document.body.classList.remove('fm-printing'); const h=document.getElementById('fm-print'); if(h) h.remove(); window.removeEventListener('afterprint',done); };
+  window.addEventListener('afterprint',done); document.body.classList.add('fm-printing');
+  setTimeout(done,120000); // some mobile browsers never fire afterprint; don't leave the print-only block behind
+  try{ window.print(); }catch(e){ done(); }
+}
+
 // A desk's popup. Techs complete the desk right here: status ticks, notes and
 // the completion photo save through the same Job Sheets paths (live, or queued
 // offline) and are attributed + timed the same way. Opening a desk starts (or
