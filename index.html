@@ -564,6 +564,7 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-rep-table th,.fm-rep-table td{border:1px solid var(--border);padding:4px 7px;text-align:left;vertical-align:top}
 .fm-rep-table th{background:var(--surface2);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
 @media print{
+  html:has(body.fm-printing),body.fm-printing{height:auto!important;min-height:0!important;overflow:visible!important}
   body.fm-printing > *:not(#fm-print){display:none!important}
   body.fm-printing #fm-print{display:block!important;color:#000;background:#fff;font:12px/1.35 system-ui,sans-serif;padding:0}
   body.fm-printing .fm-rep-table{font-size:10.5px}
@@ -571,6 +572,12 @@ body.is-tester #tab-floormap{display:inline-block}
   body.fm-printing .fm-rep-table tr{page-break-inside:avoid}
   body.fm-printing .fm-rep-table thead{display:table-header-group}
 }
+.fm-group{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px;background:var(--surface2)}
+.fm-group-h{font-weight:700;font-size:14px;margin-bottom:8px}
+.fm-floors{border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:10px;background:var(--surface)}
+.fm-floors-sum{font-size:13px;color:var(--text2);margin-bottom:6px}
+.fm-floors-chips{display:flex;gap:6px;flex-wrap:wrap}
+.fm-chip:disabled{opacity:1;cursor:default}
 .fm-chip{display:inline-flex;align-items:center;padding:3px 9px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);border-radius:14px;font:inherit;font-size:12px;cursor:pointer}
 .fm-chip.on{border-color:var(--text);color:var(--text);font-weight:700;background:var(--surface2)}
 .fm-prog-eta{font-size:13px;color:var(--text3);cursor:help}
@@ -1696,18 +1703,124 @@ async function fmClearOffline(){
   if(!confirm('Remove all saved floor maps from this device? They\'ll need a signal to open again.')) return;
   await fmCacheClear(); fm.cachedIds=new Set(); fm.saveMsg='Saved copies removed from this device.'; if(fm.mode==='list') fmPaint();
 }
+// ── Multi-floor jobs ──
+// A job is the set of maps that share a job name or, when none is set, the same
+// Smartsheet. Each map keeps its own plan; a floors bar on the map view shows
+// every floor's progress and the job's combined total, and jumps between floors.
+const fmJobKey=m=>(m.jobName&&String(m.jobName).trim())? 'job:'+String(m.jobName).trim().toLowerCase() : 'sheet:'+m.sheetId;
+const fmFloorTitle=m=>(m.floorLabel&&String(m.floorLabel).trim()) || m.name || 'Floor map';
+function fmJobNames(){ return [...new Set((fm.maps||[]).map(m=>String(m.jobName||'').trim()).filter(Boolean))]; }
+function fmGroupMaps(maps){
+  const groups=new Map();
+  (maps||[]).forEach(m=>{ const k=fmJobKey(m); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(m); });
+  return [...groups.values()].map(list=>({
+    list:list.slice().sort((a,b)=>fmNaturalCmp(fmFloorTitle(a),fmFloorTitle(b))),
+    title:(list.find(m=>m.jobName&&String(m.jobName).trim())||{}).jobName||''}));
+}
+function fmMapCard(m,inGroup){
+  const id=jsEsc(fmIdOf(m.id));
+  return `<div class="fm-card-row"><button class="pp-card" onclick="fmOpenMap('${id}')">`+
+    `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(inGroup? fmFloorTitle(m) : (m.name||'Floor map'))}</div></div>`+
+    `<div class="pp-card-sub">${jsEsc(inGroup&&m.floorLabel? (m.name||'') : (m.sheetName||''))}</div>`+
+    `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}`+
+      `${fm.cachedIds&&fm.cachedIds.has(fmIdOf(m.id))?'<span style="color:var(--green-dark)">✓ Saved offline</span>':''}</div>`+
+    `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor map" data-id="${id}" data-name="${jsEsc(m.name||'Floor map')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`;
+}
+// Done / open / flagged for some pins against ANY sheet (not just the open map's).
+function fmStateIn(sheet,r){
+  const flagged=jsCols(sheet,'checkbox').some(c=>FM_FLAG_RE.test(c.label)&&r[c.key]);
+  return flagged? 'flag' : (jsDone(sheet,r)? 'done' : 'todo');
+}
+function fmProgressIn(pins,sheet){
+  const idk=jsIdent(sheet), idx=new Map();
+  (sheet.rows||[]).forEach(r=>{ const n=fmNorm(r[idk]); if(n && !idx.has(n)) idx.set(n,r); });
+  const t={done:0,todo:0,flag:0};
+  (pins||[]).forEach(p=>{ const r=idx.get(fmNorm(p.label)); if(r) t[fmStateIn(sheet,r)]++; });
+  t.total=t.done+t.todo+t.flag; return t;
+}
+// Loads the sibling floors and each one's progress (the open floor uses what's
+// already on screen; other floors need their pins + their sheet, falling back to
+// saved offline copies when there's no signal).
+async function fmLoadFloors(tok){
+  let maps=fm.maps;
+  if(!maps){
+    try{ maps=(await fmFetch('GET','/floormaps')).maps||[]; fm.maps=maps; fmCachePut('list',{maps,savedAt:Date.now(),owner:fmOwner()}); }
+    catch(e){ const c=await fmRaceTimeout(fmCacheGet('list'),3000); maps=(c&&c.owner===fmOwner()&&c.maps)||[]; }
+  }
+  if(!fm.map||fm.openToken!==tok) return;
+  const cur=fm.map, key=fmJobKey(cur), sibs=maps.filter(m=>fmJobKey(m)===key);
+  if(!sibs.some(m=>m.id===cur.id)) sibs.push(cur);
+  if(sibs.length<2){ fm.floors=null; fmRenderFloors(); return; }
+  sibs.sort((a,b)=>fmNaturalCmp(fmFloorTitle(a),fmFloorTitle(b)));
+  const floors=fm.floors=sibs.map(m=>({id:fmIdOf(m.id), title:fmFloorTitle(m), cur:m.id===cur.id, prog:null, loading:true}));
+  fmRenderFloors();
+  const sheets=new Map(); if(fm.sheet) sheets.set(String(cur.sheetId),Promise.resolve(fm.sheet));
+  const getSheet=sid=>{ sid=String(sid); if(!sheets.has(sid)) sheets.set(sid,jsApi('/jobsheet/sheet?id='+encodeURIComponent(sid)).catch(()=>null)); return sheets.get(sid); };
+  await Promise.all(floors.map(async f=>{
+    try{
+      if(f.cur){ f.prog=fmProgress(); return; }
+      let doc=null, sheet=null;
+      try{ doc=(await fmFetch('GET','/floormaps/'+encodeURIComponent(f.id))).map; }
+      catch(e){ const c=await fmRaceTimeout(fmCacheGetMap(f.id),3000); if(c){ doc=c.map; sheet=c.sheet; } }
+      if(!doc) return;
+      sheet=sheet||await getSheet(doc.sheetId);
+      if(sheet){ await fmOverlayOutbox(sheet,doc.sheetId); f.prog=fmProgressIn(doc.pins,sheet); } // count edits still queued offline, like the open floor does
+    }catch(e){ /* this floor just shows no progress */ }
+    finally{ f.loading=false; }
+  }));
+  if(fm.openToken!==tok||fm.floors!==floors) return;
+  fmRenderFloors();
+}
+function fmRenderFloors(){
+  const el=document.getElementById('fm-floors'); if(!el) return;
+  const fl=fm.floors; if(!fl||fl.length<2){ el.innerHTML=''; return; }
+  const got=fl.filter(f=>f.prog&&f.prog.total), done=got.reduce((a,f)=>a+f.prog.done,0), total=got.reduce((a,f)=>a+f.prog.total,0);
+  const loading=fl.some(f=>f.loading), missing=fl.filter(f=>!f.loading&&!(f.prog&&f.prog.total)).length;
+  el.innerHTML='<div class="fm-floors"><div class="fm-floors-sum"><b>This job: '+done+' of '+total+' desks</b> · '+(total? Math.round(done/total*100) : 0)+'% across '+fl.length+' floors'+
+      (loading? ' <span class="fm-muted">· loading…</span>' : '')+(missing&&!loading? ' <span class="fm-muted">· '+missing+' floor'+(missing===1?'':'s')+' without progress</span>' : '')+'</div>'+
+    '<div class="fm-floors-chips">'+fl.map(f=>'<button type="button" class="fm-chip'+(f.cur?' on':'')+'" '+(f.cur?'disabled':'onclick="fmOpenMap(\''+jsEsc(f.id)+'\')"')+'>'+jsEsc(f.title)+' · '+
+      (f.prog&&f.prog.total? f.prog.done+'/'+f.prog.total : (f.loading? '…' : '—'))+'</button>').join('')+'</div></div>';
+}
+// Edit a map's name / job / floor after the fact.
+function fmShowDetails(){
+  const modal=document.getElementById('fm-modal'); if(!modal||!fm.map) return;
+  const m=fm.map;
+  modal.innerHTML=
+    '<div class="js-modal-head"><div class="js-modal-title">Map details</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>'+
+    '<div class="js-modal-body">'+
+    '<div><div class="js-field-label">Map name</div><input class="fm-input" id="fm-d-name" maxlength="160" value="'+jsEsc(m.name||'')+'"></div>'+
+    '<div><div class="js-field-label">Job name (maps with the same job name are grouped)</div><input class="fm-input" id="fm-d-job" maxlength="160" list="fm-job-names2" value="'+jsEsc(m.jobName||'')+'" placeholder="Leave blank to group by sheet"></div>'+
+    '<datalist id="fm-job-names2">'+fmJobNames().map(n=>'<option value="'+jsEsc(n)+'">').join('')+'</datalist>'+
+    '<div><div class="js-field-label">Floor label</div><input class="fm-input" id="fm-d-floor" maxlength="60" value="'+jsEsc(m.floorLabel||'')+'" placeholder="e.g. Floor 2"></div>'+
+    '<div id="fm-d-msg" style="font-size:12.5px;color:var(--text3)"></div>'+
+    '<div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="fmSaveDetails()">Save</button><button class="btn btn-sm" onclick="fmCloseDetail()">Cancel</button></div></div>';
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+}
+async function fmSaveDetails(){
+  const g=id=>(document.getElementById(id)||{}).value||'', msg=document.getElementById('fm-d-msg');
+  const body={name:g('fm-d-name').trim(), jobName:g('fm-d-job').trim(), floorLabel:g('fm-d-floor').trim()};
+  if(msg){ msg.style.color='var(--text3)'; msg.textContent='Saving…'; }
+  const id=fmIdOf(fm.map.id), tok=fm.openToken;
+  try{
+    const r=await fmFetch('PUT','/floormaps/'+encodeURIComponent(id),body);
+    if(!fm.map||fmIdOf(fm.map.id)!==id) return;
+    Object.assign(fm.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''});
+    const c=await fmCacheGet('map:'+id); if(c&&c.owner===fmOwner()){ Object.assign(c.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''}); fmCachePut('map:'+id,c); }
+    // Keep the saved list in step too, so an offline list/floors bar shows the new grouping.
+    const lc=await fmCacheGet('list');
+    if(lc&&lc.owner===fmOwner()&&Array.isArray(lc.maps)){ const e=lc.maps.find(x=>x.id===r.map.id); if(e){ Object.assign(e,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''}); fmCachePut('list',lc); } }
+    fm.maps=null; fm.floors=null; fmCloseDetail(); fmRenderToolbar(); fmLoadFloors(tok);
+  }catch(e){ if(msg){ msg.style.color='var(--red)'; msg.textContent=fmIsOffline(e)? 'You need a connection to change map details.' : (e.message||'Save failed'); } }
+}
+
 function fmPaintList(root){
   let body;
   if(fm.loading) body='<div class="empty"><p>Loading…</p></div>';
   else if(fm.error) body=`<div class="empty"><p>${jsEsc(fm.error)}</p></div>`;
   else if(!fm.maps||!fm.maps.length) body='<div class="empty"><div class="empty-icon">🗺️</div><p>No floor maps yet.</p><small>Build one from a floor plan PDF and a job sheet.</small></div>';
-  else body='<div class="pp-list">'+fm.maps.map(m=>
-    `<div class="fm-card-row"><button class="pp-card" onclick="fmOpenMap('${jsEsc(fmIdOf(m.id))}')">`+
-      `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(m.name||'Floor map')}</div></div>`+
-      `<div class="pp-card-sub">${jsEsc(m.sheetName||'')}</div>`+
-      `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}`+
-        `${fm.cachedIds&&fm.cachedIds.has(fmIdOf(m.id))?'<span style="color:var(--green-dark)">✓ Saved offline</span>':''}</div>`+
-    `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor map" data-id="${jsEsc(fmIdOf(m.id))}" data-name="${jsEsc(m.name||'Floor map')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`).join('')+'</div>';
+  else body='<div class="pp-list">'+fmGroupMaps(fm.maps).map(g=> g.list.length>1
+    ? `<div class="fm-group"><div class="fm-group-h">${jsEsc(g.title||g.list[0].sheetName||'Job')} <span class="fm-muted">· ${g.list.length} floors</span></div>${g.list.map(m=>fmMapCard(m,true)).join('')}</div>`
+    : fmMapCard(g.list[0],false)).join('')+'</div>';
   root.innerHTML=
     '<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
       '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
@@ -1722,7 +1835,7 @@ function fmPaintList(root){
 
 // ── New map: setup ──
 function fmNew(){
-  fm.draft={name:'', sheet:null, sheetRows:null, sheetErr:'', search:'', results:[], searchReq:0, searchTimer:null,
+  fm.draft={name:'', job:'', floor:'', sheet:null, sheetRows:null, sheetErr:'', search:'', results:[], searchReq:0, searchTimer:null,
     fileName:'', pdf:null, pageCount:0, page:1, det:null, disp:null, prev:null,
     color:FM_COLORS[0].rgb.slice(), colorKey:'yellow', tol:90, picking:false,
     boxes:null, labels:[], crops:[], busy:'', err:'', saving:false};
@@ -1769,6 +1882,10 @@ function fmPaintNew(root){
     (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">5</span>Save</div>`+
       `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input class="fm-input" style="flex:1;min-width:220px" placeholder="Map name" value="${jsEsc(d.name)}" oninput="fm.draft.name=this.value">`+
       `<button class="btn btn-primary" ${d.saving||!d.sheet?'disabled':''} onclick="fmSaveDraft()">${d.saving?'Saving…':'Save floor map'}</button></div>`+
+      `<div class="fm-muted" style="font-size:12px;margin:10px 0 4px">Part of a multi-floor job? (optional) Maps with the same job name are grouped, and show a combined progress.</div>`+
+      `<div style="display:flex;gap:10px;flex-wrap:wrap"><input class="fm-input" style="flex:1;min-width:200px" placeholder="Job name (e.g. Fred Hutch — Building 3)" list="fm-job-names" maxlength="160" value="${jsEsc(d.job)}" oninput="fm.draft.job=this.value">`+
+      `<input class="fm-input" style="width:180px" placeholder="Floor (e.g. Floor 2)" maxlength="60" value="${jsEsc(d.floor)}" oninput="fm.draft.floor=this.value"></div>`+
+      `<datalist id="fm-job-names">${fmJobNames().map(n=>`<option value="${jsEsc(n)}">`).join('')}</datalist>`+
       (!d.sheet?'<div class="fm-status fm-warn">Pick a job sheet (step 1) before saving.</div>':'')+`</div>` : '');
   const host=document.getElementById('fm-preview-host');
   if(host && d.prev){ host.appendChild(d.prev); d.prev.onclick=fmPreviewClick; }
@@ -2058,7 +2175,7 @@ async function fmSaveDraft(){
     const blob=await new Promise((res,rej)=>d.disp.toBlob(b=>b?res(b):rej(new Error('Could not encode the floor plan image')),'image/jpeg',0.85));
     const pins=(d.boxes||[]).map((b,i)=>({x:b.cx, y:b.cy, label:(d.labels[i]||'').trim()}));
     const fd=new FormData();
-    fd.append('meta', JSON.stringify({name:(d.name||'').trim()||d.sheet.name, sheetId:d.sheet.id, sheetName:d.sheet.name, imgW:d.disp.width, imgH:d.disp.height, pins}));
+    fd.append('meta', JSON.stringify({name:(d.name||'').trim()||d.sheet.name, sheetId:d.sheet.id, sheetName:d.sheet.name, jobName:(d.job||'').trim(), floorLabel:(d.floor||'').trim(), imgW:d.disp.width, imgH:d.disp.height, pins}));
     fd.append('image', blob, 'floormap.jpg');
     const r=await fmFetch('POST','/floormaps', fd);
     fm.draft=null; fm.maps=null;
@@ -2068,6 +2185,7 @@ async function fmSaveDraft(){
 
 // ── Map view ──
 function fmTeardownMap(){
+  fmStopScan(); // a repaint / leaving the map must never leave the camera running
   if(fm.lmap){ try{ fm.lmap.remove(); }catch(e){} fm.lmap=null; }
   fm.markers=[]; fm.routeLayer=null;
   if(fm.mode!=='map' && fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
@@ -2075,7 +2193,7 @@ function fmTeardownMap(){
 async function fmOpenMap(id){
   fmTeardownMap(); if(fm.imgUrl){ URL.revokeObjectURL(fm.imgUrl); fm.imgUrl=null; }
   fm.mode='map'; fm.map=null; fm.sheet=null; fm.sheetError=''; fm.rowIndex=null; fm.editing=false; fm.dirty=false; fm.query=''; fm.placeLabel=null; fm.act=null; fm.techFilter=''; fm.statusFilter='';
-  fm.offline=false; fm.cachedAt=null; fm.refreshing=false; fm.refreshError='';
+  fm.offline=false; fm.cachedAt=null; fm.refreshing=false; fm.refreshError=''; fm.floors=null;
   fm.loading=true; fm.error=''; fmPaint();
   const tok=fm.openToken={}; // lets a slow load notice the tech has since opened/left another map
   // Saved copy first: opens instantly (and with no signal), then refreshes behind it.
@@ -2112,6 +2230,7 @@ function fmApply(map,sheet,blob,acts,sheetError,cachedAt){
   fm.map=map; fm.sheet=sheet; fm.sheetError=sheetError||'';
   fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob); fmSetActs(acts);
   fm.cachedAt=cachedAt||null; fm.loading=false; fm.error=''; fmPaint();
+  fmLoadFloors(fm.openToken); // sibling floors + combined progress (best-effort)
 }
 // After showing the saved copy: fetch fresh data and swap it in. Pins aren't
 // replaced while the tech is editing them; if the plan image is unchanged the
@@ -2158,8 +2277,7 @@ function fmBuildRowIndex(){
   s.rows.forEach(r=>{ const n=fmNorm(r[idk]); if(n && !fm.rowIndex.has(n)) fm.rowIndex.set(n,r); });
 }
 function fmRowFor(label){ const n=fmNorm(label); return n&&fm.rowIndex? fm.rowIndex.get(n)||null : null; }
-function fmFlagged(r){ return jsCols(fm.sheet,'checkbox').some(c=>FM_FLAG_RE.test(c.label) && r[c.key]); }
-function fmRowState(r){ if(fmFlagged(r)) return 'flag'; return jsDone(fm.sheet,r)? 'done' : 'todo'; }
+function fmRowState(r){ return fmStateIn(fm.sheet,r); } // one rule for open map and sibling floors (fmStateIn)
 function fmPinState(p){ const r=fmRowFor(p.label); return r? fmRowState(r) : 'nomatch'; }
 
 function fmPaintMap(root){
@@ -2171,10 +2289,11 @@ function fmPaintMap(root){
   root.innerHTML=
     '<div class="fm-toolbar" id="fm-toolbar"></div>'+
     '<div class="js-outbox-bar" id="fm-outbox-bar" style="display:none"></div>'+
+    '<div id="fm-floors"></div>'+
     '<div id="fm-banner"></div>'+
     `<div class="fm-layout"><div class="fm-map${fm.editing?' fm-editing':''}" id="fm-leaflet"></div><aside class="fm-side" id="fm-side"></aside></div>`+
     '<div class="js-modal-backdrop" id="fm-modal-backdrop" onclick="if(event.target===this)fmCloseDetail()"><div class="js-modal" id="fm-modal"></div></div>';
-  fmRenderBanner(); fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
+  fmRenderBanner(); fmRenderFloors(); fmRenderToolbar(); fmRenderSide(); fmInitLeaflet();
   jsRefreshOutbox(); // show any changes still queued offline
 }
 function fmRenderToolbar(){
@@ -2191,6 +2310,8 @@ function fmRenderToolbar(){
       : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span>`+
         (fm.act? '<button class="btn btn-sm" onclick="fmShowTechSummary()">👥 Tech summary</button>' : '')+
         (fm.sheet? '<button class="btn btn-sm" onclick="fmShowReport()">📄 Closeout report</button>' : '')+
+        '<button class="btn btn-sm" onclick="fmScanOpen()">📷 Find desk</button>'+
+        '<button class="btn btn-sm" onclick="fmShowDetails()">⚙ Details</button>'+
         `<button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
         `<button class="btn btn-sm btn-danger" onclick="fmDeleteMap()">🗑 Delete</button>`+fmProgressHtml());
 }
@@ -2226,7 +2347,7 @@ function fmNextOpenIndex(){
 }
 function fmGoNext(){
   const i=fmNextOpenIndex(); if(i<0) return;
-  if(fm.techFilter){ fm.techFilter=''; fmDrawPins(); fmRenderSide(); } // make sure the next desk's pin is on screen
+  if(fm.techFilter||fm.statusFilter){ fm.techFilter=''; fm.statusFilter=''; fmDrawPins(); fmRenderSide(); } // make sure the next desk's pin is on screen
   fmCloseDetail();
   const p=fm.map.pins[i];
   if(fm.lmap) fm.lmap.flyTo(fmLatLng(p), Math.max(fm.lmap.getZoom(), fm.lmap.getMinZoom()+3), {duration:.5});
@@ -2526,6 +2647,75 @@ function fmShowTechSummary(){
 
 // ── Pin detail (read-only; edits + photo capture live in Job Sheets) ──
 function fmOpenPin(i){ const p=fm.map.pins[i]; if(p) fmShowDetail(p.label, fmRowFor(p.label)); }
+// ── Scan a desk's label to jump to it ──
+// Uses the phone camera + the browser's built-in BarcodeDetector (Chrome/Android
+// and some others; many iPhones don't have it), so there's always a type-it-in
+// fallback. A scanned value matches a pin by its desk number: the whole value,
+// then the last token ("FH-4-0112" -> 0112), then the trailing number run.
+function fmMatchScan(raw){
+  const s=String(raw==null?'':raw).trim(); if(!s||!fm.map) return -1;
+  const pins=fm.map.pins, find=v=>{ const n=fmNorm(v); return n? pins.findIndex(p=>fmNorm(p.label)===n) : -1; };
+  const toks=s.split(/[^A-Za-z0-9]+/).filter(Boolean), last=toks.length? toks[toks.length-1] : '', num=(s.match(/(\d+)\D*$/)||[])[1]||'';
+  for(const c of [s,last,num]){ const i=find(c); if(i>=0) return i; }
+  return -1;
+}
+function fmStopScan(){
+  const sc=fm.scan; if(!sc) return;
+  clearInterval(sc.timer); sc.stopped=true;
+  try{ sc.stream&&sc.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  fm.scan=null;
+}
+function fmScanSay(msg,warn){ const el=document.getElementById('fm-scan-msg'); if(el){ el.textContent=msg; el.style.color=warn?'var(--red)':'var(--text3)'; } }
+function fmScanGo(i){
+  fmStopScan(); fmCloseDetail();
+  if(fm.techFilter||fm.statusFilter){ fm.techFilter=''; fm.statusFilter=''; fmDrawPins(); fmRenderSide(); } // make sure the desk's pin is on screen
+  const p=fm.map.pins[i];
+  if(fm.lmap) fm.lmap.flyTo(fmLatLng(p), Math.max(fm.lmap.getZoom(), fm.lmap.getMinZoom()+3), {duration:.5});
+  fmOpenPin(i);
+}
+function fmScanTyped(){
+  const v=(document.getElementById('fm-scan-in')||{}).value||'';
+  const i=fmMatchScan(v);
+  if(i>=0) fmScanGo(i); else fmScanSay(v.trim()? 'No desk on this map matches “'+v.trim()+'”.' : 'Type a desk number first.',true);
+}
+async function fmScanOpen(){
+  const modal=document.getElementById('fm-modal'); if(!modal||!fm.map) return;
+  fmStopScan();
+  const canScan=!!(window.BarcodeDetector && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  modal.innerHTML=
+    '<div class="js-modal-head"><div class="js-modal-title">Find a desk</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>'+
+    '<div class="js-modal-body">'+
+    (canScan? '<video id="fm-scan-video" playsinline muted autoplay style="width:100%;max-height:44vh;background:#000;border-radius:8px"></video>'+
+      '<div class="fm-muted" style="font-size:12.5px">Point the camera at the desk\'s barcode or QR label.</div>'
+      : '<div class="fm-muted" style="font-size:13px">This browser can\'t read barcodes with the camera. Type the desk number instead.</div>')+
+    '<div id="fm-scan-msg" style="font-size:12.5px;color:var(--text3)"></div>'+
+    '<div style="display:flex;gap:8px"><input class="fm-input" id="fm-scan-in" placeholder="…or type a desk number" onkeydown="if(event.key===\'Enter\')fmScanTyped()"><button class="btn btn-primary btn-sm" onclick="fmScanTyped()">Go</button></div></div>';
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+  if(!canScan) return;
+  const sc=fm.scan={stream:null,timer:null,stopped:false,lastBad:''};
+  try{
+    sc.stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    if(sc.stopped||fm.scan!==sc){ sc.stream.getTracks().forEach(t=>t.stop()); return; } // closed while the permission prompt was open
+    const v=document.getElementById('fm-scan-video'); v.srcObject=sc.stream; try{ await v.play(); }catch(e){}
+    const det=new BarcodeDetector(); let busy=false;
+    sc.timer=setInterval(async()=>{
+      if(busy||sc.stopped||!v.videoWidth) return; busy=true;
+      try{
+        const found=await det.detect(v);
+        for(const b of found||[]){
+          const raw=b.rawValue, i=fmMatchScan(raw);
+          if(sc.stopped) return;
+          if(i>=0){ fmScanGo(i); return; }
+          if(raw && raw!==sc.lastBad){ sc.lastBad=raw; fmScanSay('Scanned “'+String(raw).slice(0,60)+'” — no desk on this map matches it.',true); }
+        }
+      }catch(e){ /* a bad frame: just try the next one */ }
+      busy=false;
+    },350);
+  }catch(e){
+    fmScanSay((e&&e.name==='NotAllowedError')? 'Camera permission was denied — allow it in the browser, or type the desk number.' : 'Couldn\'t start the camera ('+((e&&e.message)||e)+'). Type the desk number instead.',true);
+  }
+}
+
 // ── Closeout report ──
 // One row per sheet row (every desk, pinned or not) plus any pin with no sheet
 // row: status, photos on file, who photographed / worked it, last activity, time
@@ -2572,7 +2762,7 @@ function fmReportName(){ return String(fm.map.name||'floor-map').replace(/[^\w\-
 function fmDownloadCsv(){
   const d=fmReportData(); if(!d) return;
   const blob=new Blob([fmReportCsv(d)],{type:'text/csv;charset=utf-8'}), a=document.createElement('a');
-  a.href=URL.createObjectURL(blob); a.download=fmReportName()+'-closeout-'+d.at.toISOString().slice(0,10)+'.csv';
+  a.href=URL.createObjectURL(blob); a.download=fmReportName()+'-closeout-'+d.at.getFullYear()+'-'+String(d.at.getMonth()+1).padStart(2,'0')+'-'+String(d.at.getDate()).padStart(2,'0')+'.csv'; // local date, not UTC
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 function fmReportSummaryHtml(d){
@@ -2657,6 +2847,7 @@ function fmShowDetail(label, r){
   document.getElementById('fm-modal-backdrop').classList.add('open');
 }
 function fmCloseDetail(){
+  fmStopScan(); // closing any popup also turns the camera off
   const b=document.getElementById('fm-modal-backdrop'); if(b) b.classList.remove('open');
   if(fm.openRowId!=null){ delete jsItemSessionStart[fm.openRowId]; delete jsItemSessionId[fm.openRowId]; fm.openRowId=null; }
 }
@@ -2688,6 +2879,7 @@ async function fmReloadSheet(){
 function fmAfterEdit(){
   if(fm.mode!=='map'||!fm.map) return;
   fmDrawPins(); fmRenderSide(); fmRenderToolbar();
+  const cf=fm.floors&&fm.floors.find(f=>f.cur); if(cf&&fm.sheet){ cf.prog=fmProgress(); fmRenderFloors(); } // keep this floor's numbers current
 }
 // One status tick / notes edit -> Smartsheet via the Job Sheets cell route.
 // Applied locally right away (pin recolors, progress moves); a network failure

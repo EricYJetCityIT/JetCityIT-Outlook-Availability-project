@@ -20,6 +20,8 @@ const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'floormap:';
 const MAX_PINS = 3000;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_JOB_NAME = 160;
+const MAX_FLOOR_LABEL = 60;
 
 function floormapError(e, context) {
   if (e instanceof AuthError) return authErrorResponse(e, context);
@@ -64,6 +66,10 @@ function summarize(m) {
     name: m.name || '',
     sheetId: m.sheetId || '',
     sheetName: m.sheetName || '',
+    // Optional grouping: maps sharing a jobName (or, when blank, the same sheet)
+    // are the floors of one job; floorLabel is that map's name within it.
+    jobName: m.jobName || '',
+    floorLabel: m.floorLabel || '',
     pinCount: Array.isArray(m.pins) ? m.pins.length : 0,
     updatedAt: m.updatedAt || null,
     updatedBy: m.updatedBy || null,
@@ -83,8 +89,8 @@ async function readMap(container, docId) {
 // GET    /api/floormaps        -> { maps: [summary] }
 // GET    /api/floormaps/{id}   -> { map }
 // POST   /api/floormaps        -> multipart: meta (JSON: name, sheetId, sheetName,
-//                                 imgW, imgH, pins) + image file -> { map }
-// PUT    /api/floormaps/{id}   -> JSON { name?, pins? } -> { map }
+//                                 imgW, imgH, pins, jobName?, floorLabel?) + image file -> { map }
+// PUT    /api/floormaps/{id}   -> JSON { name?, jobName?, floorLabel?, pins? } -> { map }
 // DELETE /api/floormaps/{id}   -> removes the doc + its sheet attachment
 app.http('floormaps', {
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -136,6 +142,8 @@ app.http('floormaps', {
           name,
           sheetId,
           sheetName: clean(meta.sheetName, 200),
+          jobName: clean(meta.jobName, MAX_JOB_NAME),
+          floorLabel: clean(meta.floorLabel, MAX_FLOOR_LABEL),
           attachmentId: String(att.id),
           imgW: Math.max(0, parseInt(meta.imgW, 10) || 0),
           imgH: Math.max(0, parseInt(meta.imgH, 10) || 0),
@@ -163,12 +171,16 @@ app.http('floormaps', {
         return { jsonBody: { deleted: true, id: docId } };
       }
 
-      // PUT: only the name and pins are editable; sheet + image are fixed at creation.
+      // PUT: the name, job grouping and pins are editable; sheet + image are fixed at creation.
+      // jobName / floorLabel may be cleared (empty string) to take a map out of a job.
       if (!existing) return { status: 404, jsonBody: { error: 'Floor map not found' } };
       const body = await request.json().catch(() => ({}));
       const next = {
         ...existing,
         name: body.name !== undefined ? (clean(body.name, 160) || existing.name) : existing.name,
+        // Only an explicit string changes these (a stray null/number leaves them alone).
+        jobName: typeof body.jobName === 'string' ? clean(body.jobName, MAX_JOB_NAME) : (existing.jobName || ''),
+        floorLabel: typeof body.floorLabel === 'string' ? clean(body.floorLabel, MAX_FLOOR_LABEL) : (existing.floorLabel || ''),
         pins: body.pins !== undefined ? sanitizePins(body.pins) : existing.pins,
         updatedAt: new Date().toISOString(),
         updatedBy: user.upn,
