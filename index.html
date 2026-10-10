@@ -645,6 +645,43 @@ body.is-tester #tab-floormap{display:inline-block}
 .js-act-when{color:var(--text3);font-size:12px;flex:0 0 auto;min-width:110px}
 .js-act-who{font-weight:600;color:var(--text);flex:0 0 auto}
 .js-act-what{color:var(--text2)}
+/* Manager view → Tech tracking */
+.tt-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.tt-controls .mgr-sub-tabs{max-width:100%;overflow-x:auto}
+.tt-controls .mgr-sub-tab{white-space:nowrap}
+.tt-updated{font-size:12px;color:var(--text3);margin-left:auto;display:flex;gap:10px;align-items:center}
+.tt-link{background:none;border:none;padding:0;color:var(--green-dark);font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.tt-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:22px}
+.tt-kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;box-shadow:var(--shadow-sm)}
+.tt-kpi-v{font-size:22px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums;line-height:1.15}
+.tt-kpi-l{font-size:12px;color:var(--text2);margin-top:3px}
+.tt-kpi-s{font-size:11.5px;color:var(--text3);margin-top:1px}
+.tt-sec{margin-bottom:26px}
+.tt-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm)}
+.tt-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.tt-table th{text-align:right;font-size:11.5px;font-weight:600;color:var(--text3);padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--surface2)}
+.tt-table th:first-child,.tt-table td:first-child{text-align:left}
+.tt-table th button{all:unset;cursor:pointer;display:inline-block}
+.tt-table th button:hover,.tt-table th button.on{color:var(--text)}
+.tt-table th button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.tt-table td{text-align:right;padding:9px 12px;border-bottom:1px solid var(--border);color:var(--text2);white-space:nowrap}
+.tt-table tr:last-child td{border-bottom:none}
+.tt-table td.tt-name{color:var(--text);font-weight:600;white-space:normal;min-width:130px}
+.tt-row{cursor:pointer}
+.tt-row:hover td{background:var(--surface2)}
+.tt-row:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.tt-sub td{background:var(--surface2);font-size:12.5px}
+.tt-sub td.tt-name{font-weight:500;padding-left:28px}
+.tt-tag{display:inline-block;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:10px;background:var(--green-light);color:var(--green-dark);margin-left:6px;vertical-align:1px}
+.tt-fast{color:var(--green-dark);font-weight:600}
+.tt-slow{color:var(--unavail-text);font-weight:600}
+.tt-note{font-size:12px;color:var(--text3);line-height:1.55;max-width:760px}
+.tt-warn{font-size:12.5px;color:var(--holiday-text);margin-bottom:12px}
+.tt-empty{padding:28px 16px;text-align:center;color:var(--text3);font-size:13.5px}
+.tt-chart{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-sm);padding:12px 12px 6px}
+.tt-chart svg{display:block;width:100%;height:auto}
+.tt-chart text{fill:var(--text3);font-size:11px}
+.tt-bar:hover .tt-b{opacity:.7}
 .js-progress-wrap{margin-bottom:20px}
 .js-progress-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
 .js-progress-count{font-size:13px;color:var(--text2);font-weight:600}
@@ -3067,8 +3104,19 @@ let jsRecentEdits=[];
 function jsReapplyEdits(sheet,since){
   jsRecentEdits.filter(e=>e.t>=since).forEach(e=>{ const r=sheet.rows.find(x=>String(x._rowId)===String(e.rowId)); if(r) r[e.colKey]=e.value; });
 }
-function jsServerApply(rowId,colKey,value){
+// Patches one cell in a sheet's saved copy that is no longer the open sheet (queued on the same
+// chain as the other saved-copy writes so it can't overwrite a newer save with an older one).
+function jsPatchSaved(sid,rowId,colKey,value){
+  const run=async()=>{
+    const rec=await jsCacheGet(sid); if(!rec) return;
+    const r=rec.sheet.rows.find(x=>String(x._rowId)===String(rowId)); if(!r) return;
+    r[colKey]=value; await fmCachePut(JS_CACHE_PREFIX+sid,rec);
+  };
+  jsCacheChain=jsCacheChain.then(run,run).catch(()=>{});
+}
+function jsServerApply(rowId,colKey,value,sid){
   jsRecentEdits.push({rowId,colKey,value,t:Date.now()}); if(jsRecentEdits.length>200) jsRecentEdits.shift();
+  if(sid && String(sid)!==String(jsSheetId)){ jsPatchSaved(sid,rowId,colKey,value); return; }
   if(!jsServer) return;
   const sr=jsServer.rows.find(x=>String(x._rowId)===String(rowId)); if(sr) sr[colKey]=value;
   jsCacheSaveCurrent();
@@ -3694,7 +3742,7 @@ async function jsUploadPhotoLive(sheetId, rowId, columnId, file, meta){
 // it to the offline outbox instead (still applied locally so the UI reflects
 // the edit); a real server rejection shows the error and reverts a checkbox.
 async function jsSaveField(rid, colKey, value){
-  const s=jsData, r=jsRowById(rid); if(!r)return;
+  const s=jsData, r=jsRowById(rid), sid=jsSheetId; if(!r)return; // sid: the sheet may be switched before this finishes
   if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
   const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
@@ -3703,15 +3751,15 @@ async function jsSaveField(rid, colKey, value){
   const col=(s.columns||[]).find(c=>c.key===colKey);
   const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||'',durationSec:jsComputeDuration(r._rowId),sessionId:jsCurrentSessionId(r._rowId)};
   try{
-    await jsSaveCellLive(jsSheetId, r._rowId, columnId, value, meta);
-    const cur=jsRowById(rid)||r; cur[colKey]=value; jsServerApply(r._rowId,colKey,value); // keep the saved copy current (a refresh may have swapped the row objects while this saved)
+    await jsSaveCellLive(sid, r._rowId, columnId, value, meta);
+    const cur=(sid===jsSheetId&&jsRowById(rid))||r; cur[colKey]=value; jsServerApply(r._rowId,colKey,value,sid); // keep the saved copy current (a refresh may have swapped the row objects while this saved)
     setSt('Saved','ok'); setTimeout(()=>{ if(st&&st.textContent==='Saved') setSt('',''); },2000);
     jsRenderCards(); jsUpdateProgress();
   }catch(e){
     if(e.offline){
-      await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'cell');
-      await jsOutboxAdd(Object.assign({kind:'cell',sheetId:jsSheetId,rowId:r._rowId,columnId,value},meta));
-      { const cur=jsRowById(rid)||r; cur[colKey]=value; }
+      await jsOutboxSupersede(sid,r._rowId,columnId,'cell');
+      await jsOutboxAdd(Object.assign({kind:'cell',sheetId:sid,rowId:r._rowId,columnId,value},meta));
+      { const cur=(sid===jsSheetId&&jsRowById(rid))||r; cur[colKey]=value; }
       setSt('Saved offline — will sync','ok');
       jsRenderCards(); jsUpdateProgress(); jsRefreshOutbox();
     } else {
@@ -4021,6 +4069,217 @@ function showMsg(id,text,type){
 function initials(n){return n.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)}
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
+// ── Manager view → Tech tracking (Testers only) ───────────────────────────────
+// The cross-job version of the Job Sheets / Floor Maps activity reports. One
+// request (/api/jobsheet/techtracking) returns every logged save in a date range;
+// the same engine the per-sheet reports use (fmBuildActivity) then runs once PER
+// SHEET and the results are merged per tech -- pace is per sheet on purpose, since
+// the gap between two items only means something on the same job. The log doesn't
+// say which tab a save came from, so "Floor Maps" = sheets that have a floor map.
+const TT_RANGES=[['week','Selected week'],['7','Last 7 days'],['30','Last 30 days'],['90','Last 90 days'],['all','All time']];
+const TT_SOURCES=[['all','All work'],['jobsheet','Job Sheets'],['floormap','Floor Maps']];
+const TT_MAX=20000;
+const TT_COLS=[['name','Tech'],['items','Items'],['photos','Photos'],['labor','Time logged'],['avg','Avg / item'],['gap','Avg between items'],['rate','Items / hr'],['vs','vs team'],['days','Active days'],['last','Last active']];
+// [value getter, direction]: 1 = lowest first (names, pace: faster first), -1 = highest first
+const TT_SORT={name:[t=>String(t.name).toLowerCase(),1],items:[t=>t.items,-1],photos:[t=>t.photos,-1],labor:[t=>t.laborSec,-1],avg:[t=>t.avgSec,1],gap:[t=>t.gapAvg,1],rate:[t=>t.rate,-1],days:[t=>t.dayN,-1],last:[t=>Date.parse(t.last)||0,-1]};
+const tt={range:'30',source:'all',sort:'items',open:null,loading:false,loadingKey:'',loadedKey:'',loadedAt:null,error:'',items:null,truncated:false,fmSheets:new Set(),fmUnknown:false,model:null,bounds:null,rows:[],req:0};
+
+function ttKey(){ return tt.range+(tt.range==='week'?'|'+selectedWeekKey:''); }
+// [from, to) in ms; null = open-ended. Days are local calendar days, today included.
+function ttBounds(){
+  const now=new Date();
+  if(tt.range==='week'){
+    const m=/^wk:(\d{4})-(\d{2})-(\d{2})$/.exec(selectedWeekKey||'');
+    if(m){ const y=+m[1], mo=+m[2]-1, d=+m[3]; return {from:new Date(y,mo,d).getTime(), to:new Date(y,mo,d+7).getTime()}; }
+  }
+  const n=parseInt(tt.range,10);
+  if(n>0) return {from:new Date(now.getFullYear(),now.getMonth(),now.getDate()-(n-1)).getTime(), to:null};
+  return {from:null,to:null};
+}
+function ttRangeLabel(){
+  if(tt.range==='week'){ try{ return 'Week of '+getSelectedWeek().label; }catch(e){ return 'Selected week'; } }
+  const r=TT_RANGES.find(x=>x[0]===tt.range); return r? r[1] : '';
+}
+function ttDayKey(ms){ const d=new Date(ms); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
+async function ttLoad(){
+  const my=++tt.req, key=ttKey(), b=ttBounds();
+  tt.loading=true; tt.loadingKey=key; tt.error=''; ttPaint();
+  let qs='limit='+TT_MAX;
+  if(b.from!=null) qs+='&from='+encodeURIComponent(new Date(b.from).toISOString());
+  if(b.to!=null) qs+='&to='+encodeURIComponent(new Date(b.to).toISOString());
+  try{
+    const [d,maps]=await Promise.all([jsApi('/jobsheet/techtracking?'+qs), fmFetch('GET','/floormaps').then(r=>r.maps||[]).catch(()=>null)]);
+    if(my!==tt.req) return;
+    tt.items=d.items||[]; tt.truncated=!!d.truncated; tt.fmUnknown=!maps; tt.fmSheets=new Set((maps||[]).map(m=>String(m.sheetId)));
+    tt.bounds=b; tt.loadedKey=key; tt.loadedAt=Date.now(); tt.loading=false;
+    ttRecompute(); ttPaint();
+  }catch(e){
+    if(my!==tt.req) return;
+    tt.loading=false; tt.items=null; tt.model=null; tt.loadedKey=''; tt.loadedAt=null;
+    tt.error=fmIsOffline(e)? 'Tech tracking needs a connection.' : (e.message||'Failed to load tech tracking');
+    ttPaint();
+  }
+}
+function ttShow(){
+  const k=ttKey();
+  if(tt.loadedKey===k || (tt.loading&&tt.loadingKey===k)) ttPaint(); else ttLoad();
+}
+function ttSetRange(r){ if(tt.range===r) return; tt.range=r; tt.open=null; ttShow(); }
+function ttSetSource(s){ if(tt.source===s) return; tt.source=s; tt.open=null; ttRecompute(); ttPaint(); }
+function ttSetSort(k){ tt.sort=k; ttPaint(); }
+function ttToggle(i){ const t=tt.rows[i]; if(!t) return; tt.open=(tt.open===t.uk)? null : t.uk; ttPaint(); }
+function ttRecompute(){ tt.model=tt.items? ttCompute(tt.items,tt.fmSheets,tt.source) : null; }
+
+// Groups the log by sheet, runs the shared engine on each, and merges per tech.
+function ttCompute(items,fmSheets,source){
+  const sheets=new Map();
+  (items||[]).forEach(it=>{
+    const sid=String(it.sheetId||''); if(!sid) return;
+    const fm=fmSheets.has(sid);
+    if(source==='floormap'&&!fm) return;
+    if(source==='jobsheet'&&fm) return;
+    let s=sheets.get(sid); if(!s){ s={id:sid,name:'',fm,items:[]}; sheets.set(sid,s); }
+    if(!s.name&&it.sheetName) s.name=it.sheetName;
+    s.items.push(it);
+  });
+  const techs=new Map(), jobs=[], uniq=new Set(), byDay=new Map();
+  const k={photos:0,edits:0,laborSec:0,timedN:0,gapSum:0,gapN:0};
+  sheets.forEach(s=>{
+    const m=fmBuildActivity(s.items,jsActKey);
+    const job={id:s.id,name:s.name||('Sheet '+s.id),fm:s.fm,techNames:[],items:new Set(),photos:0,laborSec:0,timedN:0,last:''};
+    m.techs.forEach(u=>{
+      let t=techs.get(u.uk);
+      if(!t){ t={uk:u.uk,name:u.name,items:0,photos:0,edits:0,laborSec:0,timedN:0,gapSum:0,gapN:0,days:new Set(),first:u.first,last:u.last,jobs:[]}; techs.set(u.uk,t); }
+      if(u.last>=t.last){ t.last=u.last; t.name=u.name; }
+      if(u.first<t.first) t.first=u.first;
+      const tj={name:job.name,fm:s.fm,items:u.desks,photos:u.photos,laborSec:0,timedN:0};
+      u.visits.forEach(v=>{
+        uniq.add(s.id+'|'+v.n); job.items.add(v.n);
+        byDay.set(ttDayKey(v.end),(byDay.get(ttDayKey(v.end))||0)+1);
+        v.entries.forEach(e=>{ t.days.add(ttDayKey(e.t)); if(e.action!=='photo') t.edits++; });
+        if(v.deskSec!=null){ t.laborSec+=v.deskSec; t.timedN++; tj.laborSec+=v.deskSec; tj.timedN++; job.laborSec+=v.deskSec; job.timedN++; }
+        if(v.gapSec!=null){ t.gapSum+=v.gapSec; t.gapN++; }
+      });
+      t.items+=u.desks; t.photos+=u.photos; t.jobs.push(tj);
+      job.photos+=u.photos; job.techNames.push(u.name);
+      if(u.last>job.last) job.last=u.last;
+    });
+    jobs.push(job);
+  });
+  const list=[...techs.values()];
+  list.forEach(t=>{
+    t.dayN=t.days.size; t.avgSec=t.timedN? t.laborSec/t.timedN : null; t.gapAvg=t.gapN? t.gapSum/t.gapN : null;
+    t.rate=(t.laborSec>0&&t.timedN)? t.timedN/(t.laborSec/3600) : null;
+    t.jobs.sort((a,b)=>b.items-a.items);
+    k.photos+=t.photos; k.edits+=t.edits; k.laborSec+=t.laborSec; k.timedN+=t.timedN; k.gapSum+=t.gapSum; k.gapN+=t.gapN;
+  });
+  jobs.sort((a,b)=>(Date.parse(b.last)||0)-(Date.parse(a.last)||0));
+  return {techs:list, jobs, byDay,
+    kpi:{techs:list.length, items:uniq.size, photos:k.photos, edits:k.edits, laborSec:k.laborSec, timedN:k.timedN,
+      avgSec:k.timedN? k.laborSec/k.timedN : null, gapAvg:k.gapN? k.gapSum/k.gapN : null, gapN:k.gapN}};
+}
+
+function ttNiceMax(n){ if(n<=1) return 1; const p=Math.pow(10,Math.floor(Math.log10(n))), m=n/p; return (m<=1?1:m<=2?2:m<=5?5:10)*p; }
+// Bars: one per day (per week once the range passes ~6 weeks). Hover a bar for its date and count.
+function ttChartHtml(byDay,b){
+  const keys=[...byDay.keys()].sort(); if(!keys.length) return {weekly:false,html:''};
+  const day0=ms=>{ const d=new Date(ms); return new Date(d.getFullYear(),d.getMonth(),d.getDate()); };
+  const pk=k=>{ const p=k.split('-'); return new Date(+p[0],+p[1]-1,+p[2]); };
+  let start=(b&&b.from!=null)? day0(b.from) : pk(keys[0]);
+  const end=(b&&b.to!=null)? day0(b.to-1) : day0(Date.now());
+  if((end-start)/864e5>800) start=new Date(end.getFullYear(),end.getMonth(),end.getDate()-800);
+  const days=[]; for(let d=new Date(start); d<=end; d=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1)) days.push(new Date(d));
+  const weekly=days.length>45;
+  const bars=[], idx=new Map();
+  days.forEach(d=>{
+    const key=weekly? ttDayKey(new Date(d.getFullYear(),d.getMonth(),d.getDate()-((d.getDay()+6)%7)).getTime()) : ttDayKey(d.getTime());
+    let bar=idx.get(key);
+    if(!bar){ const at=weekly? pk(key) : d; bar={n:0,short:at.toLocaleDateString(undefined,{month:'short',day:'numeric'}),long:(weekly?'Week of ':'')+at.toLocaleDateString(undefined,{weekday:weekly?undefined:'short',month:'short',day:'numeric'})}; idx.set(key,bar); bars.push(bar); }
+    bar.n+=byDay.get(ttDayKey(d.getTime()))||0;
+  });
+  const W=720,H=190,L=34,R=6,T=10,B=24, max=ttNiceMax(Math.max.apply(null,bars.map(x=>x.n).concat([1])));
+  const slot=(W-L-R)/bars.length, bw=Math.max(2,Math.min(26,slot-2)), ph=H-T-B;
+  let g='';
+  [0,max/2,max].forEach(v=>{ const y=T+ph-(v/max)*ph; g+=`<line x1="${L}" x2="${W-R}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="1"/><text x="${L-6}" y="${y+4}" text-anchor="end">${Math.round(v*10)/10}</text>`; });
+  bars.forEach((x,i)=>{
+    const h=(x.n/max)*ph, cx=L+slot*i+slot/2;
+    g+=`<g class="tt-bar"><title>${jsEsc(x.long)} · ${x.n} item${x.n===1?'':'s'} worked</title><rect x="${L+slot*i}" y="${T}" width="${slot}" height="${ph}" fill="transparent"/>`+
+       (x.n? `<rect class="tt-b" x="${cx-bw/2}" y="${T+ph-h}" width="${bw}" height="${h}" rx="2" style="fill:var(--green)"/>` : '')+`</g>`;
+  });
+  const lab=(i,anchor)=>`<text x="${anchor==='start'?L:anchor==='end'?W-R:L+slot*i+slot/2}" y="${H-6}" text-anchor="${anchor}">${jsEsc(bars[i].short)}</text>`;
+  g+=lab(0,'start'); if(bars.length>2) g+=lab(Math.floor((bars.length-1)/2),'middle'); if(bars.length>1) g+=lab(bars.length-1,'end');
+  return {weekly, html:`<div class="tt-chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Items worked per ${weekly?'week':'day'}; the tables above and below hold the same data">${g}</svg></div>`};
+}
+
+function ttSegHtml(defs,cur,fn){
+  return '<div class="mgr-sub-tabs">'+defs.map(d=>`<button class="mgr-sub-tab ${d[0]===cur?'active':''}" onclick="${fn}('${d[0]}')">${jsEsc(d[1])}</button>`).join('')+'</div>';
+}
+function ttDur(sec){ return sec==null? '–' : jsFmtDuration(Math.round(sec)); }
+function ttTechTable(m){
+  const rows=m.techs.slice(), [f,dir]=TT_SORT[tt.sort]||TT_SORT.items;
+  rows.sort((a,b)=>{ const x=f(a), y=f(b); if(x==null&&y==null) return String(a.name).localeCompare(String(b.name)); if(x==null) return 1; if(y==null) return -1; return x<y? -dir : x>y? dir : String(a.name).localeCompare(String(b.name)); });
+  tt.rows=rows;
+  const teamAvg=m.kpi.avgSec, canCmp=m.techs.length>=2&&m.kpi.timedN>=8;
+  const head='<tr>'+TT_COLS.map(c=> c[0]==='vs'? `<th>${c[1]}</th>` : `<th><button class="${tt.sort===c[0]?'on':''}" onclick="ttSetSort('${c[0]}')" title="Sort by ${jsEsc(c[1])}">${jsEsc(c[1])}${tt.sort===c[0]?' ↓':''}</button></th>`).join('')+'</tr>';
+  const body=rows.map((t,i)=>{
+    let vs='–';
+    if(canCmp&&teamAvg&&t.avgSec!=null&&t.timedN>=3){
+      const p=Math.round((t.avgSec/teamAvg-1)*100);
+      vs=Math.abs(p)<5? 'about the same' : (p<0? `<span class="tt-fast">${-p}% faster</span>` : `<span class="tt-slow">${p}% slower</span>`);
+    }
+    const open=tt.open===t.uk;
+    let h=`<tr class="tt-row" tabindex="0" role="button" aria-expanded="${open}" onclick="ttToggle(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();ttToggle(${i})}">`+
+      `<td class="tt-name">${open?'▾':'▸'} ${jsEsc(t.name)}</td><td>${t.items}</td><td>${t.photos}</td><td>${t.laborSec? fmFmtHM(t.laborSec) : '–'}</td>`+
+      `<td>${ttDur(t.avgSec)}</td><td>${ttDur(t.gapAvg)}</td><td>${t.rate!=null? (Math.round(t.rate*10)/10) : '–'}</td><td>${vs}</td><td>${t.dayN}</td><td>${jsEsc(jsFmtWhen(t.last))}</td></tr>`;
+    if(open) h+=t.jobs.map(j=>`<tr class="tt-sub"><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td>${j.items}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td colspan="5"></td></tr>`).join('');
+    return h;
+  }).join('');
+  return `<div class="tt-wrap"><table class="tt-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+function ttJobTable(m){
+  const shown=m.jobs.slice(0,30);
+  const body=shown.map(j=>{
+    const names=j.techNames.length>3? j.techNames.slice(0,3).join(', ')+' +'+(j.techNames.length-3) : j.techNames.join(', ');
+    return `<tr><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td style="text-align:left;white-space:normal;min-width:140px">${jsEsc(names)}</td><td>${j.items.size}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td>${jsEsc(jsFmtWhen(j.last))}</td></tr>`;
+  }).join('');
+  return `<div class="tt-wrap"><table class="tt-table"><thead><tr><th>Job</th><th style="text-align:left">Techs</th><th>Items</th><th>Photos</th><th>Time logged</th><th>Avg / item</th><th>Last activity</th></tr></thead><tbody>${body}</tbody></table></div>`+
+    (m.jobs.length>shown.length? `<div class="tt-note" style="margin-top:6px">Showing the ${shown.length} most recently worked of ${m.jobs.length} jobs.</div>` : '');
+}
+function ttKpi(v,l,s){ return `<div class="tt-kpi"><div class="tt-kpi-v">${v}</div><div class="tt-kpi-l">${jsEsc(l)}</div>${s?`<div class="tt-kpi-s">${jsEsc(s)}</div>`:''}</div>`; }
+
+function ttPaint(){
+  const root=document.getElementById('tt-root'); if(!root||mgrMode!=='tech') return;
+  const lbl=document.getElementById('mgr-sub-label'); if(lbl) lbl.textContent='Tech tracking · '+ttRangeLabel();
+  let h='<div class="tt-controls">'+ttSegHtml(TT_RANGES,tt.range,'ttSetRange')+ttSegHtml(TT_SOURCES,tt.source,'ttSetSource');
+  h+='<div class="tt-updated">'+(tt.loading? 'Loading…' : (tt.loadedAt? 'Updated '+jsEsc(new Date(tt.loadedAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}))+' <button class="tt-link" onclick="ttLoad()">Refresh</button>' : ''))+'</div></div>';
+  const m=tt.model;
+  if(tt.error) h+=`<div class="tt-empty">${jsEsc(tt.error)} <button class="tt-link" onclick="ttLoad()">Try again</button></div>`;
+  else if(!m) h+='<div class="tt-empty">Loading…</div>';
+  else {
+    if(tt.truncated) h+=`<div class="tt-warn"><b>Heads up:</b> this range holds more than ${TT_MAX.toLocaleString()} logged saves, so only the newest ${TT_MAX.toLocaleString()} are included and the oldest work is missing. Pick a shorter range.</div>`;
+    if(tt.fmUnknown&&tt.source!=='all') h+='<div class="tt-warn">The floor map list couldn\'t be loaded, so every job is being treated as a Job Sheet.</div>';
+    if(!m.techs.length) h+='<div class="tt-empty">No tech activity logged for this range'+(tt.source!=='all'?' and filter':'')+'.</div>';
+    else {
+      const k=m.kpi;
+      h+='<div class="tt-kpis">'+
+        ttKpi(k.techs,'Techs active')+
+        ttKpi(k.items,'Items worked')+
+        ttKpi(k.photos,'Photos taken',k.edits+' edit'+(k.edits===1?'':'s'))+
+        ttKpi(k.laborSec? fmFmtHM(k.laborSec) : '–','Time logged',k.timedN? 'on '+k.timedN+' timed item'+(k.timedN===1?'':'s') : '')+
+        ttKpi(ttDur(k.avgSec),'Avg time per item')+
+        ttKpi(ttDur(k.gapAvg),'Avg between items',k.gapN? k.gapN+' measured' : '')+
+        '</div>';
+      h+='<div class="tt-sec"><div class="js-act-sec-h">By tech<span style="font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0"> · click a tech to see their jobs, click a heading to sort</span></div>'+ttTechTable(m)+'</div>';
+      const ch=ttChartHtml(m.byDay,tt.bounds);
+      h+='<div class="tt-sec"><div class="js-act-sec-h">Items worked '+(ch.weekly? 'per week' : 'per day')+'</div>'+ch.html+'</div>';
+      h+='<div class="tt-sec"><div class="js-act-sec-h">By job</div>'+ttJobTable(m)+'</div>';
+      h+='<div class="tt-note">Only work done through this app is counted — photos and edits made directly in Smartsheet aren\'t attributed to anyone. Time logged is how long a tech had an item open before saving; a gap over 20 minutes is treated as a break and left out. Between items is the time from one item to the next on the same job. Job types differ, so compare techs on the same jobs. The log doesn\'t record which tab a save came from, so "Floor Maps" means jobs that have a floor map.</div>';
+    }
+  }
+  root.innerHTML=h;
+}
+
 // ── Manager view ──────────────────────────────────────────────────────────────
 let mgrMode='dispatch';
 let crewMode='board';
@@ -4041,11 +4300,13 @@ function mgrSubTabsHtml(){
   return `<div class="mgr-sub-tabs">
       <button class="mgr-sub-tab ${mgrMode==='individual'?'active':''}" onclick="setMgrMode('individual')">Individual</button>
       <button class="mgr-sub-tab ${mgrMode==='dispatch'?'active':''}" onclick="setMgrMode('dispatch')">Dispatch</button>
-      <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>
+      <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>${currentUserIsTester?`
+      <button class="mgr-sub-tab ${mgrMode==='tech'?'active':''}" onclick="setMgrMode('tech')">Tech tracking</button>`:''}
     </div>`;
 }
 
 async function renderManager(){
+  if(mgrMode==='tech'&&!currentUserIsTester) mgrMode='dispatch'; // Testers-only tab
   await ensureAvailabilityLoaded(selectedWeekKey);
   const names=getNames();
   const el=document.getElementById('mgr-content');
@@ -4063,6 +4324,13 @@ async function renderManager(){
     subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
     el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.reportsViewHtml()}`;
+    return;
+  }
+
+  if(mgrMode==='tech'){
+    subLbl.textContent='Tech tracking · '+ttRangeLabel();
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div><div id="tt-root"></div>`;
+    ttShow();
     return;
   }
 

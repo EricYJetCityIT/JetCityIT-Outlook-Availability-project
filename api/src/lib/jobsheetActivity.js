@@ -91,4 +91,34 @@ async function listJobSheetActivity(sheetId, limit) {
   return resources;
 }
 
-module.exports = { logJobSheetActivity, listJobSheetActivity };
+// Every sheet's activity in a date range, newest first, for the Manager view's
+// Tech tracking tab (job costing / pace per tech across all jobs). `from`/`to`
+// are ISO strings (capturedAt is stored as an ISO string, so string comparison is
+// date order); an unparseable bound is ignored. One extra row is requested so
+// the caller can tell the range was cut off (the OLDEST rows are the ones lost).
+// Bound values only ever reach the query as parameters.
+const DEFAULT_ALL_LIMIT = 10000;
+const MAX_ALL_LIMIT = 20000;
+function isoOrNull(v) {
+  if (!v || Number.isNaN(Date.parse(v))) return null;
+  return new Date(v).toISOString();
+}
+async function listAllJobSheetActivity(from, to, limit) {
+  const n = Number.isInteger(limit) ? Math.min(MAX_ALL_LIMIT, Math.max(1, limit)) : DEFAULT_ALL_LIMIT;
+  const f = isoOrNull(from), t = isoOrNull(to);
+  const parameters = [{ name: '@p', value: ID_PREFIX }];
+  let where = 'STARTSWITH(c.id, @p)';
+  if (f) { where += ' AND c.capturedAt >= @from'; parameters.push({ name: '@from', value: f }); }
+  if (t) { where += ' AND c.capturedAt < @to'; parameters.push({ name: '@to', value: t }); }
+  const container = getContainer(CONTAINER_ID);
+  const { resources } = await container.items
+    .query({
+      query: `SELECT TOP ${n + 1} c.sheetId, c.sheetName, c.rowId, c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE ${where} ORDER BY c.capturedAt DESC`,
+      parameters,
+    })
+    .fetchAll();
+  const truncated = resources.length > n;
+  return { items: truncated ? resources.slice(0, n) : resources, truncated };
+}
+
+module.exports = { logJobSheetActivity, listJobSheetActivity, listAllJobSheetActivity };

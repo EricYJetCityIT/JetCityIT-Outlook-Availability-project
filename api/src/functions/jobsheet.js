@@ -1,7 +1,7 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
-const { logJobSheetActivity, listJobSheetActivity } = require('../lib/jobsheetActivity');
+const { logJobSheetActivity, listJobSheetActivity, listAllJobSheetActivity } = require('../lib/jobsheetActivity');
 
 // Auth failures (401/403/429) go through the shared handler; any other failure
 // (e.g. a Smartsheet API error) returns its real message here. This tab is
@@ -121,6 +121,28 @@ app.http('jobsheetActivityList', {
       const limit = parseInt(params.get('limit') || '', 10);
       const items = await listJobSheetActivity(sheetId, Number.isFinite(limit) ? limit : undefined);
       return { jsonBody: { items } };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
+// GET /api/jobsheet/techtracking?from=<iso>&to=<iso> — the attribution log for
+// EVERY sheet in a date range (newest first), for the Manager view's Tech
+// tracking tab. { items, truncated }: truncated means the range held more than
+// the cap and the oldest rows were left out. Testers-only, like the rest.
+app.http('jobsheetTechTracking', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/techtracking',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const params = new URL(request.url).searchParams;
+      const limit = parseInt(params.get('limit') || '', 10);
+      const out = await listAllJobSheetActivity(params.get('from'), params.get('to'), Number.isFinite(limit) ? limit : undefined);
+      return { jsonBody: out };
     } catch (e) {
       return jobsheetError(e, context);
     }
