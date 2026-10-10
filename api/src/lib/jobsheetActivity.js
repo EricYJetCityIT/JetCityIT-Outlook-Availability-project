@@ -83,7 +83,8 @@ async function listJobSheetActivity(sheetId, limit) {
   const container = getContainer(CONTAINER_ID);
   const { resources } = await container.items
     .query({
-      query: `SELECT TOP ${n} c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC`,
+      // rowId lets the viewer match an entry to the exact row (a label can repeat or be edited).
+      query: `SELECT TOP ${n} c.rowId, c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE STARTSWITH(c.id, @p) AND c.sheetId = @sheetId ORDER BY c.capturedAt DESC`,
       parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@sheetId', value: String(sheetId) }],
     })
     .fetchAll();

@@ -585,6 +585,10 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-prog-bar{flex:1;min-width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden}
 .fm-prog-fill{height:100%;background:#16A37F;border-radius:4px;transition:width .3s}
 .fm-prog-txt{font-size:13px;color:var(--text2)}
+.js-card-last{font-size:11.5px;color:var(--text3);margin-top:3px}
+.js-photo-by{font-size:11.5px;color:var(--text3);margin-top:3px}
+.js-saved-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.js-saved-chip{font-size:12px;font-weight:600;color:var(--green-dark)}
 .fm-route-lbl{position:absolute;transform:translate(-50%,-50%);padding:1px 7px;border-radius:10px;background:#fff;border:1.5px solid #2563EB;color:#1E3A8A;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .fm-pin{position:absolute;transform:translate(-50%,-50%);min-width:24px;height:24px;padding:0 6px;box-sizing:border-box;border-radius:12px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
 .fm-pin-done{background:#16A37F}
@@ -1599,6 +1603,9 @@ async function fmCacheGetMap(id){
   if(!im||!im.blob||im.attachmentId!==m.map.attachmentId) return null;
   return Object.assign({},m,{blob:im.blob});
 }
+// Everything saved on this device (floor maps AND job sheets share one store), with
+// the Job Sheets tab's view of what's saved reset so it doesn't show stale chips.
+async function fmWipeSaved(){ await fmCacheClear(); jsSavedIds=new Set(); jsSavedList=[]; }
 function fmCacheDelMap(id){ return Promise.all([fmCacheDel('map:'+id),fmCacheDel('img:'+id)]); }
 // Photo links expire and can't be fetched offline, so only "this cell has a
 // photo" is kept (true) -- the popup already renders that as a photo tile.
@@ -1674,7 +1681,7 @@ async function fmLoadList(){
       const c=await fmRaceTimeout(fmCacheGet('list'),3000);
       if(c&&c.maps&&c.owner===fmOwner()){ fm.maps=c.maps; fm.listOfflineAt=c.savedAt; }
       else fm.error='No connection, and no maps have been saved on this device yet.';
-    } else if(fmNoAccess(e)){ fmCacheClear(); fm.maps=[]; fm.error='You no longer have access to Floor Maps.'; }
+    } else if(fmNoAccess(e)){ fmWipeSaved(); fm.maps=[]; fm.error='You no longer have access to Floor Maps.'; }
     else fm.error=e.message||'Failed to load floor maps';
   }
   fm.cachedIds=await fmCachedIds();
@@ -1700,8 +1707,8 @@ async function fmSaveAllOffline(){
   fm.saveAll=null; fm.cachedIds=await fmCachedIds(); if(fm.mode==='list') fmPaint();
 }
 async function fmClearOffline(){
-  if(!confirm('Remove all saved floor maps from this device? They\'ll need a signal to open again.')) return;
-  await fmCacheClear(); fm.cachedIds=new Set(); fm.saveMsg='Saved copies removed from this device.'; if(fm.mode==='list') fmPaint();
+  if(!confirm('Remove all saved floor maps and job sheets from this device? They\'ll need a signal to open again.')) return;
+  await fmWipeSaved(); fm.cachedIds=new Set(); fm.saveMsg='Saved copies removed from this device.'; if(fm.mode==='list') fmPaint();
 }
 // ── Multi-floor jobs ──
 // A job is the set of maps that share a job name or, when none is set, the same
@@ -2237,9 +2244,11 @@ function fmApply(map,sheet,blob,acts,sheetError,cachedAt){
 // map isn't rebuilt (no flicker/re-zoom), only pins/progress/side panel update.
 async function fmRefreshOpen(id,tok,cached){
   fm.refreshing=true; fm.refreshError=''; fmRenderBanner();
+  const since=Date.now();
   try{
     const b=await fmFetchMapBundle(id,cached);
     if(fm.openToken!==tok || fm.mode!=='map') return;
+    if(b.sheet) fmReapplyEdits(b.sheet,since); // keep anything ticked while this was loading
     if(b.sheet) fmCacheSaveMap(id,b); // the server's view, before any queued edits are laid over it
     const sheet=b.sheet||fm.sheet;
     if(b.sheet){ await fmOverlayOutbox(b.sheet,b.map.sheetId); if(fm.openToken!==tok || fm.mode!=='map') return; }
@@ -2544,10 +2553,12 @@ function fmBackToList(){
 // cap the labor-time numbers use; its own constant here because the Job Sheets
 // one is declared further down this script).
 const FM_GAP_CAP_SEC=20*60;
-function fmBuildActivity(items){
-  const byLabel=new Map(), byUser=new Map();
+// `keyFn` says how an entry maps to its desk/item: Floor Maps matches by the
+// normalized label (default); Job Sheets matches by the Smartsheet row id.
+function fmBuildActivity(items,keyFn){
+  const byLabel=new Map(), byUser=new Map(), kf=keyFn||(it=>fmNorm(it.rowLabel));
   (items||[]).forEach(it=>{
-    const n=fmNorm(it.rowLabel), t=Date.parse(it.capturedAt);
+    const n=kf(it), t=Date.parse(it.capturedAt);
     if(!n||isNaN(t)) return;
     const uk=it.user||it.userName||'unknown';
     const e={n, label:String(it.rowLabel).trim(), col:it.columnLabel||'', action:it.action==='photo'?'photo':'cell',
@@ -2612,16 +2623,20 @@ function fmFmtHM(sec){
 // who + when, then each tech's time on the desk and how long they took to get
 // there from the previous desk.
 function fmActivityHtml(label){
-  if(!fm.act) return '';
-  const d=fm.act.byLabel.get(fmNorm(label)), head='<div class="js-field-label">Activity</div>';
-  if(!d||!d.entries.length) return '<div>'+head+'<div style="font-size:13px;color:var(--text3)">No tech activity logged for this desk. (Work done outside this app isn\'t attributed.)</div></div>';
+  return fm.act? fmActivityBlock(fm.act.byLabel.get(fmNorm(label)),'desk') : '';
+}
+// Shared by Floor Maps (noun "desk") and Job Sheets (noun "item"): `d` is one
+// entry of an activity model's byLabel map ({entries, visits}) or undefined.
+function fmActivityBlock(d,noun){
+  const head='<div class="js-field-label">Activity</div>';
+  if(!d||!d.entries.length) return '<div>'+head+'<div style="font-size:13px;color:var(--text3)">No tech activity logged for this '+noun+'. (Work done outside this app isn\'t attributed.)</div></div>';
   const rows=d.entries.map(e=>
     `<div class="js-act-row"><span class="js-act-when">${jsEsc(jsFmtWhen(e.at))}</span><span class="js-act-who">${jsEsc(e.name)}</span>`+
     `<span class="js-act-what">${e.action==='photo'?'📷 Photo':'✎ Edit'}${e.col?' · '+jsEsc(e.col):''}</span></div>`).join('');
   const visits=d.visits.map(v=>{
     const bits=[];
-    if(v.deskSec!=null) bits.push(jsFmtDuration(v.deskSec)+' on this desk');
-    if(v.gapSec!=null) bits.push('arrived '+jsFmtDuration(v.gapSec)+' after desk '+v.prevLabel);
+    if(v.deskSec!=null) bits.push(jsFmtDuration(v.deskSec)+' on this '+noun);
+    if(v.gapSec!=null) bits.push('arrived '+jsFmtDuration(v.gapSec)+' after '+noun+' '+v.prevLabel);
     return bits.length? `<div style="font-size:12.5px;color:var(--text2);margin-top:6px"><b>${jsEsc(v.name)}</b> · ${jsEsc(bits.join(' · '))}</div>` : '';
   }).join('');
   return '<div>'+head+'<div class="js-act-timeline">'+rows+'</div>'+visits+'</div>';
@@ -2884,6 +2899,11 @@ function fmAfterEdit(){
 // One status tick / notes edit -> Smartsheet via the Job Sheets cell route.
 // Applied locally right away (pin recolors, progress moves); a network failure
 // queues it in the shared offline outbox; a real rejection reverts a tick.
+// Edits that reached the server recently; a refresh whose response predates one must not revert it.
+let fmRecentEdits=[];
+function fmReapplyEdits(sheet,since){
+  fmRecentEdits.filter(e=>e.t>=since).forEach(e=>{ const r=sheet.rows.find(x=>String(x._rowId)===String(e.rowId)); if(r) r[e.colKey]=e.value; });
+}
 function fmRowById(rid){ const s=fm.sheet; return s? s.rows.find(x=>String(x._rowId)===String(rid))||null : null; }
 async function fmSaveField(rid,colKey,value){
   const s=fm.sheet, r=fmRowById(rid); if(!r) return;
@@ -2892,7 +2912,8 @@ async function fmSaveField(rid,colKey,value){
   const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
   try{
     await jsSaveCellLive(sheetId,r._rowId,columnId,value,meta);
-    r[colKey]=value; setSt('Saved','ok'); fmAfterEdit();
+    r[colKey]=value; fmRecentEdits.push({rowId:r._rowId,colKey,value,t:Date.now()}); if(fmRecentEdits.length>200) fmRecentEdits.shift();
+    setSt('Saved','ok'); fmAfterEdit();
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(sheetId,r._rowId,columnId,'cell');
@@ -2975,6 +2996,100 @@ function jsIdent(s){return (jsCols(s,'identifier')[0]||{}).key;}
 function jsDone(s,r){return s&&s.progressKey? !!r[s.progressKey] : false;}
 function jsFilteredRows(s){const q=jsQuery.trim().toLowerCase();const idk=jsIdent(s);return (s.rows||[]).map((r,i)=>({r,i})).filter(({r})=>!q||String(r[idk]||'').toLowerCase().includes(q));}
 
+// ── Job Sheets: who did what per item, and saved-for-offline sheets ──────────
+// Same engine as Floor Maps: the attribution log (jobsheetActivity.js) says who
+// photographed / edited each item and when, how long they spent, and (per tech,
+// in order) how long it took them to get from one item to the next. Entries
+// match an item by its Smartsheet row id.
+// Offline: every sheet opened (or saved with the buttons below) is kept in
+// IndexedDB (rows + activity; photos are not stored, they show as placeholders)
+// and opens instantly with no signal, refreshing quietly behind it when there
+// is one. Edits made offline use the existing outbox. Saved copies belong to
+// the signed-in account and are dropped if the server stops authorizing it.
+let jsAct=null;            // activity model for the open sheet (fmBuildActivity, keyed by row id)
+let jsServer=null;         // the server's view of the open sheet (never has queued offline edits laid over it)
+let jsOfflineMode=false;   // no connection and no workspace list: browsing saved sheets only
+let jsSavedList=[];        // [{id,name,workspaceName,savedAt}] sheets saved on this device
+let jsSavedIds=new Set();
+let jsCachedAt=null, jsOffline=false, jsRefreshing=false, jsRefreshError='', jsLoadToken=null;
+let jsSaveAll=null, jsSaveMsg='';
+const JS_CACHE_PREFIX='js:', JS_CACHE_INDEX='jsindex';
+const jsActKey=it=>it.rowId? 'r:'+it.rowId : (fmNorm(it.rowLabel)? 'l:'+fmNorm(it.rowLabel) : '');
+function jsSetActs(items){
+  jsActivity=items||null;
+  jsAct=items? fmBuildActivity(items,jsActKey) : null;
+  if(jsAct) jsAct.truncated=items.length>=5000; // the server returns only the newest 5000
+}
+function jsActFor(r){
+  if(!jsAct||!r) return null;
+  const idk=jsData&&jsIdent(jsData);
+  return jsAct.byLabel.get('r:'+r._rowId) || jsAct.byLabel.get('l:'+fmNorm(idk? r[idk] : '')) || null;
+}
+function jsRowById(rid){ return jsData? (jsData.rows.find(x=>String(x._rowId)===String(rid))||null) : null; }
+// Who took the picture in this photo column (the newest photo logged for it).
+function jsPhotoBy(r,c){
+  const a=jsActFor(r); if(!a) return '';
+  const e=a.entries.filter(x=>x.action==='photo'&&x.col===c.label).pop();
+  return e? '<div class="js-photo-by">📷 '+jsEsc(e.name)+' · '+jsEsc(jsFmtWhen(e.at))+'</div>' : '';
+}
+function jsMeta(sheet){ return {name:(sheet&&sheet.name)||'', workspaceName:(jsWorkspaces.find(w=>w.id===jsWorkspaceId)||{}).name||''}; }
+function jsSetServer(sheet){ jsServer=sheet? JSON.parse(JSON.stringify(sheet)) : null; }
+function jsNoAccess(e){ return fmNoAccess(e); }
+// Saved copies (IndexedDB, shared helpers with Floor Maps). The index record is
+// a small list so the offline picker doesn't have to read every sheet.
+async function jsCacheGet(id){ const r=await fmCacheGet(JS_CACHE_PREFIX+id); return (r&&r.sheet&&r.owner===fmOwner())? r : null; }
+// The copy is taken NOW (callers lay queued edits over the sheet right after), but
+// the writes run one at a time: the index is read-modify-write, so two saves
+// interleaving would drop one sheet from the offline picker.
+let jsCacheChain=Promise.resolve();
+function jsCacheSave(id,sheet,acts,meta){
+  const rec={sheet:fmSheetForCache(sheet), acts:acts||null, savedAt:Date.now(), owner:fmOwner(), name:(meta&&meta.name)||sheet.name||'', workspaceName:(meta&&meta.workspaceName)||''};
+  const run=async()=>{
+    if(!(await fmCachePut(JS_CACHE_PREFIX+id,rec))) return false;
+    const idx=await fmCacheGet(JS_CACHE_INDEX), sheets=(idx&&idx.owner===fmOwner()&&Array.isArray(idx.sheets))? idx.sheets : [];
+    const row={id:String(id),name:rec.name,workspaceName:rec.workspaceName,savedAt:rec.savedAt}, e=sheets.find(x=>x.id===row.id);
+    if(e) Object.assign(e,row); else sheets.push(row);
+    jsSavedIds=new Set(sheets.map(x=>x.id));
+    const done=await fmCachePut(JS_CACHE_INDEX,{owner:fmOwner(),sheets});
+    jsUpdateSaved();
+    return done;
+  };
+  const p=jsCacheChain.then(run,run);
+  jsCacheChain=p.catch(()=>{});
+  return p;
+}
+// Re-saves the open sheet's SERVER view after an online change, so a copy opened
+// later with no signal already has it (queued offline edits are laid over it at read time).
+function jsCacheSaveCurrent(){ if(jsServer&&jsSheetId) jsCacheSave(jsSheetId,jsServer,jsActivity,jsMeta(jsServer)); }
+// Edits that reached the server recently. A background refresh whose response is a
+// snapshot from BEFORE such an edit must not revert it on screen or in the saved copy.
+let jsRecentEdits=[];
+function jsReapplyEdits(sheet,since){
+  jsRecentEdits.filter(e=>e.t>=since).forEach(e=>{ const r=sheet.rows.find(x=>String(x._rowId)===String(e.rowId)); if(r) r[e.colKey]=e.value; });
+}
+function jsServerApply(rowId,colKey,value){
+  jsRecentEdits.push({rowId,colKey,value,t:Date.now()}); if(jsRecentEdits.length>200) jsRecentEdits.shift();
+  if(!jsServer) return;
+  const sr=jsServer.rows.find(x=>String(x._rowId)===String(rowId)); if(sr) sr[colKey]=value;
+  jsCacheSaveCurrent();
+}
+async function jsCacheDrop(id){
+  await fmCacheDel(JS_CACHE_PREFIX+id);
+  const idx=await fmCacheGet(JS_CACHE_INDEX);
+  if(idx&&Array.isArray(idx.sheets)){ idx.sheets=idx.sheets.filter(x=>x.id!==String(id)); jsSavedIds=new Set(idx.sheets.map(x=>x.id)); await fmCachePut(JS_CACHE_INDEX,idx); }
+}
+async function jsCacheClearAll(){
+  const keys=await fmCacheOp('readonly',st=>st.getAllKeys());
+  for(const k of (Array.isArray(keys)? keys : [])){ if(String(k).indexOf(JS_CACHE_PREFIX)===0||k===JS_CACHE_INDEX) await fmCacheDel(k); }
+  jsSavedIds=new Set(); jsSavedList=[];
+}
+async function jsRefreshSaved(){
+  const idx=await fmRaceTimeout(fmCacheGet(JS_CACHE_INDEX),3000), ok=idx&&idx.owner===fmOwner()&&Array.isArray(idx.sheets);
+  jsSavedList=ok? idx.sheets.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name))) : [];
+  jsSavedIds=new Set(jsSavedList.map(x=>x.id));
+}
+const jsFetchActs=id=>jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(id)+'&limit=5000').then(d=>d.items||[]).catch(()=>null); // best-effort
+
 async function jsApi(path){
   const token=await getApiToken();
   let res; try{ res=await fetch('/api'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); }catch(netErr){ const oe=new Error('No connection'); oe.offline=true; throw oe; }
@@ -2996,8 +3111,11 @@ function jsCardHTML(s,r,i){
       : `<span class="js-pill js-pill-off">${jsEsc(c.label)}</span>`).join('')+'</div>' : '';
   const subVals=texts.map(c=>r[c.key]).filter(Boolean);
   const sub= subVals.length? `<div class="js-card-sub">${jsEsc(subVals.join('  ·  '))}</div>` : '';
+  // Last person to photograph / edit this item, and when (from the activity log).
+  const a=jsActFor(r), last=a&&a.entries.length? a.entries[a.entries.length-1] : null;
+  const lastHtml= last? `<div class="js-card-last">${last.action==='photo'?'📷':'✎'} ${jsEsc(last.name)} · ${jsEsc(jsFmtWhen(last.at))}</div>` : '';
   return `<div class="js-card${jsDone(s,r)?' js-card-done':''}" onclick="jsOpenDetail(${i})">`+
-    `<div class="js-card-main"><div class="js-card-id">${jsEsc(r[idk])}</div>${sub}</div>${thumbs}${pills}</div>`;
+    `<div class="js-card-main"><div class="js-card-id">${jsEsc(r[idk])}</div>${sub}${lastHtml}</div>${thumbs}${pills}</div>`;
 }
 
 function jsRenderCards(){
@@ -3006,6 +3124,15 @@ function jsRenderCards(){
   wrap.innerHTML= rows.length? rows.map(({r,i})=>jsCardHTML(s,r,i)).join('') : `<div class="js-empty">No items match “${jsEsc(jsQuery)}”.</div>`;
 }
 
+// The body for a loaded sheet: the Activity report, or progress + search + item cards.
+function jsSheetMid(){
+  if(jsMode==='activity') return jsActivityHtml();
+  const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
+  return `<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
+      `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
+      `<input class="js-search" style="width:100%;box-sizing:border-box;margin:12px 0" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`+
+      '<div class="js-cards"></div>';
+}
 // Paints the whole tab from current state (list + loaded sheet + loading/error).
 function jsPaint(){
   const view=document.getElementById('view-jobsheet'); if(!view)return;
@@ -3017,23 +3144,15 @@ function jsPaint(){
     +jsWorkspaces.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsWorkspaceId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   const opts=jsSheets.map(x=>`<option value="${jsEsc(x.id)}"${x.id===jsSheetId?' selected':''}>${jsEsc(x.name)}</option>`).join('');
   let mid='';
-  if(jsWsError){ mid=`<div class="js-empty">${jsEsc(jsWsError)}</div>`; }
+  if(jsOfflineMode){ mid=jsOfflineMid(); }
+  else if(jsWsError){ mid=`<div class="js-empty">${jsEsc(jsWsError)}</div>`; }
   else if(jsWsLoading){ mid='<div class="js-empty">Loading workspaces…</div>'; }
   else if(!jsWorkspaces.length){ mid='<div class="js-empty">No workspaces available.</div>'; }
   else if(jsError){ mid=`<div class="js-empty">${jsEsc(jsError)}</div>`; }
   else if(jsLoading){ mid='<div class="js-empty">Loading…</div>'; }
   else if(!jsSheets.length){ mid='<div class="js-empty">No sheets in this workspace.</div>'; }
   else if(!jsData){ mid='<div class="js-empty">Loading…</div>'; }
-  else if(jsMode==='activity'){
-    mid=jsActivityHtml();
-  }
-  else {
-    const s=jsData, total=s.rows.length, done=s.rows.filter(r=>jsDone(s,r)).length, pct= total?Math.round(done/total*100):0;
-    mid=`<div class="js-progress-wrap"><div class="js-progress-head"><span class="js-progress-count">${done} of ${total} complete</span><span class="js-progress-pct">${pct}%</span></div>`+
-        `<div class="js-progress-bar"><div class="js-progress-fill" style="width:${pct}%"></div></div></div>`+
-        `<input class="js-search" style="width:100%;box-sizing:border-box;margin:12px 0" type="search" placeholder="Search items…" value="${jsEsc(jsQuery)}" oninput="jsSetQuery(this.value)">`+
-        '<div class="js-cards"></div>';
-  }
+  else { mid=jsSheetMid(); }
   const modeToggle=jsData? `<div class="js-mode-toggle">`+
       `<button type="button" class="js-mode-btn${jsMode==='items'?' active':''}" onclick="jsSetMode('items')">Items</button>`+
       `<button type="button" class="js-mode-btn${jsMode==='activity'?' active':''}" onclick="jsSetMode('activity')">📊 Activity</button>`+
@@ -3042,20 +3161,25 @@ function jsPaint(){
     '<h2>Job Sheets</h2>'+
     `<div class="js-banner">${JS_CAM}<span>Preview for the <b>Testers</b> group · live Smartsheet data · edits save back to Smartsheet</span></div>`+
     '<div class="js-outbox-bar" id="js-outbox-bar" style="display:none"></div>'+
+    '<div id="js-cache-banner"></div>'+
+    (jsOfflineMode? jsOfflineToolbar() : '')+
     (jsWorkspaces.length? `<div class="js-toolbar"><select class="js-select" onchange="jsSelectWorkspace(this.value)">${wsOpts}</select>`+
        (jsSheets.length? `<select class="js-select" onchange="jsSelectSheet(this.value)">${opts}</select>`:'')+
        `<div class="js-search-wrap"><input class="js-search" type="search" placeholder="Search Smartsheet for a sheet…" oninput="jsSearchSheets(this.value)" onblur="jsBlurSearch()" onfocus="jsRenderSearchResults()"><div class="js-search-results" id="js-search-results"></div></div>`+
        '</div>' : '')+
+    jsSavedControls()+
     modeToggle+
     mid+
     '<div class="js-modal-backdrop" id="js-modal-backdrop" onclick="if(event.target===this)jsCloseDetail()"><div class="js-modal" id="js-modal"></div></div>';
+  jsRenderBanner();
   if(jsMode==='items'&&jsData&&!jsLoading&&!jsError) jsRenderCards();
 }
 
 // Entry point (called by switchTab). Loads the workspace list on first open.
 function renderJobsheet(){
   jsRefreshOutbox(); // non-blocking; #js-outbox-bar exists by the time it resolves (jsPaint runs below/via jsLoadWorkspaces)
-  if(!jsWorkspaces.length && !jsWsLoading && !jsWsError){ jsLoadWorkspaces(); return; }
+  jsRefreshSaved().then(()=>{ const v=document.getElementById('view-jobsheet'); if(v&&v.innerHTML&&!jsSaveAll) jsPaint(); }); // which sheets are saved on this device
+  if(!jsOfflineMode && !jsWorkspaces.length && !jsWsLoading && !jsWsError){ jsLoadWorkspaces(); return; }
   jsPaint();
 }
 
@@ -3065,7 +3189,12 @@ async function jsLoadWorkspaces(){
     const d=await jsApi('/jobsheet/workspaces');
     jsWorkspaces=d.workspaces||[]; jsWsLoading=false;
     if(jsWorkspaces.length){ jsSelectWorkspace(jsWorkspaces[0].id); } else { jsPaint(); }
-  }catch(e){ jsWsLoading=false; jsWsError=e.message||'Failed to load workspaces'; jsPaint(); }
+  }catch(e){
+    jsWsLoading=false;
+    if(fmIsOffline(e)){ jsGoOffline(); return; } // no connection: browse the sheets saved on this device
+    if(jsNoAccess(e)){ jsCacheClearAll(); jsWsError='You no longer have access to Job Sheets.'; jsPaint(); return; }
+    jsWsError=e.message||'Failed to load workspaces'; jsPaint();
+  }
 }
 
 // Switches to a different workspace: resets the sheet picker + loaded sheet,
@@ -3084,13 +3213,143 @@ async function jsLoadSheetsForWorkspace(id, preferredSheetId){
     jsSheets=d.sheets||[]; jsLoading=false;
     const target=(preferredSheetId && jsSheets.some(s=>s.id===preferredSheetId))? preferredSheetId : (jsSheets[0]&&jsSheets[0].id);
     if(target){ jsLoadSheet(target); } else { jsPaint(); }
-  }catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheets'; jsPaint(); }
+  }catch(e){
+    jsLoading=false;
+    if(fmIsOffline(e)){ jsGoOffline(); return; }
+    jsError=e.message||'Failed to load sheets'; jsPaint();
+  }
 }
 
+// Opens a sheet: from this device's saved copy when there is one (instant, works
+// with no signal) and refreshes behind it; the first time it needs the network.
 async function jsLoadSheet(id){
-  jsSheetId=id; jsLoading=true; jsError=''; jsData=null; jsQuery=''; jsMode='items'; jsActivity=null; jsActivityError=''; jsPaint();
-  try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)); jsLoading=false; jsPaint(); }
-  catch(e){ jsLoading=false; jsError=e.message||'Failed to load sheet'; jsPaint(); }
+  jsSheetId=id; jsLoading=true; jsError=''; jsData=null; jsServer=null; jsQuery=''; jsMode='items'; jsSetActs(null); jsActivityError=''; jsSaveMsg='';
+  jsCachedAt=null; jsOffline=false; jsRefreshing=false; jsRefreshError='';
+  const tok=jsLoadToken={}; // a slow load notices the tech has since picked another sheet
+  jsPaint();
+  const cached=await fmRaceTimeout(jsCacheGet(id),3000); // a stuck cache must never block the live path
+  if(jsLoadToken!==tok) return;
+  if(cached){
+    jsSetServer(cached.sheet);
+    await fmOverlayOutbox(cached.sheet,id); // edits still queued offline stay applied
+    if(jsLoadToken!==tok) return;
+    jsData=cached.sheet; jsSetActs(cached.acts); jsCachedAt=cached.savedAt; jsLoading=false; jsPaint();
+    jsRefreshOpen(id,tok); // background; not awaited
+    return;
+  }
+  try{
+    const [sheet,acts]=await Promise.all([jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)), jsFetchActs(id)]);
+    if(jsLoadToken!==tok) return;
+    jsSetServer(sheet); jsCacheSave(id,sheet,acts,jsMeta(sheet)); // saved before anything is laid over it
+    await fmOverlayOutbox(sheet,id);
+    if(jsLoadToken!==tok) return;
+    jsData=sheet; jsSetActs(acts); jsLoading=false; jsPaint();
+  }catch(e){
+    if(jsLoadToken!==tok) return;
+    jsLoading=false;
+    jsError=jsNoAccess(e)? 'You no longer have access to Job Sheets.'
+      : fmIsOffline(e)? 'No connection, and this sheet hasn\'t been saved on this device yet. Open it once with signal and it will work offline after that.'
+      : (e.message||'Failed to load sheet');
+    jsPaint();
+  }
+}
+// After the saved copy is on screen: fetch fresh data and swap it in. Handlers
+// address rows by id, so an item popup that is open stays pointed at the right row.
+async function jsRefreshOpen(id,tok){
+  jsRefreshing=true; jsRefreshError=''; jsRenderBanner();
+  const since=Date.now();
+  try{
+    const [sheet,acts]=await Promise.all([jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)), jsFetchActs(id)]);
+    if(jsLoadToken!==tok) return;
+    jsReapplyEdits(sheet,since); // keep anything ticked while this was loading
+    jsCacheSave(id,sheet,acts||jsActivity,jsMeta(sheet));
+    jsSetServer(sheet);
+    await fmOverlayOutbox(sheet,id);
+    if(jsLoadToken!==tok) return;
+    jsRefreshing=false; jsOffline=false; jsCachedAt=null;
+    jsData=sheet; if(acts) jsSetActs(acts);
+    jsRenderBanner();
+    if(jsMode==='items'){ jsRenderCards(); jsUpdateProgress(); } else jsPaint();
+  }catch(e){
+    if(jsLoadToken!==tok) return;
+    jsRefreshing=false;
+    if(jsNoAccess(e)){ // access was removed: drop the saved copy and stop showing it
+      jsCacheDrop(id); jsData=null; jsServer=null; jsError='You no longer have access to Job Sheets.'; jsPaint(); return;
+    }
+    if(fmIsOffline(e)) jsOffline=true; else jsRefreshError=String(e.message||e).slice(0,120);
+    jsRenderBanner();
+  }
+}
+function jsRenderBanner(){
+  const el=document.getElementById('js-cache-banner'); if(!el) return;
+  let h='';
+  if(jsCachedAt){
+    const t=jsEsc(jsFmtWhen(new Date(jsCachedAt).toISOString()));
+    if(jsOffline) h='<div class="fm-banner fm-warn">📴 Offline — showing the copy saved '+t+'. Ticks, notes and photos you add are kept on this phone and sync when you\'re back in range. Photos show as placeholders until then.</div>';
+    else if(jsRefreshError) h='<div class="fm-banner fm-warn">Couldn\'t update ('+jsEsc(jsRefreshError)+') — showing the copy saved '+t+'.</div>';
+    else h='<div class="fm-banner">Showing the copy saved '+t+' · updating…</div>';
+  }
+  if(jsSaveMsg) h+='<div class="fm-banner">'+jsEsc(jsSaveMsg)+'</div>';
+  el.innerHTML=h;
+}
+// No connection and no workspace list: browse the sheets saved on this device.
+async function jsGoOffline(){
+  await jsRefreshSaved();
+  jsWorkspaces=[]; jsSheets=[]; jsWorkspaceId=null; // the pickers need a connection; only saved sheets are browsable
+  jsOfflineMode=true; jsWsLoading=false; jsWsError=''; jsLoading=false; jsError=''; jsData=null; jsServer=null; jsSheetId=null; jsLoadToken=null; jsSetActs(null);
+  jsPaint();
+}
+function jsOpenSaved(id){ jsLoadSheet(id); }
+function jsBackToSaved(){ jsLoadToken=null; jsData=null; jsServer=null; jsSheetId=null; jsError=''; jsSetActs(null); jsPaint(); }
+function jsRetryOnline(){ jsOfflineMode=false; jsWorkspaces=[]; jsSheets=[]; jsData=null; jsError=''; jsSaveMsg=''; jsLoadWorkspaces(); }
+function jsOfflineMid(){
+  if(jsError) return '<div class="js-empty">'+jsEsc(jsError)+'</div>';
+  if(jsLoading) return '<div class="js-empty">Loading…</div>';
+  if(jsData) return jsSheetMid();
+  const list=jsSavedList.length? jsSavedList.map(s=>
+    '<button type="button" class="pp-card" style="width:100%;text-align:left;margin-bottom:8px" onclick="jsOpenSaved(\''+jsEsc(s.id)+'\')">'+
+    '<div class="pp-card-top"><div class="pp-card-title">'+jsEsc(s.name||'Sheet')+'</div></div><div class="pp-card-sub">'+jsEsc(s.workspaceName||'')+'</div>'+
+    '<div class="pp-card-meta"><span>Saved '+jsEsc(jsFmtWhen(new Date(s.savedAt).toISOString()))+'</span></div></button>').join('')
+    : '<div class="js-empty">No sheets are saved on this device yet. Open a sheet once with signal and it will be available offline.</div>';
+  return '<div class="fm-banner fm-warn">📴 No connection — showing the sheets saved on this device.</div>'+list+
+    '<div style="margin-top:10px"><button type="button" class="btn btn-sm" onclick="jsRetryOnline()">Try again with a connection</button></div>';
+}
+function jsOfflineToolbar(){
+  return jsData? '<div class="js-toolbar"><button type="button" class="btn btn-sm" onclick="jsBackToSaved()">← Saved sheets</button><b style="font-size:14px">'+jsEsc(jsData.name||'')+'</b></div>' : '';
+}
+// "Save for offline" controls: a ✓ for the open sheet, save every sheet in this
+// workspace (capped), and remove everything from this device.
+function jsSavedControls(){ return '<div id="js-saved-wrap">'+jsSavedInner()+'</div>'; }
+function jsUpdateSaved(){ const w=document.getElementById('js-saved-wrap'); if(w) w.innerHTML=jsSavedInner(); } // refresh just this strip once a copy has been written
+function jsSavedInner(){
+  if(!jsWorkspaces.length||jsOfflineMode) return '';
+  let h='<div class="js-saved-row">';
+  if(jsSheetId&&jsSavedIds.has(String(jsSheetId))) h+='<span class="js-saved-chip">✓ Saved offline</span>';
+  if(jsSheets.length) h+='<button type="button" class="btn btn-sm" '+(jsSaveAll?'disabled':'')+' onclick="jsSaveAllInWorkspace()">'+(jsSaveAll? 'Saving '+jsSaveAll.done+' of '+jsSaveAll.total+'…' : '⬇ Save this workspace\'s sheets for offline')+'</button>';
+  if(jsSavedIds.size) h+='<button type="button" class="btn btn-sm btn-ghost" onclick="jsClearSaved()">Remove saved copies</button>';
+  return h+'</div>';
+}
+const JS_SAVE_ALL_MAX=30;
+async function jsSaveAllInWorkspace(){
+  if(jsSaveAll||!jsSheets.length) return;
+  const list=jsSheets.slice(0,JS_SAVE_ALL_MAX), wsName=(jsWorkspaces.find(w=>w.id===jsWorkspaceId)||{}).name||'';
+  jsSaveMsg=''; jsSaveAll={done:0,total:list.length,failed:0}; jsUpdateSaved(); jsRenderBanner(); // update just the strip: a full repaint would wipe an open item popup
+  let offline=false;
+  for(const s of list){
+    try{
+      const [sheet,acts]=await Promise.all([jsApi('/jobsheet/sheet?id='+encodeURIComponent(s.id)), jsFetchActs(s.id)]);
+      if(!(await jsCacheSave(s.id,sheet,acts,{name:sheet.name||s.name,workspaceName:wsName}))) throw new Error('Not enough storage on this device');
+    }catch(e){ jsSaveAll.failed++; if(fmIsOffline(e)){ offline=true; break; } }
+    jsSaveAll.done++; jsUpdateSaved();
+  }
+  const f=jsSaveAll.failed, n=jsSaveAll.total;
+  jsSaveMsg=offline? 'You\'re offline — connect to save sheets for offline use.'
+    : (f? (n-f)+' of '+n+' sheets saved; '+f+' couldn\'t be saved.' : '✓ '+n+' sheet'+(n===1?'':'s')+' saved on this device — they\'ll open without signal.')+(jsSheets.length>JS_SAVE_ALL_MAX? ' (Only the first '+JS_SAVE_ALL_MAX+' sheets are saved at once.)' : '');
+  jsSaveAll=null; await jsRefreshSaved(); jsUpdateSaved(); jsRenderBanner();
+}
+async function jsClearSaved(){
+  if(!confirm('Remove all saved job sheets from this device? They\'ll need a signal to open again.')) return;
+  await jsCacheClearAll(); jsSaveMsg='Saved sheets removed from this device.'; jsUpdateSaved(); jsRenderBanner();
 }
 
 function jsSetQuery(v){jsQuery=v;jsRenderCards();}
@@ -3109,8 +3368,8 @@ function jsSetMode(m){
 }
 async function jsLoadActivity(){
   jsActivityLoading=true; jsActivityError=''; jsPaint();
-  try{ const d=await jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(jsSheetId)); jsActivity=d.items||[]; jsActivityLoading=false; jsPaint(); }
-  catch(e){ jsActivityLoading=false; jsActivityError=e.message||'Failed to load activity'; jsPaint(); }
+  try{ const d=await jsApi('/jobsheet/activity?sheetId='+encodeURIComponent(jsSheetId)+'&limit=5000'); jsSetActs(d.items||[]); jsActivityLoading=false; jsPaint(); }
+  catch(e){ jsActivityLoading=false; jsActivityError=fmIsOffline(e)? 'The activity report needs a connection (it is only available offline for sheets saved with it).' : (e.message||'Failed to load activity'); jsPaint(); }
 }
 function jsFmtWhen(iso){
   try{ const d=new Date(iso); if(isNaN(d.getTime())) return ''; return d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }
@@ -3150,7 +3409,9 @@ function jsActivitySummary(items){
   Object.keys(sessionMax).forEach(sk=>{ const user=sk.slice(0,sk.lastIndexOf('::')); laborByUser[user]=(laborByUser[user]||0)+sessionMax[sk]; });
   return Object.keys(byUser).map(key=>{
     const u=byUser[key];
-    return {userName:u.userName,cell:u.cell,photo:u.photo,itemCount:u.items.size,first:u.first,last:u.last,laborSec:laborByUser[key]||0};
+    const t=jsAct&&jsAct.techs.find(x=>x.uk===key); // pace from the shared engine: avg time on an item, avg time between items
+    return {userName:u.userName,cell:u.cell,photo:u.photo,itemCount:u.items.size,first:u.first,last:u.last,laborSec:laborByUser[key]||0,
+      avgItemSec:t?t.avgDeskSec:null, avgGapSec:t?t.avgGapSec:null, gapN:t?t.gapN:0};
   }).sort((a,b)=>(b.cell+b.photo)-(a.cell+a.photo));
 }
 function jsActivityHtml(){
@@ -3162,7 +3423,8 @@ function jsActivityHtml(){
   const summaryHtml=summary.map(u=>
     `<div class="js-act-card"><div class="js-act-name">${jsEsc(u.userName)}</div>`+
     `<div class="js-act-stats">${u.cell} edit${u.cell===1?'':'s'} · ${u.photo} photo${u.photo===1?'':'s'} · ${u.itemCount} item${u.itemCount===1?'':'s'}</div>`+
-    (u.laborSec? `<div class="js-act-stats">⏱ ${jsEsc(jsFmtDuration(u.laborSec))} tracked</div>` : '')+
+    (u.laborSec? `<div class="js-act-stats">⏱ ${jsEsc(jsFmtDuration(u.laborSec))} tracked${u.avgItemSec!=null?' · avg '+jsEsc(jsFmtDuration(Math.round(u.avgItemSec)))+' per item':''}</div>` : '')+
+    (u.avgGapSec!=null? `<div class="js-act-stats">➜ avg ${jsEsc(jsFmtDuration(Math.round(u.avgGapSec)))} between items <span style="color:var(--text3)">(${u.gapN} measured)</span></div>` : '')+
     `<div class="js-act-time">${jsEsc(jsFmtWhen(u.first))} – ${jsEsc(jsFmtWhen(u.last))}</div></div>`
   ).join('');
   const timelineHtml=items.map(it=>
@@ -3171,7 +3433,7 @@ function jsActivityHtml(){
     `<span class="js-act-what">${it.action==='photo'?'📷':'✎'} ${jsEsc(it.rowLabel||'')}${it.columnLabel?' · '+jsEsc(it.columnLabel):''}${it.durationSec!=null?' · '+jsEsc(jsFmtDuration(it.durationSec)):''}</span></div>`
   ).join('');
   return '<div class="js-act-sec-h">By person</div><div class="js-act-summary">'+summaryHtml+'</div>'
-    +'<div class="js-act-sec-h" style="margin-top:18px">Timeline<span style="font-weight:400;color:var(--text3)"> · newest first, up to 500</span></div>'
+    +'<div class="js-act-sec-h" style="margin-top:18px">Timeline<span style="font-weight:400;color:var(--text3)"> · newest first, up to 5,000</span></div>'
     +'<div class="js-act-timeline">'+timelineHtml+'</div>';
 }
 
@@ -3225,10 +3487,13 @@ function jsOpenDetail(i){
   jsOpenRowId=r._rowId;
   if(!jsItemSessionStart[r._rowId]){ jsItemSessionStart[r._rowId]=Date.now(); jsItemSessionId[r._rowId]=jsRandId(); }
   const idk=jsIdent(s), photos=jsCols(s,'photo'), checks=jsCols(s,'checkbox'), texts=jsCols(s,'text');
+  // Handlers address this item by its Smartsheet row id, not its position, so a
+  // refresh that re-orders the sheet can't redirect an edit to another item.
+  const rid=jsEsc(String(r._rowId));
   let body='';
   if(checks.length){
     body+='<div><div class="js-field-label">Status</div><div style="display:grid;gap:8px">'+
-      checks.map(c=>`<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="jsSaveField(${i},'${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
+      checks.map(c=>`<label class="js-check"><input type="checkbox" data-key="${c.key}" ${r[c.key]?'checked':''} onchange="jsSaveField('${rid}','${c.key}',this.checked)"> ${jsEsc(c.label)}<span class="js-save-status" data-for="${c.key}" style="margin-left:6px"></span></label>`).join('')+'</div></div>';
   }
   if(photos.length){
     body+='<div><div class="js-field-label">Photos</div><div class="js-photos">'+
@@ -3240,11 +3505,12 @@ function jsOpenDetail(i){
         return `<figure style="margin:0">${img}`+
           `<figcaption style="font-size:12px;color:var(--text3);margin-top:4px;display:flex;align-items:center;gap:8px">`+
           `<span>${jsEsc(c.label)}</span>`+
-          `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="jsUploadPhoto(${i},'${c.key}',this)"></label>`+
-          `</figcaption><div class="js-save-status" data-for="${c.key}"></div></figure>`;
+          `<label class="js-photo-add-btn">${addLabel}<input type="file" accept="image/*" capture="environment" style="display:none" onchange="jsUploadPhoto('${rid}','${c.key}',this)"></label>`+
+          `</figcaption>${jsPhotoBy(r,c)}<div class="js-save-status" data-for="${c.key}"></div></figure>`;
       }).join('')+'</div></div>';
   }
-  texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" data-key="${c.key}" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="jsSaveField(${i},'${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
+  texts.forEach(c=>{ body+=`<div><div class="js-field-label">${jsEsc(c.label)}</div><textarea class="js-edit" data-key="${c.key}" rows="2" placeholder="Add ${jsEsc(c.label.toLowerCase())}…" onblur="jsSaveField('${rid}','${c.key}',this.value)">${jsEsc(r[c.key]||'')}</textarea><div class="js-save-status" data-for="${c.key}"></div></div>`; });
+  if(jsAct) body+=fmActivityBlock(jsActFor(r),'item'); // who photographed / edited it, when, time on it, time since the previous item
   document.getElementById('js-modal').innerHTML=
     `<div class="js-modal-head"><div class="js-modal-title">${jsEsc(r[idk])}</div><button class="js-modal-close" onclick="jsCloseDetail()" aria-label="Close">&times;</button></div>`+
     `<div class="js-modal-body">${body||'<div class="js-empty">No details.</div>'}</div>`;
@@ -3385,7 +3651,7 @@ async function jsSyncOutbox(){
   await jsRefreshOutbox();
   // Refresh the open sheet so newly-synced edits/photos show their real
   // server state instead of the optimistic local one.
-  if(jsSheetId){ try{ jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId)); jsRenderCards(); jsUpdateProgress(); }catch(e){} }
+  if(jsSheetId&&jsData){ try{ const fresh=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId)); jsSetServer(fresh); jsCacheSaveCurrent(); await fmOverlayOutbox(fresh,jsSheetId); jsData=fresh; jsRenderCards(); jsUpdateProgress(); }catch(e){} }
   // Same for an open floor map (its pins/progress read the same sheet).
   if(fm.mode==='map' && fm.map && fm.sheet){ try{ await fmReloadSheet(); }catch(e){} }
 }
@@ -3427,8 +3693,8 @@ async function jsUploadPhotoLive(sheetId, rowId, columnId, file, meta){
 // Updates local state + the card/progress on success; a network failure queues
 // it to the offline outbox instead (still applied locally so the UI reflects
 // the edit); a real server rejection shows the error and reverts a checkbox.
-async function jsSaveField(i, colKey, value){
-  const s=jsData, r=s&&s.rows[i]; if(!r)return;
+async function jsSaveField(rid, colKey, value){
+  const s=jsData, r=jsRowById(rid); if(!r)return;
   if(typeof value!=='boolean' && String(r[colKey]||'')===String(value||'')) return; // no change
   const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
@@ -3438,14 +3704,14 @@ async function jsSaveField(i, colKey, value){
   const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||'',durationSec:jsComputeDuration(r._rowId),sessionId:jsCurrentSessionId(r._rowId)};
   try{
     await jsSaveCellLive(jsSheetId, r._rowId, columnId, value, meta);
-    r[colKey]=value;
+    const cur=jsRowById(rid)||r; cur[colKey]=value; jsServerApply(r._rowId,colKey,value); // keep the saved copy current (a refresh may have swapped the row objects while this saved)
     setSt('Saved','ok'); setTimeout(()=>{ if(st&&st.textContent==='Saved') setSt('',''); },2000);
     jsRenderCards(); jsUpdateProgress();
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'cell');
       await jsOutboxAdd(Object.assign({kind:'cell',sheetId:jsSheetId,rowId:r._rowId,columnId,value},meta));
-      r[colKey]=value;
+      { const cur=jsRowById(rid)||r; cur[colKey]=value; }
       setSt('Saved offline — will sync','ok');
       jsRenderCards(); jsUpdateProgress(); jsRefreshOutbox();
     } else {
@@ -3463,20 +3729,22 @@ async function jsSaveField(i, colKey, value){
 // url, so on success the whole sheet is re-fetched (same as a fresh open) and
 // the same row's detail is re-opened to show the new photo immediately. A
 // network failure queues the photo (its File object) to the offline outbox.
-async function jsUploadPhoto(i, colKey, inputEl){
+async function jsUploadPhoto(rid, colKey, inputEl){
   const file=inputEl.files&&inputEl.files[0]; if(!file) return;
   const st=document.querySelector('#js-modal .js-save-status[data-for="'+colKey+'"]');
   const setSt=(t,cls)=>{ if(st){ st.textContent=t; st.className='js-save-status'+(cls?(' '+cls):''); } };
-  const s=jsData, r=s&&s.rows[i]; if(!r){ inputEl.value=''; return; }
+  const s=jsData, r=jsRowById(rid); if(!r){ inputEl.value=''; return; }
   const columnId=colKey.slice(1);
   const col=(s.columns||[]).find(c=>c.key===colKey);
   const meta={capturedAt:new Date().toISOString(),rowLabel:String(r[jsIdent(s)]||''),columnLabel:col?col.label:colKey,sheetName:s.name||'',durationSec:jsComputeDuration(r._rowId),sessionId:jsCurrentSessionId(r._rowId)};
   setSt('Uploading…','');
   try{
     await jsUploadPhotoLive(jsSheetId, r._rowId, columnId, file, meta);
-    jsData=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId));
+    const fresh=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(jsSheetId));
+    jsSetServer(fresh); jsCacheSaveCurrent(); await fmOverlayOutbox(fresh,jsSheetId); jsData=fresh;
     jsRenderCards(); jsUpdateProgress();
-    if(jsData.rows[i]) jsOpenDetail(i); // re-render the modal with the new photo
+    const ix=jsData.rows.findIndex(x=>String(x._rowId)===String(rid));
+    if(ix>=0) jsOpenDetail(ix); // re-render the modal with the new photo
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(jsSheetId,r._rowId,columnId,'photo');
