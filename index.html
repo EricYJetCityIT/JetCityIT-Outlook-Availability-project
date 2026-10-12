@@ -761,6 +761,33 @@ body.is-tester #tab-floormap{display:inline-block}
 .pp-chips{display:flex;flex-wrap:wrap;gap:6px}
 .pp-chip{background:var(--green-light);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12.5px}
 .pp-chip b{color:var(--text3);font-weight:500;margin-left:3px}
+/* ── Financial tab ── */
+.fin-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:4px}
+.fin-tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.fin-tile-l{font-size:12px;color:var(--text3)}
+.fin-tile-v{font-size:22px;font-weight:650;color:var(--text);margin-top:2px;letter-spacing:-.3px;font-variant-numeric:tabular-nums}
+.fin-sub{font-size:12px;font-weight:500;color:var(--text3);letter-spacing:0}
+.fin-table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.fin-table{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums}
+.fin-table th{font-weight:500;color:var(--text3);text-align:left;padding:9px 10px;white-space:nowrap;border-bottom:1px solid var(--border);font-size:12.5px}
+.fin-table td{padding:9px 10px;border-top:1px solid var(--border);color:var(--text);vertical-align:top}
+.fin-table tbody tr:first-child td{border-top:none}
+.fin-row{cursor:pointer}
+.fin-row:hover td{background:var(--surface2)}
+.fin-sort{cursor:pointer;user-select:none}
+.fin-units{max-width:220px;color:var(--text2);font-size:12.5px}
+.fin-neg{color:var(--red);font-weight:600}
+.fin-chip{display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:1px 6px;white-space:nowrap}
+.fin-chip-ok{background:var(--green-light);color:var(--green-dark)}
+.fin-chip-sug{background:#E0F2FE;color:#075985}
+.fin-chip-warn{background:#FEF3C7;color:#92400E}
+.fin-chip-bad{background:#FEE2E2;color:#B91C1C}
+.fin-units-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.fin-unit{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--text2);background:var(--surface2);border-radius:8px;padding:6px 8px}
+.fin-unit input{width:84px;padding:6px 8px;border-radius:6px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font:inherit;text-align:right}
+.fin-rep{font-size:13px;color:var(--text);border-left:3px solid var(--border2);padding-left:10px;margin-bottom:8px;display:grid;gap:3px}
+.fin-live{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:var(--text2);background:var(--surface2);border-radius:8px;padding:10px 12px}
+.fin-client-over{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;display:grid;gap:8px}
 .pp-tl{width:100%;border-collapse:collapse;font-size:13px}
 .pp-tl th{font-weight:400;color:var(--text3);text-align:left;padding:5px 8px}
 .pp-tl td{padding:6px 8px;border-top:1px solid var(--border);color:var(--text);vertical-align:top}
@@ -960,8 +987,8 @@ if('serviceWorker' in navigator){
       Project Planning
     </button>
     <button class="tab" id="tab-invoice" onclick="switchTab('invoice')">
-      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M6 3h9l3 3v15l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5V3z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 8h6M9 12h6M9 16h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      Invoice
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Financial
     </button>
     <button class="tab" id="tab-jobsheet" onclick="switchTab('jobsheet')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M9 3.5h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.5 11l1.5 1.5 2.5-3M8.5 16l1.5 1.5 2.5-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -990,11 +1017,10 @@ if('serviceWorker' in navigator){
     </p>
   </div>
 
-  <!-- INVOICE VIEW (financial group only) -->
-  <div class="view" id="view-invoice">
-    <div class="section-head"><div><h1>Invoice</h1><p>Financial group only.</p></div></div>
-    <div class="empty"><div class="empty-icon">🧾</div><p>Invoice tools coming soon.</p></div>
-  </div>
+  <!-- FINANCIAL VIEW (Financial group only — FINANCE_UPNS). Profit per job and
+       per client; rendered by renderFinancial(), data from /api/finance/*.
+       (Element ids keep the old "invoice" name so the existing gating applies.) -->
+  <div class="view" id="view-invoice"><div id="fin-root"></div></div>
 
   <!-- PROJECT PLANNING VIEW (Project Planners group only) -->
   <div class="view" id="view-planning">
@@ -1548,6 +1574,324 @@ function switchTab(id){
   if(id==='planning')renderPlanning();
   if(id==='jobsheet')renderJobsheet();
   if(id==='floormap')renderFloormap();
+  if(id==='invoice')renderFinancial();
+}
+
+// ── Financial tab (FINANCE_UPNS group only) ─────────────────────────────────
+// Profit per job and per client. Revenue = confirmed units x unit price (the
+// client's override price if it has one, else the standard price), plus hourly
+// items, plus the shift premium when ticked. Cost = labor hours x cost rate by
+// ROLE (lead / tech / PM). Hours come from the job's Daily Project Report
+// (Total Hours); without a report they're estimated from the calendar
+// (duration x crew) and marked as such. Units start as a suggestion read from
+// the report's "Device QTY Details" text and become real once Finance confirms
+// them. Prices + cost rates live only in Cosmos (Settings), never in this file.
+let fin={view:'clients', range:'month', from:'', to:'', data:null, settings:null, items:[], loading:false, error:'', clientFilter:'', statusFilter:'all', sort:{key:'margin',dir:1}, openId:null};
+const FIN_RANGES=[['month','This month'],['last','Last month'],['90','Last 90 days'],['ytd','Year to date'],['custom','Custom…']];
+function finIso(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function finRangeDates(r){
+  const t=new Date(); t.setHours(0,0,0,0);
+  if(r==='last'){ const a=new Date(t.getFullYear(),t.getMonth()-1,1), b=new Date(t.getFullYear(),t.getMonth(),0); return [finIso(a),finIso(b)]; }
+  if(r==='90'){ const a=new Date(t); a.setDate(a.getDate()-89); return [finIso(a),finIso(t)]; }
+  if(r==='ytd') return [t.getFullYear()+'-01-01',finIso(t)];
+  if(r==='custom') return [fin.from||finIso(new Date(t.getFullYear(),t.getMonth(),1)), fin.to||finIso(t)];
+  return [finIso(new Date(t.getFullYear(),t.getMonth(),1)),finIso(t)];
+}
+const finMoney=v=> v==null||!isFinite(v)? '—' : (v<0?'−':'')+'$'+Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0});
+const finPct=v=> v==null||!isFinite(v)? '—' : Math.round(v*100)+'%';
+const finNum=v=> v==null||!isFinite(v)? '—' : (Math.round(v*10)/10).toLocaleString();
+async function finApi(method,path,body){
+  const token=await getApiToken();
+  const opts={method,headers:{'X-Jetcity-Authorization':'Bearer '+token}};
+  if(body!==undefined){ opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  const res=await fetch('/api/finance'+path,opts);
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  return res.json();
+}
+function renderFinancial(){
+  if(!fin.settings&&!fin.loading&&!fin.error){ finLoad(); return; }
+  finPaint();
+}
+async function finLoad(){
+  fin.loading=true; fin.error=''; finPaint();
+  const [from,to]=finRangeDates(fin.range); fin.from=from; fin.to=to;
+  try{
+    const [s,j]=await Promise.all([finApi('GET','/settings'), finApi('GET','/jobs?from='+from+'&to='+to)]);
+    fin.settings=s.settings; fin.items=s.items||j.items||[]; fin.data=j;
+  }catch(e){ fin.error=e.message||'Failed to load'; }
+  fin.loading=false; finPaint();
+}
+
+// Suggested units from the report's free text ("About 35 reconnects and setups,
+// 15 decom", "19 desks ... on arms"). Deliberately conservative: anything it
+// can't place is left for Finance to enter. A bare number ("94.0") is read as
+// standard disconnect/reconnects and marked low-confidence.
+function finSuggest(text){
+  // Commas stay (they end a phrase); location numbers ("floor 8", "floors 7 and 8",
+  // "Day 1", "L2") are blanked first so they're never read as quantities.
+  let t=' '+String(text||'').toLowerCase().replace(/~/g,' ')+' ';
+  t=t.replace(/\b(?:floors?|levels?|lvl|day|days|rooms?|rm|suite|ste|bldg|building|l)\s*\d+(?:\s*(?:,|and|&|-)\s*\d+)*/g,m=>' '.repeat(m.length));
+  const units={}; let hits=0;
+  // Verb first: "reconnected about 60 systems", "decommissioned around 30".
+  const ABOUT='(?:about|around|approx\\.?|approximately|roughly|over|~)?\\s*';
+  // Past tense only: "set up 15 decom" must stay "…set up" + "15 decom", not "set up 15".
+  [['reconnect',new RegExp('\\breconnected\\s+'+ABOUT+'(\\d+)','g')],
+   ['partial',new RegExp('\\b(?:disconnected|decommissioned)\\s+'+ABOUT+'(\\d+)','g')],
+   ['unbox',new RegExp('\\bunboxed\\s+'+ABOUT+'(\\d+)','g')]].forEach(([key,re])=>{
+    t=t.replace(re,(m,n)=>{ units[key]=(units[key]||0)+(+n); hits++; return ' '.repeat(m.length); });
+  });
+  const W='(?:[a-z/&+-]+\\s+){0,3}?'; // up to 3 WORDS between the count and the item ("150 stations set up"), never another number
+  const rules=[
+    ['dr',     new RegExp('(\\d+)\\+?\\s+'+W+'(?:disconnects?\\s*(?:and|&|/)\\s*reconnects?|disconnect/reconnects?|d\\s*/\\s*r\\b)','g')],
+    ['server', new RegExp('(\\d+)\\+?\\s+'+W+'servers?\\b','g')],
+    ['phone',  new RegExp('(\\d+)\\+?\\s+'+W+'(?:ip\\s+)?phones?\\b','g')],
+    ['printer',new RegExp('(\\d+)\\+?\\s+'+W+'(?:printers?|scanners?)\\b','g')],
+    ['arm',    new RegExp('(\\d+)\\+?\\s+'+W+'(?:monitor\\s+)?arms?\\b','g')],
+    ['unbox',  new RegExp('(\\d+)\\+?\\s+'+W+'unbox\\w*\\b','g')], // "unboxed", not "removed 100 boxes" (hauling isn't the unboxing service)
+    ['deploy', new RegExp('(\\d+)\\+?\\s+'+W+'(?:new\\s+(?:systems?|hires?)|deploy\\w*)\\b','g')],
+    ['reconnect', new RegExp('(\\d+)\\+?\\s+'+W+'(?:reconnect\\w*|set\\s?ups?|setups?)\\b','g')],
+    ['partial', new RegExp('(\\d+)\\+?\\s+'+W+'(?:disconnect\\w*|decom\\w*|taken\\s+down|takedowns?)\\b','g')],
+  ];
+  rules.forEach(([key,re])=>{
+    t=t.replace(re,(m,n)=>{ units[key]=(units[key]||0)+(+n); hits++; return ' '.repeat(m.length); });
+  });
+  const bare=String(text||'').trim().match(/^(\d+)(?:\.0+)?$/);
+  if(!hits&&bare){ units.dr=+bare[1]; return {units, sure:false}; }
+  return {units, sure:hits>0};
+}
+function finPrice(client,key){
+  const s=fin.settings, o=s.clientPrices&&s.clientPrices[client];
+  if(o&&o[key]!=null) return o[key];
+  return s.prices? s.prices[key] : null;
+}
+// Everything the views need for one job.
+function finCalc(j){
+  const s=fin.settings, rr=s.roleRates||{};
+  const reps=j.reports||[];
+  const repHours=reps.reduce((a,r)=>a+(r.totalHours||0),0);
+  const repCrew=reps.reduce((a,r)=>Math.max(a,r.crewSize||0),0);
+  const crew=repCrew||j.crewSize||((j.lead||[]).length+(j.technicians||[]).length)||1;
+  let hours=0, hoursSrc='none';
+  if(repHours>0){ hours=repHours; hoursSrc='report'; }
+  else { const d=parseFloat(j.duration)||0; if(d>0){ hours=d*crew; hoursSrc='estimate'; } }
+  const leads=Math.min(crew,Math.max(1,(j.lead||[]).length));
+  let leadH=hours/crew*leads, techH=hours-leadH, pmH=0;
+  const sv=j.saved, ho=(sv&&sv.hours)||{};
+  if(ho.lead!=null) leadH=ho.lead; if(ho.tech!=null) techH=ho.tech; if(ho.pm!=null) pmH=ho.pm;
+  if(ho.lead!=null||ho.tech!=null||ho.pm!=null){ hours=leadH+techH+pmH; hoursSrc='override'; }
+  const rateMissing=[leadH>0&&rr.lead==null, techH>0&&rr.tech==null, pmH>0&&rr.pm==null].some(Boolean);
+  const cost=leadH*(rr.lead||0)+techH*(rr.tech||0)+pmH*(rr.pm||0);
+  let units, unitsSrc;
+  if(sv){ units=sv.units||{}; unitsSrc='confirmed'; }
+  else { const sg=finSuggest(reps.map(r=>r.deviceQty).join(' ; ')); units=sg.units; unitsSrc=Object.keys(units).length? (sg.sure?'suggested':'guess') : 'none'; }
+  let revenue=0, priceMissing=false;
+  (fin.items||[]).forEach(it=>{
+    let q=units[it.key]||0; if(!q) return;
+    if(it.key==='support'&&q<(s.minCallHours||0)) q=s.minCallHours; // call-out minimum
+    const p=finPrice(j.client,it.key); if(p==null){ priceMissing=true; return; }
+    revenue+=q*p;
+  });
+  if(sv&&sv.shift&&s.shiftPremiumPct) revenue*=1+s.shiftPremiumPct/100;
+  const margin=revenue-cost;
+  return {hours, hoursSrc, crew, leadH, techH, pmH, cost, rateMissing, units, unitsSrc, revenue, priceMissing, margin,
+    marginPct: revenue>0? margin/revenue : null, perHour: hours>0? revenue/hours : null};
+}
+function finJobs(){ return ((fin.data&&fin.data.jobs)||[]).map(j=>Object.assign({},j,{c:finCalc(j)})); }
+function finSettingsReady(){ const s=fin.settings; return !!(s&&s.roleRates&&(s.roleRates.lead!=null||s.roleRates.tech!=null)&&s.prices&&Object.values(s.prices).some(v=>v!=null)); }
+
+function finPaint(){
+  const root=document.getElementById('fin-root'); if(!root) return;
+  const rangeOpts=FIN_RANGES.map(([k,l])=>`<option value="${k}"${fin.range===k?' selected':''}>${l}</option>`).join('');
+  const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
+    '<div><h1>Financial</h1><p>Which jobs and clients make money. Financial group only.</p></div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+      `<select class="js-select" onchange="finSetRange(this.value)">${rangeOpts}</select>`+
+      (fin.range==='custom'? `<input type="date" class="fm-input" style="width:auto" value="${fin.from}" onchange="fin.from=this.value"><input type="date" class="fm-input" style="width:auto" value="${fin.to}" onchange="fin.to=this.value"><button class="btn btn-sm" onclick="finLoad()">Apply</button>` : '')+
+      '<button class="btn btn-sm" onclick="finLoad()">↻ Refresh</button></div></div>';
+  if(fin.loading){ root.innerHTML=head+'<div class="empty"><p>Loading jobs and reports…</p></div>'; return; }
+  if(fin.error){ root.innerHTML=head+`<div class="empty"><p>${jsEsc(fin.error)}</p></div>`; return; }
+  const jobs=finJobs();
+  const tot=jobs.reduce((a,j)=>{ a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; if(j.c.unitsSrc==='confirmed') a.conf++; else a.todo++; return a; },{rev:0,cost:0,hours:0,conf:0,todo:0});
+  const tiles=[['Revenue',finMoney(tot.rev)],['Labor cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
+    ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>']]
+    .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
+  const nav=[['clients','By client'],['jobs','By job'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="fin.view='${k}';finPaint()">${l}</button>`).join('');
+  let body;
+  if(fin.view==='settings') body=finSettingsHtml();
+  else if(fin.view==='jobs') body=finJobsHtml(jobs);
+  else body=finClientsHtml(jobs);
+  root.innerHTML=head+
+    (!finSettingsReady()&&fin.view!=='settings'? '<div class="fm-banner fm-warn">Add your cost rates and prices in <b>⚙ Settings</b> to see real revenue and margins.</div>' : '')+
+    `<div class="fin-tiles">${tiles}</div><div class="js-mode-toggle" style="margin:14px 0">${nav}</div>${body}`+
+    '<div class="js-modal-backdrop" id="fin-modal-backdrop" onclick="if(event.target===this)finCloseJob()"><div class="js-modal" id="fin-modal" style="max-width:680px"></div></div>';
+  if(fin.openId) finOpenJob(fin.openId);
+}
+function finSetRange(r){ fin.range=r; if(r!=='custom') finLoad(); else finPaint(); }
+
+function finClientsHtml(jobs){
+  const by=new Map();
+  jobs.forEach(j=>{ const k=j.client||'(no client)'; const a=by.get(k)||{client:k,jobs:0,hours:0,rev:0,cost:0,todo:0}; a.jobs++; a.hours+=j.c.hours; a.rev+=j.c.revenue; a.cost+=j.c.cost; if(j.c.unitsSrc!=='confirmed') a.todo++; by.set(k,a); });
+  const rows=[...by.values()].map(a=>Object.assign(a,{margin:a.rev-a.cost, pct:a.rev>0?(a.rev-a.cost)/a.rev:null, perHour:a.hours>0?a.rev/a.hours:null}))
+    .sort((a,b)=>b.margin-a.margin);
+  if(!rows.length) return '<div class="empty"><p>No jobs in this date range.</p></div>';
+  return '<div class="fin-table-wrap"><table class="fin-table"><thead><tr><th>Client</th><th>Jobs</th><th>Labor hrs</th><th>Revenue</th><th>Labor cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th></th></tr></thead><tbody>'+
+    rows.map(a=>`<tr class="fin-row" data-c="${jsEsc(a.client)}" onclick="fin.clientFilter=this.dataset.c;fin.view='jobs';finPaint()">`+
+      `<td><b>${jsEsc(a.client)}</b></td><td>${a.jobs}</td><td>${finNum(a.hours)}</td><td>${finMoney(a.rev)}</td><td>${finMoney(a.cost)}</td>`+
+      `<td class="${a.margin<0?'fin-neg':''}">${finMoney(a.margin)}</td><td>${finPct(a.pct)}</td><td>${finMoney(a.perHour)}</td>`+
+      `<td>${a.todo? `<span class="fin-chip fin-chip-warn">${a.todo} to check</span>` : '<span class="fin-chip fin-chip-ok">all confirmed</span>'}</td></tr>`).join('')+
+    '</tbody></table></div><div class="fm-muted" style="margin-top:8px">Sorted by margin. Click a client to see its jobs. Numbers include jobs whose units are only suggested — confirm them on the job to make them firm.</div>';
+}
+const FIN_SRC={confirmed:['fin-chip-ok','Confirmed'],suggested:['fin-chip-sug','Suggested'],guess:['fin-chip-warn','Guess'],none:['fin-chip-bad','Needs units']};
+function finJobsHtml(jobs){
+  const clients=[...new Set(jobs.map(j=>j.client||'(no client)'))].sort();
+  let list=jobs.filter(j=>!fin.clientFilter||(j.client||'(no client)')===fin.clientFilter);
+  if(fin.statusFilter==='todo') list=list.filter(j=>j.c.unitsSrc!=='confirmed');
+  if(fin.statusFilter==='confirmed') list=list.filter(j=>j.c.unitsSrc==='confirmed');
+  const k=fin.sort.key, d=fin.sort.dir;
+  const val=j=>k==='date'? j.date : k==='revenue'? j.c.revenue : k==='cost'? j.c.cost : k==='hours'? j.c.hours : k==='perHour'? (j.c.perHour||0) : j.c.margin;
+  list.sort((a,b)=>{ const x=val(a),y=val(b); return (x<y?-1:x>y?1:0)*d; });
+  const th=(key,l)=>`<th class="fin-sort" onclick="finSort('${key}')">${l}${fin.sort.key===key?(fin.sort.dir>0?' ▲':' ▼'):''}</th>`;
+  const FIN_SHORT={dr:'D/R',reconnect:'reconnect',partial:'partial/disc.',deploy:'new deploy',server:'server',phone:'phone',printer:'printer',printerDisc:'printer disc.',device:'add\'l device',arm:'arm mount',unbox:'unbox',unpack:'unpack',support:'support hr',pm:'PM hr'};
+  const unitsTxt=u=>Object.keys(u).map(key=>u[key]+' '+(FIN_SHORT[key]||key)).join(', ');
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+
+      `<select class="js-select" onchange="fin.clientFilter=this.value;finPaint()"><option value="">All clients</option>${clients.map(c=>`<option value="${jsEsc(c)}"${fin.clientFilter===c?' selected':''}>${jsEsc(c)}</option>`).join('')}</select>`+
+      [['all','All'],['todo','To check'],['confirmed','Confirmed']].map(([v,l])=>`<button class="fm-chip${fin.statusFilter===v?' on':''}" onclick="fin.statusFilter='${v}';finPaint()">${l}</button>`).join('')+
+    '</div>'+
+    (list.length? '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>'+th('date','Date')+'<th>Job</th>'+th('hours','Labor hrs')+'<th>Units</th>'+th('revenue','Revenue')+th('cost','Cost')+th('margin','Margin')+'<th>%</th>'+th('perHour','Rev/hr')+'<th></th></tr></thead><tbody>'+
+      list.map(j=>{ const c=j.c, src=FIN_SRC[c.unitsSrc];
+        return `<tr class="fin-row" onclick="finOpenJob('${jsEsc(j.id)}')"><td style="white-space:nowrap">${jsEsc(j.date)}</td>`+
+          `<td><b>${jsEsc(j.project)}</b><div class="fm-muted">${jsEsc(j.client||'')}</div></td>`+
+          `<td>${finNum(c.hours)}${c.hoursSrc==='estimate'?' <span class="fin-chip fin-chip-sug" title="No Daily Report found — estimated from the calendar">est.</span>':(c.hoursSrc==='none'?' <span class="fin-chip fin-chip-bad">no hours</span>':'')}</td>`+
+          `<td class="fin-units">${jsEsc(unitsTxt(c.units))||'—'}</td><td>${finMoney(c.revenue)}${c.priceMissing?' <span class="fin-chip fin-chip-bad" title="An item has no price set">price?</span>':''}</td>`+
+          `<td>${finMoney(c.cost)}${c.rateMissing?' <span class="fin-chip fin-chip-bad" title="A role has no cost rate set">rate?</span>':''}</td>`+
+          `<td class="${c.margin<0?'fin-neg':''}">${finMoney(c.margin)}</td><td>${finPct(c.marginPct)}</td><td>${finMoney(c.perHour)}</td>`+
+          `<td><span class="fin-chip ${src[0]}">${src[1]}</span></td></tr>`; }).join('')+'</tbody></table></div>'
+      : '<div class="empty"><p>No jobs match.</p></div>');
+}
+function finSort(key){ if(fin.sort.key===key) fin.sort.dir*=-1; else fin.sort={key,dir:key==='date'?1:-1}; finPaint(); }
+
+function finOpenJob(id){
+  const j=finJobs().find(x=>x.id===id); const modal=document.getElementById('fin-modal'); if(!j||!modal) return;
+  fin.openId=id;
+  const c=j.c, sv=j.saved||{}, ho=sv.hours||{};
+  const reps=(j.reports||[]).map(r=>`<div class="fin-rep"><div class="fm-muted">Daily report · ${jsEsc(r.date)} · ${r.totalHours!=null?finNum(r.totalHours)+' hrs':'no hours'} · crew ${r.crewSize||'?'}${r.matchedBy==='fuzzy'?' · <span class="fm-warn">matched by similar name — check it\'s this job</span>':''}</div>`+
+    (r.deviceQty? `<div><b>Device QTY:</b> ${jsEsc(r.deviceQty)}</div>` : '<div class="fm-muted">No device quantities written.</div>')+
+    (r.coImpact&&!/^none$/i.test(r.coImpact)? `<div><b>CO impact:</b> ${jsEsc(r.coImpact)}</div>` : '')+
+    (r.scope&&!/^none$/i.test(r.scope)? `<div><b>Added scope / delays:</b> ${jsEsc(r.scope)}</div>` : '')+'</div>').join('')
+    || '<div class="fm-muted">No Daily Project Report matched this job — hours are estimated from the calendar.</div>';
+  const items=(fin.items||[]).map(it=>{ const p=finPrice(j.client,it.key);
+    return `<label class="fin-unit"><span>${jsEsc(it.label)} <span class="fm-muted">${p!=null?finMoney(p)+'/'+it.unit:'no price'}</span></span>`+
+      `<input type="number" min="0" step="${it.unit==='hr'?'0.25':'1'}" data-k="${it.key}" value="${c.units[it.key]||''}" oninput="finLive()"></label>`; }).join('');
+  const hrs=['lead','tech','pm'].map(r=>`<label class="fin-unit"><span>${{lead:'Lead',tech:'Tech',pm:'PM'}[r]} hours</span><input type="number" min="0" step="0.25" data-h="${r}" placeholder="${finNum(r==='lead'?c.leadH:r==='tech'?c.techH:c.pmH)}" value="${ho[r]!=null?ho[r]:''}" oninput="finLive()"></label>`).join('');
+  modal.innerHTML=
+    `<div class="js-modal-head"><div><div class="js-modal-title">${jsEsc(j.project)}</div><div class="fm-muted">${jsEsc(j.date)} · ${jsEsc(j.client||'no client')} · lead ${jsEsc((j.lead||[]).join(', ')||'—')} · crew ${c.crew}</div></div><button class="js-modal-close" onclick="finCloseJob()" aria-label="Close">&times;</button></div>`+
+    '<div class="js-modal-body">'+
+      `<div>${reps}</div>`+
+      `<div><div class="js-field-label">Units billed ${c.unitsSrc==='confirmed'?'(confirmed)':c.unitsSrc==='none'?'':'(suggested from the report — check before confirming)'}</div><div class="fin-units-grid">${items}</div>`+
+        `<label class="js-check" style="margin-top:8px"><input type="checkbox" id="fin-shift" ${sv.shift?'checked':''} onchange="finLive()"> Shift premium (${fin.settings.shiftPremiumPct!=null?fin.settings.shiftPremiumPct+'%':'not set'}) — work between 11 PM and 6 AM</label></div>`+
+      `<div><div class="js-field-label">Labor hours <span class="fm-muted">(blank = from the report${c.hoursSrc==='estimate'?' / calendar estimate':''})</span></div><div class="fin-units-grid">${hrs}</div></div>`+
+      `<div><div class="js-field-label">Note</div><textarea class="js-edit" id="fin-note" rows="2" maxlength="1000">${jsEsc(sv.note||'')}</textarea></div>`+
+      '<div class="fin-live" id="fin-live"></div>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="finSaveJob()">✓ Confirm units</button>'+
+        (j.saved? '<button class="btn btn-sm btn-ghost" onclick="finClearJob()">Un-confirm</button>' : '')+
+        '<button class="btn btn-sm" onclick="finCloseJob()">Close</button><span class="fm-muted" id="fin-msg"></span></div>'+
+      (j.saved? `<div class="fm-muted">Confirmed by ${jsEsc(j.saved.updatedBy||'')} · ${jsEsc(new Date(j.saved.updatedAt).toLocaleString())}</div>` : '')+
+    '</div>';
+  document.getElementById('fin-modal-backdrop').classList.add('open');
+  finLive();
+}
+function finFormValues(){
+  const units={}, hours={};
+  document.querySelectorAll('#fin-modal input[data-k]').forEach(i=>{ const v=parseFloat(i.value); if(v>0) units[i.dataset.k]=v; });
+  document.querySelectorAll('#fin-modal input[data-h]').forEach(i=>{ if(i.value!=='') hours[i.dataset.h]=parseFloat(i.value)||0; });
+  return {units, hours, shift:!!(document.getElementById('fin-shift')||{}).checked, note:(document.getElementById('fin-note')||{}).value||''};
+}
+function finLive(){
+  const j=((fin.data&&fin.data.jobs)||[]).find(x=>x.id===fin.openId), el=document.getElementById('fin-live'); if(!j||!el) return;
+  const c=finCalc(Object.assign({},j,{saved:Object.assign({updatedAt:null},finFormValues())}));
+  el.innerHTML=`<div>Revenue <b>${finMoney(c.revenue)}</b></div><div>Labor cost <b>${finMoney(c.cost)}</b> <span class="fm-muted">${finNum(c.hours)} hrs</span></div>`+
+    `<div>Margin <b class="${c.margin<0?'fin-neg':''}">${finMoney(c.margin)}</b> <span class="fm-muted">${finPct(c.marginPct)}</span></div><div>Rev / labor hr <b>${finMoney(c.perHour)}</b></div>`+
+    (c.priceMissing? '<div class="fm-warn">Some items have no price set (⚙ Settings).</div>' : '')+(c.rateMissing? '<div class="fm-warn">A role has no cost rate set (⚙ Settings).</div>' : '');
+}
+async function finSaveJob(){
+  const id=fin.openId, msg=document.getElementById('fin-msg'); if(!id) return;
+  msg.textContent='Saving…';
+  try{
+    const r=await finApi('PUT','/jobs/'+encodeURIComponent(id),finFormValues());
+    const j=fin.data.jobs.find(x=>x.id===id); if(j) j.saved=r.saved;
+    finCloseJob(); finPaint();
+  }catch(e){ msg.innerHTML=`<span class="fm-warn">${jsEsc(e.message||e)}</span>`; }
+}
+async function finClearJob(){
+  const id=fin.openId; if(!id||!confirm('Un-confirm this job\'s units? It goes back to the suggestion from the report.')) return;
+  try{ await finApi('DELETE','/jobs/'+encodeURIComponent(id)); const j=fin.data.jobs.find(x=>x.id===id); if(j) j.saved=null; finCloseJob(); finPaint(); }
+  catch(e){ alert(e.message||e); }
+}
+function finCloseJob(){ fin.openId=null; const b=document.getElementById('fin-modal-backdrop'); if(b) b.classList.remove('open'); }
+
+// ── Settings: cost rates by role, prices, client overrides ──
+function finSettingsHtml(){
+  const s=fin.settings, rr=s.roleRates||{}, items=fin.items||[];
+  const clients=[...new Set([...((fin.data&&fin.data.clients)||[]), ...Object.keys(s.clientPrices||{})])].filter(Boolean).sort();
+  const over=Object.keys(s.clientPrices||{}).sort();
+  return '<div class="fm-sec"><div class="fm-sec-h">Labor cost per hour, by role</div>'+
+      '<div class="fm-muted" style="margin-bottom:8px">What an hour of each role costs the company: wage + payroll taxes + benefits/overhead. Not shown to anyone outside the Financial group.</div>'+
+      '<div class="fin-units-grid">'+[['lead','Lead'],['tech','Tech'],['pm','Project manager']].map(([k,l])=>`<label class="fin-unit"><span>${l}</span><input type="number" min="0" step="0.01" id="fin-rr-${k}" value="${rr[k]!=null?rr[k]:''}" placeholder="$/hr"></label>`).join('')+'</div></div>'+
+    '<div class="fm-sec"><div class="fm-sec-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">Standard prices'+
+      '<label class="btn btn-sm">📄 Import from rate sheet PDF<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="finImportRateSheet(this)"></label></div>'+
+      '<div class="fin-units-grid">'+items.map(it=>`<label class="fin-unit"><span>${jsEsc(it.label)} <span class="fm-muted">/${it.unit}</span></span><input type="number" min="0" step="0.01" id="fin-p-${it.key}" value="${s.prices&&s.prices[it.key]!=null?s.prices[it.key]:''}" placeholder="$"></label>`).join('')+
+        `<label class="fin-unit"><span>Shift premium (11 PM–6 AM)</span><input type="number" min="0" max="200" step="1" id="fin-shiftpct" value="${s.shiftPremiumPct!=null?s.shiftPremiumPct:''}" placeholder="%"></label>`+
+        `<label class="fin-unit"><span>Minimum hours for a support call-out</span><input type="number" min="0" max="24" step="0.5" id="fin-minh" value="${s.minCallHours!=null?s.minCallHours:4}"></label>`+
+      '</div><div class="fm-status" id="fin-import-msg"></div></div>'+
+    '<div class="fm-sec"><div class="fm-sec-h">Client prices (override the standard price)</div>'+
+      over.map(cn=>`<div class="fin-client-over" data-client="${jsEsc(cn)}"><div style="display:flex;justify-content:space-between;align-items:center"><b>${jsEsc(cn)}</b><button class="btn btn-sm btn-ghost" data-c="${jsEsc(cn)}" onclick="finRemoveClient(this.dataset.c)">Remove</button></div><div class="fin-units-grid">`+
+        items.map(it=>`<label class="fin-unit"><span>${jsEsc(it.label)}</span><input type="number" min="0" step="0.01" data-ck="${it.key}" value="${s.clientPrices[cn][it.key]!=null?s.clientPrices[cn][it.key]:''}" placeholder="${s.prices&&s.prices[it.key]!=null?'std '+s.prices[it.key]:'$'}"></label>`).join('')+'</div></div>').join('')+
+      `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><input class="fm-input" style="max-width:320px" id="fin-new-client" list="fin-client-list" placeholder="Client name (as on the calendar)"><datalist id="fin-client-list">${clients.map(c=>`<option value="${jsEsc(c)}">`).join('')}</datalist><button class="btn btn-sm" onclick="finAddClient()">+ Add client prices</button></div></div>`+
+    '<div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" onclick="finSaveSettings()">Save settings</button><span class="fm-muted" id="fin-set-msg">'+(s.updatedAt? 'Last saved by '+jsEsc(s.updatedBy||'')+' · '+jsEsc(new Date(s.updatedAt).toLocaleString()) : 'Not saved yet')+'</span></div>';
+}
+function finReadSettingsForm(){
+  const s=JSON.parse(JSON.stringify(fin.settings)), v=id=>{ const e=document.getElementById(id); return e? e.value : ''; };
+  ['lead','tech','pm'].forEach(k=>{ s.roleRates[k]=v('fin-rr-'+k)===''? null : +v('fin-rr-'+k); });
+  (fin.items||[]).forEach(it=>{ s.prices[it.key]=v('fin-p-'+it.key)===''? null : +v('fin-p-'+it.key); });
+  s.shiftPremiumPct=v('fin-shiftpct')===''? null : +v('fin-shiftpct'); s.minCallHours=v('fin-minh')===''? 4 : +v('fin-minh');
+  document.querySelectorAll('.fin-client-over').forEach(box=>{ const cn=box.dataset.client, o={};
+    box.querySelectorAll('input[data-ck]').forEach(i=>{ if(i.value!=='') o[i.dataset.ck]=+i.value; }); s.clientPrices[cn]=o; });
+  return s;
+}
+async function finSaveSettings(){
+  const msg=document.getElementById('fin-set-msg'); msg.textContent='Saving…';
+  try{ const r=await finApi('PUT','/settings',finReadSettingsForm()); fin.settings=r.settings; finPaint(); }
+  catch(e){ msg.innerHTML=`<span class="fm-warn">${jsEsc(e.message||e)}</span>`; }
+}
+function finAddClient(){
+  const name=(document.getElementById('fin-new-client').value||'').trim(); if(!name) return;
+  fin.settings=finReadSettingsForm(); fin.settings.clientPrices[name]=fin.settings.clientPrices[name]||{}; finPaint();
+}
+function finRemoveClient(name){ fin.settings=finReadSettingsForm(); delete fin.settings.clientPrices[name]; finPaint(); }
+// Reads the rate sheet PDF in the browser (PDF.js) and fills the price fields;
+// nothing is saved until "Save settings". Lines look like
+// "Standard System Disconnect/Reconnect $35.00 ea" / "Project Management $125.00/hr".
+async function finImportRateSheet(input){
+  const file=input.files&&input.files[0]; input.value=''; if(!file) return;
+  const msg=document.getElementById('fin-import-msg'); msg.textContent='Reading '+file.name+'…';
+  try{
+    const lib=await fmEnsurePdfJs();
+    const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()), isEvalSupported:false}).promise;
+    const lines=[];
+    for(let n=1;n<=pdf.numPages;n++){ const tc=await (await pdf.getPage(n)).getTextContent(); const by={};
+      tc.items.forEach(t=>{ const y=Math.round(t.transform[5]); (by[y]=by[y]||[]).push({x:t.transform[4],s:t.str}); });
+      Object.keys(by).map(Number).sort((a,b)=>b-a).forEach(y=>lines.push(by[y].sort((a,b)=>a.x-b.x).map(i=>i.s).join(' ').replace(/\s+/g,' ').trim())); }
+    const MAP=[['dr',/standard system disconnect\s*\/\s*reconnect/i],['reconnect',/reconnect only/i],['partial',/partial system/i],['deploy',/new system deployment/i],
+      ['server',/server unit/i],['phone',/^phones?\b/i],['printerDisc',/printer.*disconnect only/i],['printer',/printers?.*scanners?.*disconnect\s*\/\s*reconnect/i],
+      ['device',/^additional devices/i],['arm',/monitor on arm/i],['unbox',/^unboxing/i],['unpack',/unpackaging/i],['support',/move support|on call tech support/i],['pm',/^project management/i]];
+    let found=0;
+    lines.forEach(l=>{ const pm=l.match(/\$\s*([\d,]+(?:\.\d+)?)/); if(!pm) return;
+      const hit=MAP.find(([k,re])=>re.test(l)); if(!hit) return;
+      const el=document.getElementById('fin-p-'+hit[0]); if(el){ el.value=parseFloat(pm[1].replace(/,/g,'')); found++; } });
+    const sp=lines.map(l=>l.match(/shift premium.*?(\d+(?:\.\d+)?)\s*%/i)).find(Boolean); if(sp){ document.getElementById('fin-shiftpct').value=sp[1]; found++; }
+    const mh=lines.map(l=>l.match(/(\d+)\s*hour minimum/i)).find(Boolean); if(mh){ document.getElementById('fin-minh').value=mh[1]; }
+    msg.innerHTML= found? `✓ Filled ${found} prices from ${jsEsc(file.name)}. Check them, then <b>Save settings</b>.` : '<span class="fm-warn">Couldn\'t find prices in that PDF — enter them by hand.</span>';
+  }catch(e){ msg.innerHTML=`<span class="fm-warn">Couldn't read that PDF: ${jsEsc(e.message||e)}</span>`; }
 }
 
 // ── Floor Maps (Testers group) ──────────────────────────────────────────────

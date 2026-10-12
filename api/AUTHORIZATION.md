@@ -39,7 +39,7 @@ unset means nobody is in the group and the tab stays hidden for everyone.
 
 | App setting | Grants | Frontend flag |
 |---|---|---|
-| `FINANCE_UPNS` | **Invoice** tab (`isFinance`, `requireFinance`) | `is-finance` body class reveals `#tab-invoice` |
+| `FINANCE_UPNS` | **Financial** tab — job / client profitability; cost rates and prices live in Cosmos `finance:settings`, never in code (`isFinance`, `requireFinance` on every `/api/finance/*` route) | `is-finance` body class reveals `#tab-invoice` |
 | `PLANNER_UPNS` | **Project Planning** tab — the "Project Planners" group (`isPlanner`, `requirePlanner`) | `is-planner` body class reveals `#tab-planning` |
 | `TESTER_UPNS` | **Job Sheets** + **Floor Maps** tabs — the "Testers" group for in-progress features (`isTester`, `requireTester`; every `/api/jobsheet/*` and `/api/floormaps/*` route, read and write, except the signed-url photo proxy) | `is-tester` body class reveals `#tab-jobsheet` + `#tab-floormap` |
 
