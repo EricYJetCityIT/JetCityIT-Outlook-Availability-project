@@ -5,7 +5,7 @@
     "X-Frame-Options": "DENY",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
-    "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=(self), payment=(), usb=()",
     "Cross-Origin-Opener-Policy": "same-origin-allow-popups"
   },
   "mimeTypes": {
