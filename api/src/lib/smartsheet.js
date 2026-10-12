@@ -840,22 +840,61 @@ async function fetchImageUrls(images) {
 }
 
 // Classifies a sheet's columns by shape so the viewer can adapt to any job
-// sheet: the primary column is the item identifier; a column is a photo column
-// if any row actually holds a cell image in it (imageColumnIds) or it's named
-// like one (pic/picture/photo/image/before/after/qa); checkboxes are status
-// toggles; everything else is free text. Hidden columns are dropped.
-function classifyJobSheetColumns(columns, imageColumnIds) {
+// sheet: identifierId is the item identifier (see pickIdentifierColumnId); a
+// column is a photo column if any row actually holds a cell image in it
+// (imageColumnIds) or it's named like one (pic/picture/photo/image/before/
+// after/qa); checkboxes are status toggles; everything else is free text.
+// Hidden columns are dropped.
+const PHOTO_TITLE_RE = /\b(pics?|pictures?|photos?|images?|imgs?|before|after|qa)\b/i;
+function classifyJobSheetColumns(columns, imageColumnIds, identifierId) {
   const withImages = imageColumnIds || new Set();
   return (columns || [])
     .filter((c) => !c.hidden)
     .map((c) => {
       const title = c.title || '';
       let type = 'text';
-      if (c.primary) type = 'identifier';
-      else if (withImages.has(c.id) || /\b(pics?|pictures?|photos?|images?|imgs?|before|after|qa)\b/i.test(title)) type = 'photo';
+      if (identifierId != null ? c.id === identifierId : c.primary) type = 'identifier';
+      else if (withImages.has(c.id) || PHOTO_TITLE_RE.test(title)) type = 'photo';
       else if (c.type === 'CHECKBOX') type = 'checkbox';
       return { key: 'c' + c.id, columnId: c.id, label: title, type };
     });
+}
+
+// Which column names each item (desk / space / station number)? Usually the
+// primary column, but job sheets get built every which way -- e.g. a sheet
+// whose primary column is free-text notes and whose desk numbers live in a
+// "Space #" column. The primary column is kept when it looks like identifiers
+// (filled on most rows, values unique and short); otherwise the visible text
+// column that best does, preferring desk/space/station-style names.
+const ID_TITLE_RE = /(#|\b(space|desk|station|seat|cube|cubicle|office|workstation|ws|location|loc|room|item|asset|tag|id|number|num|no)\b)/i;
+function pickIdentifierColumnId(columns, rows, imageColumnIds) {
+  const total = (rows || []).length;
+  const primary = (columns || []).find((c) => c.primary) || null;
+  if (!total) return primary ? primary.id : null;
+  const stats = (col) => {
+    const vals = [];
+    rows.forEach((row) => {
+      const cell = (row.cells || []).find((x) => x.columnId === col.id);
+      const v = cellText(cell);
+      if (v) vals.push(v);
+    });
+    const fill = vals.length / total;
+    const unique = vals.length ? new Set(vals.map((v) => v.toLowerCase())).size / vals.length : 0;
+    const short = vals.length ? vals.filter((v) => v.length <= 16).length / vals.length : 0;
+    return { fill, unique, short };
+  };
+  const looksLikeIds = (s) => s.fill >= 0.5 && s.unique >= 0.9 && s.short >= 0.9;
+  if (primary && !primary.hidden && looksLikeIds(stats(primary))) return primary.id;
+  const candidates = (columns || []).filter((c) => !c.hidden && c.type !== 'CHECKBOX'
+    && !(imageColumnIds && imageColumnIds.has(c.id)) && !PHOTO_TITLE_RE.test(c.title || ''));
+  let best = null;
+  candidates.forEach((c) => {
+    const s = stats(c);
+    if (!looksLikeIds(s)) return;
+    const score = s.fill * s.unique + (ID_TITLE_RE.test(c.title || '') ? 1 : 0);
+    if (!best || score > best.score) best = { id: c.id, score };
+  });
+  return best ? best.id : (primary ? primary.id : null);
 }
 
 // Builds the read-only viewer payload for one job sheet: {name, columns,
@@ -868,7 +907,8 @@ async function fetchJobSheetView(sheetId) {
   const sheet = await fetchGenericSheet(sheetId);
   const imageColumnIds = new Set();
   (sheet.rows || []).forEach((row) => (row.cells || []).forEach((c) => { if (c.image && c.image.id) imageColumnIds.add(c.columnId); }));
-  const cols = classifyJobSheetColumns(sheet.columns || [], imageColumnIds);
+  const identifierId = pickIdentifierColumnId(sheet.columns || [], sheet.rows || [], imageColumnIds);
+  const cols = classifyJobSheetColumns(sheet.columns || [], imageColumnIds, identifierId);
   const photoCols = cols.filter((c) => c.type === 'photo');
   const cellAt = (row, columnId) => (row.cells || []).find((c) => c.columnId === columnId);
 
@@ -897,7 +937,10 @@ async function fetchJobSheetView(sheetId) {
       } else if (col.type === 'checkbox') {
         obj[col.key] = !!(cell && (cell.value === true || cell.value === 'true'));
       } else {
-        obj[col.key] = cell ? cellText(cell) : '';
+        let t = cell ? cellText(cell) : '';
+        // A number column can come back as "52.0"; desk numbers read as "52".
+        if (col.type === 'identifier' && /^\d+\.0+$/.test(t)) t = t.replace(/\.0+$/, '');
+        obj[col.key] = t;
       }
     });
     if (idCol && String(obj[idCol.key] || '').trim() === '') return; // skip spacer rows
