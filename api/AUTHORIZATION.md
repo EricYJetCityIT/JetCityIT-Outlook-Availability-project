@@ -55,6 +55,28 @@ uses to reveal each tab. As always, the tab-hiding is only a UX aid — any data
 endpoint behind these tabs must call `requireFinance` / `requirePlanner`
 server-side to actually enforce the group.
 
+## Floor Map client share links (the only no-sign-in data routes)
+
+Testers create a link for ONE floor map (`POST /api/floormaps/{id}/shares`,
+revoke with `DELETE …/shares/{token}`; both `requireTester`). The client opens
+`share.html#t=<token>` with **no sign-in**; the page sends the token in the
+`X-Share-Token` header to:
+
+| Route | Needs link level |
+|---|---|
+| `GET /api/share`, `GET /api/share/image` | view |
+| `POST /api/share/feedback` (comment) | comment |
+| `POST /api/share/feedback` (approval) | approve |
+| `POST /api/share/photo` | edit |
+
+Each request checks the token exists, isn't revoked and hasn't expired, is
+rate-limited per IP and per token, and is audit-logged as `share:<link name>`.
+The payload is filtered server-side: identifier, photo and checkbox columns
+(text columns only if the link allows notes); never Smartsheet ids, the
+activity log, tech names or another link's feedback. Error messages are
+generic (no internal error text). Tokens are 192-bit random and live only in
+the URL fragment, so they don't reach server logs or Referer headers.
+
 ### Option A — quick start with `EDITOR_UPNS`
 
 In the Static Web App → **Configuration** (application settings for the managed

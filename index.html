@@ -606,6 +606,9 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-row small{margin-left:auto;padding-left:8px;color:var(--text3);font-size:11.5px}
 .fm-pop input{width:100%;box-sizing:border-box;padding:7px 9px;font-size:14px;border-radius:6px;border:1.5px solid #D0D5DD;margin-bottom:8px;font-family:inherit}
 .fm-pop-btns{display:flex;gap:6px}
+.fm-share-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px}
+.fm-share-new{border-color:var(--green);background:var(--green-light)}
+.fm-share-lvl{display:inline-block;font-size:11px;font-weight:600;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-left:4px;vertical-align:1px}
 .fm-card-row{display:flex;gap:8px;align-items:stretch}
 .fm-card-row .pp-card{flex:1;min-width:0}
 .fm-card-del{flex:0 0 auto;padding:0 16px;font-size:13px;justify-content:center}
@@ -2318,6 +2321,7 @@ function fmApply(map,sheet,blob,acts,sheetError,cachedAt){
   fmBuildRowIndex(); fm.imgUrl=URL.createObjectURL(blob); fmSetActs(acts);
   fm.cachedAt=cachedAt||null; fm.loading=false; fm.error=''; fmPaint();
   fmLoadFloors(fm.openToken); // sibling floors + combined progress (best-effort)
+  fm.shareData=null; fmRefreshFeedback(); // client comments/approvals for the desk popups (best-effort)
 }
 // After showing the saved copy: fetch fresh data and swap it in. Pins aren't
 // replaced while the tech is editing them; if the plan image is unchanged the
@@ -2404,6 +2408,7 @@ function fmRenderToolbar(){
       : `<span class="fm-muted">📄 ${jsEsc(m.sheetName||'')}</span>`+
         (fm.act? '<button class="btn btn-sm" onclick="fmShowTechSummary()">👥 Tech summary</button>' : '')+
         (fm.sheet? '<button class="btn btn-sm" onclick="fmShowReport()">📄 Closeout report</button>' : '')+
+        '<button class="btn btn-sm" onclick="fmShowShares()">🔗 Share</button>'+
         '<button class="btn btn-sm" onclick="fmScanOpen()">📷 Find desk</button>'+
         '<button class="btn btn-sm" onclick="fmShowDetails()">⚙ Details</button>'+
         `<button class="btn btn-sm" onclick="fmToggleEdit()">✏️ Edit pins</button>`+
@@ -2906,6 +2911,101 @@ async function fmPrintReport(){
   try{ window.print(); }catch(e){ done(); }
 }
 
+// ── Client share links ──
+// Testers create a no-sign-in link to ONE map for a client, at a level they
+// pick (view / comment / approve / edit), with an expiry; links can be copied
+// again or revoked. The client opens share.html#t=<token> (the token stays in
+// the URL fragment, so it never reaches server logs). Client comments and
+// approvals come back here, shown in each desk's popup.
+const FM_SHARE_LEVELS=[
+  ['view','View','See the plan, pins, status and photos'],
+  ['comment','Comment','View + leave notes on a desk'],
+  ['approve','Approve','Comment + approve a desk or mark it needs work'],
+  ['edit','Edit','Approve + add or replace desk photos'],
+];
+function fmShareUrl(token){ return location.origin+'/share.html#t='+encodeURIComponent(token); }
+async function fmLoadShareData(){
+  const m=fm.map; if(!m) return null;
+  const d=await fmFetch('GET','/floormaps/'+encodeURIComponent(fmIdOf(m.id))+'/shares');
+  if(fm.map&&fm.map.id===m.id) fm.shareData={shares:d.shares||[], feedback:d.feedback||[]};
+  return fm.shareData;
+}
+// Best-effort on map open (no signal / no access just means no feedback shown).
+function fmRefreshFeedback(){ fmLoadShareData().catch(()=>{}); }
+function fmFeedbackHtml(label){
+  const fb=(fm.shareData&&fm.shareData.feedback||[]).filter(f=>fmNorm(f.label)===fmNorm(label));
+  if(!fb.length) return '';
+  const latestAppr=fb.find(f=>f.kind==='approval'); // list is newest first
+  const badge=latestAppr? (latestAppr.status==='approved'? '<span class="js-pill js-pill-on">✓ Approved by client</span>' : '<span class="js-pill" style="background:#FEE2E2;color:#B91C1C">✗ Client: needs work</span>') : '';
+  return '<div><div class="js-field-label">Client feedback</div>'+badge+
+    '<div style="display:grid;gap:8px;margin-top:8px">'+fb.map(f=>
+      `<div style="font-size:13px;color:var(--text2);border-left:3px solid var(--border2);padding-left:8px">`+
+      `<b>${jsEsc(f.author||f.shareLabel)}</b> <span class="fm-muted">${jsEsc(new Date(f.createdAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))}${f.shareLabel&&f.shareLabel!==f.author?' · via '+jsEsc(f.shareLabel):''}</span><br>`+
+      (f.kind==='approval'? (f.status==='approved'?'✓ Approved':'✗ Needs work')+(f.text?' — ':'') : '')+jsEsc(f.text)+`</div>`).join('')+
+    '</div></div>';
+}
+async function fmShowShares(){
+  const modal=document.getElementById('fm-modal'); if(!modal) return;
+  modal.innerHTML='<div class="js-modal-head"><div class="js-modal-title">Share with a client</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div><div class="js-modal-body"><div class="fm-muted">Loading links…</div></div>';
+  document.getElementById('fm-modal-backdrop').classList.add('open');
+  try{ await fmLoadShareData(); fmRenderShares(); }
+  catch(e){ const b=modal.querySelector('.js-modal-body'); if(b) b.innerHTML=`<div class="fm-warn">Couldn't load links (${jsEsc(e.message||e)}).</div>`; }
+}
+function fmRenderShares(newToken){
+  const modal=document.getElementById('fm-modal'); if(!modal) return;
+  const shares=(fm.shareData&&fm.shareData.shares)||[];
+  const lvl=k=>(FM_SHARE_LEVELS.find(l=>l[0]===k)||[k,k])[1];
+  const fmt=t=>t? new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '';
+  const list=shares.length? shares.map(s=>{
+    const active=s.status==='active';
+    return `<div class="fm-share-row${s.token===newToken?' fm-share-new':''}">`+
+      `<div style="flex:1;min-width:0"><div style="font-weight:600;color:var(--text)">${jsEsc(s.label)} <span class="fm-share-lvl">${jsEsc(lvl(s.level))}</span>${s.showNotes?' <span class="fm-share-lvl">notes</span>':''}</div>`+
+      `<div class="fm-muted">${active?'Expires '+jsEsc(fmt(s.expiresAt)):(s.status==='revoked'?'Turned off '+jsEsc(fmt(s.revokedAt)):'Expired '+jsEsc(fmt(s.expiresAt)))} · opened ${s.openCount||0}×${s.lastOpenedAt?' (last '+jsEsc(fmt(s.lastOpenedAt))+')':''}</div></div>`+
+      (active? `<button class="btn btn-sm" data-t="${jsEsc(s.token)}" onclick="fmCopyShare(this.dataset.t,this)">Copy link</button><button class="btn btn-sm btn-danger" data-t="${jsEsc(s.token)}" onclick="fmRevokeShare(this.dataset.t)">Turn off</button>` : '')+
+      `</div>`; }).join('') : '<div class="fm-muted">No links yet.</div>';
+  const fbCount=(fm.shareData&&fm.shareData.feedback||[]).length;
+  modal.innerHTML=
+    '<div class="js-modal-head"><div class="js-modal-title">Share with a client</div><button class="js-modal-close" onclick="fmCloseDetail()" aria-label="Close">&times;</button></div>'+
+    '<div class="js-modal-body">'+
+      '<div class="fm-muted">Anyone with a link can open this map <b>without signing in</b> until it expires or you turn it off. Clients see the plan, desk status and photos — never tech names, time logged or activity.</div>'+
+      '<div><div class="js-field-label">New link</div>'+
+        '<input class="fm-input" id="fm-share-label" placeholder="Who is it for? (e.g. T-Mobile facilities)" maxlength="120">'+
+        '<div style="display:grid;gap:6px;margin:10px 0">'+FM_SHARE_LEVELS.map((l,i)=>
+          `<label class="js-check"><input type="radio" name="fm-share-level" value="${l[0]}"${i===0?' checked':''}> <b>${l[1]}</b> <span class="fm-muted">— ${l[2]}</span></label>`).join('')+'</div>'+
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+          '<label class="fm-muted">Expires in <select class="js-select" id="fm-share-days" style="padding:6px 10px"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label>'+
+          '<label class="js-check"><input type="checkbox" id="fm-share-notes"> Show notes columns</label>'+
+          '<button class="btn btn-sm btn-primary" id="fm-share-create" onclick="fmCreateShare()">Create link</button>'+
+        '</div><div class="fm-status" id="fm-share-msg"></div></div>'+
+      `<div><div class="js-field-label">Links for this map</div><div style="display:grid;gap:8px">${list}</div></div>`+
+      (fbCount? `<div class="fm-muted">${fbCount} piece${fbCount>1?'s':''} of client feedback — open a desk to see it.</div>` : '')+
+    '</div>';
+}
+async function fmCreateShare(){
+  const label=(document.getElementById('fm-share-label').value||'').trim(), msg=document.getElementById('fm-share-msg'), btn=document.getElementById('fm-share-create');
+  if(!label){ msg.innerHTML='<span class="fm-warn">Who is the link for?</span>'; return; }
+  const level=(document.querySelector('input[name="fm-share-level"]:checked')||{}).value||'view';
+  btn.disabled=true; msg.textContent='Creating…';
+  try{
+    const r=await fmFetch('POST','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id))+'/shares',
+      {label, level, days:+document.getElementById('fm-share-days').value, showNotes:document.getElementById('fm-share-notes').checked});
+    await fmLoadShareData(); fmRenderShares(r.share.token);
+    fmCopyShare(r.share.token, document.querySelector('.fm-share-new .btn'));
+  }catch(e){ btn.disabled=false; msg.innerHTML=`<span class="fm-warn">${jsEsc(e.message||e)}</span>`; }
+}
+function fmCopyShare(token, btn){
+  const url=fmShareUrl(token);
+  const ok=()=>{ if(btn){ btn.textContent='✓ Copied'; setTimeout(()=>{ btn.textContent='Copy link'; },2500); } };
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok,()=>window.prompt('Copy this link:',url));
+  else window.prompt('Copy this link:',url);
+}
+async function fmRevokeShare(token){
+  const s=(fm.shareData.shares||[]).find(x=>x.token===token);
+  if(!confirm('Turn off the link for "'+(s?s.label:'')+'"? Anyone using it will lose access right away.')) return;
+  try{ await fmFetch('DELETE','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id))+'/shares/'+encodeURIComponent(token)); await fmLoadShareData(); fmRenderShares(); }
+  catch(e){ alert('Could not turn off the link: '+(e.message||e)); }
+}
+
 // A desk's popup. Techs complete the desk right here: status ticks, notes and
 // the completion photo save through the same Job Sheets paths (live, or queued
 // offline) and are attributed + timed the same way. Opening a desk starts (or
@@ -2936,6 +3036,7 @@ function fmShowDetail(label, r){
     if(!body) body='<div class="js-empty">No details.</div>';
   }
   body+=fmActivityHtml(label);
+  body+=fmFeedbackHtml(label);
   if(r){
     body+= fmNextOpenIndex()>=0? '<div><button class="btn btn-primary" style="width:100%" onclick="fmGoNext()">➜ Next open desk</button></div>'
          : (fmRowState(r)==='todo'? '<div class="fm-muted" style="text-align:center">This is the last open desk.</div>'

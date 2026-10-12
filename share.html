@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Floor Map · Jet City IT</title>
+<link rel="stylesheet" href="/vendor/leaflet-1.9.4.min.css">
+<!--
+  Client view of ONE Floor Map, opened from a share link (share.html#t=<token>).
+  No sign-in: the token in the URL fragment is the key. It's sent to the API in
+  the X-Share-Token header (fragments never reach server logs or Referer). What
+  the link can do (view / comment / approve / edit) is decided server-side; this
+  page only shows the controls the server says the link has.
+-->
+<style>
+:root{--bg:#F7F8FA;--surface:#fff;--surface2:#F0F2F5;--border:#E4E7EC;--border2:#D0D5DD;--text:#0F1724;--text2:#4B5565;--text3:#8A93A2;--green:#16A37F;--green-dark:#0D6E56;--green-light:#E6F7F3;--red:#F04438;--amber:#F59E0B;--radius:12px}
+@media (prefers-color-scheme:dark){:root{--bg:#0F141A;--surface:#191F27;--surface2:#232B35;--border:#2C343F;--border2:#3A4450;--text:#E7EAEE;--text2:#AEB6C0;--text3:#7A828D;--green:#22B892;--green-dark:#5FD3B3;--green-light:#173A33}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+header img{height:34px;width:auto}
+@media (prefers-color-scheme:dark){header img,.center img{background:#fff;border-radius:8px;padding:3px 6px}}
+h1{font-size:22px;margin:0;font-weight:650;letter-spacing:-.3px}
+.sub{font-size:13px;color:var(--text3)}
+.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0 12px}
+.prog{flex:1;min-width:200px;height:8px;border-radius:4px;background:var(--surface2);overflow:hidden}
+.prog>div{height:100%;background:var(--green)}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px}
+@media(max-width:820px){.layout{grid-template-columns:minmax(0,1fr)}}
+#map{height:min(72vh,720px);border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);background:#fff}
+@media(max-width:820px){#map{height:60vh}}
+.leaflet-container{background:#fff;font:inherit}
+aside{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px;max-height:min(72vh,720px);overflow-y:auto}
+aside h3{font-size:13px;font-weight:600;color:var(--text2);margin:12px 0 4px}
+.input{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font:inherit;font-size:14px}
+textarea.input{resize:vertical;min-height:64px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--text3);margin:10px 0 4px}
+.chip{border:1px solid var(--border);background:var(--surface);color:var(--text2);border-radius:14px;padding:2px 10px;font:inherit;font-size:12px;cursor:pointer}
+.chip.on{border-color:var(--green);background:var(--green-light);color:var(--text)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:5px;margin-right:6px;vertical-align:-1px}
+.d-done{background:#16A37F}.d-todo{background:#64748B}.d-flag{background:#F04438}.d-nomatch{background:#F59E0B}
+.row{display:flex;align-items:center;width:100%;text-align:left;padding:7px 8px;border:none;background:none;border-radius:6px;cursor:pointer;font:inherit;font-size:13.5px;color:var(--text)}
+.row:hover{background:var(--surface2)}
+.row small{margin-left:auto;padding-left:8px;color:var(--text3);font-size:11.5px}
+.pin-wrap{background:transparent;border:none}
+.pin{position:absolute;transform:translate(-50%,-50%);min-width:24px;height:24px;padding:0 6px;border-radius:12px;font-size:11.5px;font-weight:700;line-height:20px;text-align:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;cursor:pointer}
+.p-done{background:#16A37F}.p-todo{background:#64748B}.p-flag{background:#F04438}.p-nomatch{background:#F59E0B;border-style:dashed}
+.p-approved{box-shadow:0 0 0 3px #16A37F,0 1px 4px rgba(0,0,0,.4)}
+.p-rejected{box-shadow:0 0 0 3px #F04438,0 1px 4px rgba(0,0,0,.4)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 16px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);font:inherit;font-size:14px;font-weight:500;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--green);border-color:var(--green-dark);color:#fff}
+.btn-danger{color:var(--red);border-color:#fecdca}
+.backdrop{position:fixed;inset:0;background:rgba(15,23,36,.45);z-index:2000;display:none;align-items:flex-start;justify-content:center;padding:32px 12px;overflow-y:auto}
+.backdrop.open{display:flex}
+.modal{background:var(--surface);border-radius:var(--radius);box-shadow:0 12px 48px rgba(15,23,36,.28);width:100%;max-width:560px}
+.mhead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px;border-bottom:1px solid var(--border)}
+.mtitle{font-size:18px;font-weight:650}
+.x{border:none;background:none;color:var(--text3);font-size:24px;line-height:1;cursor:pointer;padding:0 6px}
+.mbody{padding:18px;display:grid;gap:16px}
+.lbl{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);margin-bottom:6px}
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font-size:12.5px;border-radius:6px;padding:3px 8px;background:var(--surface2);color:var(--text2)}
+.pill.on{background:var(--green-light);color:var(--text)}
+.pill.bad{background:#FEE2E2;color:#B91C1C}
+.photos{display:grid;gap:12px}
+.photos img{width:100%;border-radius:8px;border:1px solid var(--border);display:block}
+.nophoto{padding:22px;text-align:center;color:var(--text3);background:var(--surface2);border-radius:8px;font-size:13px}
+.fb{font-size:13px;color:var(--text2);border-left:3px solid var(--border2);padding-left:8px}
+.msg{font-size:13px;color:var(--text3)}
+.err{color:#B91C1C}
+.center{text-align:center;padding:80px 20px;color:var(--text2)}
+footer{margin-top:18px;font-size:12px;color:var(--text3);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="center">Loading floor map…</div></div>
+<div class="backdrop" id="backdrop"><div class="modal" id="modal"></div></div>
+<script src="/vendor/leaflet-1.9.4.min.js"></script>
+<script>
+(function(){
+  var TOKEN=new URLSearchParams(location.hash.slice(1)).get('t')||'';
+  var FLAG_RE=/\b(mismatch\w*|issues?|damage\w*|problems?|fail\w*|broken|missing|defects?)\b/i;
+  var S={data:null,imgUrl:null,map:null,markers:[],rowIndex:new Map(),filter:'',query:'',openLabel:null};
+
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function norm(s){return String(s==null?'':s).trim().toLowerCase().replace(/^(desk|station|seat|ws|#)\s*[-#:.]?\s*/,'').replace(/^0+(?=\d)/,'');}
+  function isUrl(v){return typeof v==='string'&&(v.indexOf('/api/')===0||/^https?:/.test(v));}
+  function fmtDate(t){return t?new Date(t).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'';}
+  function fmtTime(t){return t?new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';}
+  function can(min){var L=['view','comment','approve','edit'];return S.data&&L.indexOf(S.data.share.level)>=L.indexOf(min);}
+  function getName(){try{return localStorage.getItem('jcit-share-name')||'';}catch(e){return '';}}
+  function setName(v){try{localStorage.setItem('jcit-share-name',v);}catch(e){}}
+
+  async function api(path,opts){
+    opts=opts||{}; opts.headers=Object.assign({'X-Share-Token':TOKEN},opts.headers||{});
+    var res; try{res=await fetch('/api/'+path,opts);}catch(e){throw new Error('No connection. Check your signal and try again.');}
+    if(!res.ok){var m='Something went wrong ('+res.status+').';try{m=(await res.json()).error||m;}catch(e){} var er=new Error(m); er.status=res.status; throw er;}
+    return res;
+  }
+  function fail(msg){document.getElementById('app').innerHTML='<div class="center"><img src="/logo.png" alt="Jet City IT" style="height:40px;margin-bottom:16px"><div>'+esc(msg)+'</div></div>';}
+
+  function cols(t){return (S.data.sheet.columns||[]).filter(function(c){return c.type===t;});}
+  function idKey(){var c=cols('identifier')[0];return c?c.key:null;}
+  function buildIndex(){S.rowIndex=new Map();var k=idKey();if(!k)return;S.data.sheet.rows.forEach(function(r){var n=norm(r[k]);if(n&&!S.rowIndex.has(n))S.rowIndex.set(n,r);});}
+  function rowFor(label){return S.rowIndex.get(norm(label))||null;}
+  function rowState(r){
+    if(cols('checkbox').some(function(c){return FLAG_RE.test(c.label)&&r[c.key];}))return 'flag';
+    var pk=S.data.sheet.progressKey;return pk&&r[pk]?'done':'todo';
+  }
+  function pinState(p){var r=rowFor(p.label);return r?rowState(r):'nomatch';}
+  function approvalFor(label){var a=null;(S.data.feedback||[]).forEach(function(f){if(f.kind==='approval'&&norm(f.label)===norm(label))a=f;});return a;} // list is oldest first
+  function tally(){var t={done:0,todo:0,flag:0,nomatch:0,approved:0};S.data.map.pins.forEach(function(p){t[pinState(p)]++;var a=approvalFor(p.label);if(a&&a.status==='approved')t.approved++;});return t;}
+
+  function render(){
+    document.getElementById('app').innerHTML='<div id="top"></div>'+
+      '<div class="layout"><div id="map"></div><aside id="side"></aside></div>'+
+      '<footer>Prepared by Jet City IT · live from the job sheet · tap a desk for photos'+(can('comment')?' and feedback':'')+'</footer>';
+    renderTop(); renderSide(); initMap();
+  }
+  function renderTop(){
+    var el=document.getElementById('top'); if(!el)return;
+    var d=S.data,t=tally(),total=t.done+t.todo+t.flag,pct=total?Math.round(t.done/total*100):0;
+    var lvlText={view:'View only',comment:'You can comment on desks',approve:'You can comment on and approve desks',edit:'You can comment, approve and add photos'}[d.share.level];
+    el.innerHTML='<header><img src="/logo.png" alt="Jet City IT"><div><h1>'+esc(d.map.name)+(d.map.floorLabel?' · '+esc(d.map.floorLabel):'')+'</h1>'+
+      '<div class="sub">Shared with '+esc(d.share.label)+' · '+esc(lvlText)+' · link expires '+esc(fmtDate(d.share.expiresAt))+'</div></div></header>'+
+      '<div class="bar"><b>'+t.done+' of '+total+' desks complete</b><div class="prog"><div style="width:'+pct+'%"></div></div><span class="sub">'+pct+'%'+(t.approved?' · '+t.approved+' approved':'')+'</span></div>';
+  }
+  function renderSide(){
+    var el=document.getElementById('side'); if(!el)return;
+    var t=tally(),k=idKey(),q=S.query.trim().toLowerCase();
+    var f=function(key,dot,label,n){return '<button class="chip'+(S.filter===key?' on':'')+'" data-f="'+key+'"><span class="dot '+dot+'"></span>'+label+' '+n+'</button>';};
+    var pins=S.data.map.pins.filter(function(p){return (!S.filter||pinState(p)===S.filter)&&(!q||String(p.label).toLowerCase().indexOf(q)>=0);})
+      .sort(function(a,b){return String(a.label).localeCompare(String(b.label),undefined,{numeric:true});});
+    el.innerHTML='<input class="input" type="search" id="q" placeholder="Find a desk…" value="'+esc(S.query)+'">'+
+      '<div class="legend">'+f('done','d-done','Done',t.done)+f('todo','d-todo','Open',t.todo)+f('flag','d-flag','Flagged',t.flag)+(t.nomatch?f('nomatch','d-nomatch','Not in sheet',t.nomatch):'')+'</div>'+
+      '<h3>Desks ('+pins.length+')</h3>'+pins.map(function(p){var a=approvalFor(p.label);
+        return '<button class="row" data-l="'+esc(p.label)+'"><span class="dot d-'+pinState(p)+'"></span>'+esc(p.label||'?')+
+          (a?'<small>'+(a.status==='approved'?'✓ approved':'✗ needs work')+'</small>':'')+'</button>';}).join('');
+    var qi=document.getElementById('q'); qi.oninput=function(){S.query=this.value;renderSide();drawPins();var n=document.getElementById('q');n.focus();n.setSelectionRange(n.value.length,n.value.length);};
+    el.querySelectorAll('.chip').forEach(function(b){b.onclick=function(){S.filter=S.filter===b.dataset.f?'':b.dataset.f;renderSide();drawPins();};});
+    el.querySelectorAll('.row').forEach(function(b){b.onclick=function(){focusLabel(b.dataset.l);};});
+  }
+  function ll(p){var W=S.data.map.imgW,H=S.data.map.imgH;return [H-p.y*H,p.x*W];}
+  function initMap(){
+    if(S.map){S.map.remove();S.map=null;}
+    var W=S.data.map.imgW||1000,H=S.data.map.imgH||1000,b=[[0,0],[H,W]];
+    var m=L.map('map',{crs:L.CRS.Simple,minZoom:-6,maxZoom:3,zoomSnap:.25,zoomDelta:.5,attributionControl:false});
+    L.imageOverlay(S.imgUrl,b).addTo(m); m.invalidateSize(); m.fitBounds(b); m.setMinZoom(m.getZoom()-1); m.setMaxBounds(L.latLngBounds(b).pad(.25));
+    S.map=m; drawPins(); setTimeout(function(){if(S.map===m){m.invalidateSize();m.fitBounds(b);}},80);
+  }
+  function drawPins(){
+    if(!S.map)return; S.markers.forEach(function(x){x.remove();}); S.markers=[];
+    var q=S.query.trim().toLowerCase();
+    S.data.map.pins.forEach(function(p){
+      var st=pinState(p); if(S.filter&&st!==S.filter)return; if(q&&String(p.label).toLowerCase().indexOf(q)<0)return;
+      var a=approvalFor(p.label),cls='pin p-'+st+(a?(a.status==='approved'?' p-approved':' p-rejected'):'');
+      var mk=L.marker(ll(p),{icon:L.divIcon({className:'pin-wrap',iconSize:[0,0],html:'<div class="'+cls+'">'+esc(p.label||'?')+'</div>'}),keyboard:false,riseOnHover:true}).addTo(S.map);
+      mk.on('click',function(){openDesk(p.label);}); S.markers.push(mk);
+    });
+  }
+  function focusLabel(label){var p=S.data.map.pins.find(function(x){return norm(x.label)===norm(label);});if(p&&S.map)S.map.flyTo(ll(p),Math.max(S.map.getZoom(),S.map.getMinZoom()+3),{duration:.5});openDesk(label);}
+
+  function openDesk(label){
+    S.openLabel=label; var r=rowFor(label), body='';
+    if(!r){ body='<div class="msg">This desk isn\'t in the job sheet yet.</div>'; }
+    else{
+      var checks=cols('checkbox'),photos=cols('photo'),texts=cols('text');
+      if(checks.length) body+='<div><div class="lbl">Status</div><div class="pills">'+checks.map(function(c){var bad=FLAG_RE.test(c.label);
+        return r[c.key]?'<span class="pill '+(bad?'bad':'on')+'">'+(bad?'⚠ ':'✓ ')+esc(c.label)+'</span>':'<span class="pill">'+esc(c.label)+'</span>';}).join('')+'</div></div>';
+      if(photos.length) body+='<div><div class="lbl">Photos</div><div class="photos">'+photos.map(function(c){var v=r[c.key];
+        return '<figure style="margin:0">'+(isUrl(v)?'<a href="'+esc(v)+'" target="_blank" rel="noopener noreferrer"><img src="'+esc(v)+'" alt="'+esc(c.label)+'"></a>':'<div class="nophoto">'+(v?esc(c.label)+' on file':'No '+esc(c.label.toLowerCase())+' yet')+'</div>')+
+          '<figcaption class="msg" style="margin-top:4px;display:flex;gap:10px;align-items:center">'+esc(c.label)+
+          (can('edit')?' <label class="btn" style="padding:4px 10px;font-size:12px">'+(v?'Replace':'📷 Add photo')+'<input type="file" accept="image/*" capture="environment" style="display:none" data-col="'+esc(c.key)+'"></label>':'')+
+          '</figcaption></figure>';}).join('')+'</div></div>';
+      texts.forEach(function(c){if(r[c.key])body+='<div><div class="lbl">'+esc(c.label)+'</div><div style="white-space:pre-wrap">'+esc(r[c.key])+'</div></div>';});
+    }
+    var fb=(S.data.feedback||[]).filter(function(f){return norm(f.label)===norm(label);});
+    if(fb.length) body+='<div><div class="lbl">Feedback</div><div style="display:grid;gap:8px">'+fb.map(function(f){
+      return '<div class="fb"><b>'+esc(f.author)+'</b> <span class="msg">'+esc(fmtTime(f.createdAt))+'</span><br>'+
+        (f.kind==='approval'?(f.status==='approved'?'✓ Approved':'✗ Needs work')+(f.text?' — ':''):'')+esc(f.text)+'</div>';}).join('')+'</div></div>';
+    if(can('comment')){
+      body+='<div><div class="lbl">'+(can('approve')?'Your feedback':'Leave a comment')+'</div>'+
+        '<input class="input" id="fb-name" placeholder="Your name" maxlength="60" value="'+esc(getName())+'" style="margin-bottom:8px">'+
+        '<textarea class="input" id="fb-text" maxlength="2000" placeholder="'+(can('approve')?'Optional note (required for “Needs work”)…':'Write a comment…')+'"></textarea>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
+          (can('approve')&&r?'<button class="btn btn-primary" data-act="approved">✓ Approve desk</button><button class="btn btn-danger" data-act="rejected">✗ Needs work</button>':'')+
+          '<button class="btn" data-act="comment">Send comment</button></div>'+
+        '<div class="msg" id="fb-msg" style="margin-top:6px"></div></div>';
+    }
+    document.getElementById('modal').innerHTML='<div class="mhead"><div class="mtitle">Desk '+esc(label||'?')+'</div><button class="x" aria-label="Close" id="close">&times;</button></div><div class="mbody">'+body+'</div>';
+    document.getElementById('backdrop').classList.add('open');
+    document.getElementById('close').onclick=closeDesk;
+    document.querySelectorAll('#modal [data-act]').forEach(function(b){b.onclick=function(){sendFeedback(label,b.dataset.act);};});
+    document.querySelectorAll('#modal input[type=file]').forEach(function(inp){inp.onchange=function(){uploadPhoto(label,inp.dataset.col,inp);};});
+  }
+  function closeDesk(){document.getElementById('backdrop').classList.remove('open');S.openLabel=null;}
+  document.getElementById('backdrop').onclick=function(e){if(e.target===this)closeDesk();};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDesk();});
+
+  async function sendFeedback(label,act){
+    var name=(document.getElementById('fb-name').value||'').trim(),text=(document.getElementById('fb-text').value||'').trim(),msg=document.getElementById('fb-msg');
+    if(!name){msg.innerHTML='<span class="err">Please add your name.</span>';return;}
+    if((act==='comment'||act==='rejected')&&!text){msg.innerHTML='<span class="err">'+(act==='rejected'?'Say what needs work.':'Write a comment first.')+'</span>';return;}
+    setName(name); msg.textContent='Sending…';
+    document.querySelectorAll('#modal [data-act]').forEach(function(b){b.disabled=true;});
+    try{
+      var body=act==='comment'?{kind:'comment',label:label,text:text,author:name}:{kind:'approval',status:act,label:label,text:text,author:name};
+      var r=await api('share/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      var j=await r.json(); S.data.feedback.push(j.feedback);
+      renderTop(); renderSide(); drawPins(); openDesk(label);
+      var m2=document.getElementById('fb-msg'); if(m2) m2.textContent='✓ Sent to Jet City IT';
+    }catch(e){msg.innerHTML='<span class="err">'+esc(e.message)+'</span>';document.querySelectorAll('#modal [data-act]').forEach(function(b){b.disabled=false;});}
+  }
+  async function uploadPhoto(label,colKey,inp){
+    var file=inp.files&&inp.files[0]; if(!file)return;
+    var fig=inp.closest('figure'),note=document.createElement('div');note.className='msg';note.textContent='Uploading…';fig.appendChild(note);
+    try{
+      var fd=new FormData();fd.append('label',label);fd.append('columnKey',colKey);fd.append('file',file,file.name||'photo.jpg');
+      await api('share/photo',{method:'POST',body:fd});
+      await load(true); if(S.openLabel===label)openDesk(label);
+    }catch(e){note.innerHTML='<span class="err">'+esc(e.message)+'</span>';}
+    inp.value='';
+  }
+
+  async function load(quiet){
+    var r=await api('share'); var data=await r.json();
+    if(!quiet||!S.imgUrl){ var img=await api('share/image'); var blob=await img.blob(); if(S.imgUrl)URL.revokeObjectURL(S.imgUrl); S.imgUrl=URL.createObjectURL(blob); }
+    S.data=data; buildIndex();
+    if(quiet&&S.map){renderTop();renderSide();drawPins();} else render();
+  }
+  if(!TOKEN){fail('This link is incomplete. Please use the full link you were sent.');return;}
+  document.title='Floor Map · Jet City IT';
+  load(false).catch(function(e){fail(e.message);});
+})();
+</script>
+</body>
+</html>
