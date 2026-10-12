@@ -1703,7 +1703,7 @@ function finPaint(){
   const root=document.getElementById('fin-root'); if(!root) return;
   const rangeOpts=FIN_RANGES.map(([k,l])=>`<option value="${k}"${fin.range===k?' selected':''}>${l}</option>`).join('');
   const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
-    '<div><h1>Financial</h1><p>Which jobs and clients make money. Financial group only.</p></div>'+
+    '<div><h1>Financial</h1></div>'+
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
       `<select class="js-select" onchange="finSetRange(this.value)">${rangeOpts}</select>`+
       (fin.range==='custom'? `<input type="date" class="fm-input" style="width:auto" value="${fin.from}" onchange="fin.from=this.value"><input type="date" class="fm-input" style="width:auto" value="${fin.to}" onchange="fin.to=this.value"><button class="btn btn-sm" onclick="finLoad()">Apply</button>` : '')+
