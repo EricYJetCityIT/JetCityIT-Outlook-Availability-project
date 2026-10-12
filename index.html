@@ -609,6 +609,12 @@ body.is-tester #tab-floormap{display:inline-block}
 .fm-share-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px}
 .fm-share-new{border-color:var(--green);background:var(--green-light)}
 .fm-share-lvl{display:inline-block;font-size:11px;font-weight:600;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-left:4px;vertical-align:1px}
+.fm-floor-row{display:grid;grid-template-columns:160px minmax(0,1fr) 170px;gap:12px;align-items:start;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;background:var(--surface)}
+.fm-floor-row.off{opacity:.55}
+.fm-floor-row img{width:100%;border-radius:6px;border:1px solid var(--border);background:#fff;display:block}
+.fm-floor-fields{display:grid;gap:6px}
+.fm-floor-stats{font-size:13px;color:var(--text2)}
+@media(max-width:640px){.fm-floor-row{grid-template-columns:110px minmax(0,1fr)}.fm-floor-stats{grid-column:1/-1}}
 .fm-card-row{display:flex;gap:8px;align-items:stretch}
 .fm-card-row .pp-card{flex:1;min-width:0}
 .fm-card-del{flex:0 0 auto;padding:0 16px;font-size:13px;justify-content:center}
@@ -1745,6 +1751,7 @@ function fmPaint(){
   const root=fmRoot(); if(!root) return;
   fmTeardownMap(); // the repaint replaces the map's container, so drop the old Leaflet instance
   if(fm.mode==='new') return fmPaintNew(root);
+  if(fm.mode==='batch') return fmPaintBatch(root);
   if(fm.mode==='map') return fmPaintMap(root);
   fmPaintList(root);
 }
@@ -1920,6 +1927,7 @@ function fmPaintList(root){
       '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
         (fm.maps&&fm.maps.length? '<button class="btn" '+(fm.saveAll?'disabled':'')+' onclick="fmSaveAllOffline()">'+(fm.saveAll? 'Saving '+fm.saveAll.done+' of '+fm.saveAll.total+'…' : '⬇ Save for offline')+'</button>' : '')+
+        '<button class="btn" onclick="fmBatchNew()">+ Several floors at once</button>'+
         '<button class="btn btn-primary" onclick="fmNew()">+ New floor map</button></div></div>'+
     (fm.listOfflineAt? '<div class="fm-banner fm-warn">📴 Offline — showing the list saved '+jsEsc(new Date(fm.listOfflineAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'. Maps marked “Saved offline” will open.</div>' : '')+
     (fm.saveMsg? '<div class="fm-banner">'+jsEsc(fm.saveMsg)+'</div>' : '')+
@@ -2275,6 +2283,224 @@ async function fmSaveDraft(){
     fm.draft=null; fm.maps=null;
     fmOpenMap(fmIdOf(r.map.id));
   }catch(e){ d.saving=false; d.err='Save failed: '+(e.message||e); fmPaint(); }
+}
+
+// ── New maps in bulk: several floors at once ──
+// One file picker takes any number of floor plans (PDFs and images; every PDF
+// page is a floor), plus one or more job sheets. Each floor is processed on its
+// own -- desk numbers from the PDF's annotations when it has them, else yellow
+// boxes + the PDF's text, else boxes to number later -- then paired with the
+// sheet that matches the most of its desk numbers. A review table lets the
+// tester fix floor labels / sheets / which pages to keep, then everything is
+// saved as one multi-floor job (shared job name + crew-calendar project).
+function fmBatchNew(){
+  fm.batch={job:'', project:'', sheets:[], search:'', results:[], searchReq:0, searchTimer:null,
+    floors:[], processing:'', err:'', saving:null};
+  fm.mode='batch'; fmPaint();
+  JCITDispatch.searchJobs('').then(list=>{ if(!fm.batch) return; fm.batch.projects=[...new Set((list||[]).map(j=>String(j.project||'').trim()).filter(Boolean))].sort(); const dl=document.getElementById('fm-b-proj-names'); if(dl) dl.innerHTML=fm.batch.projects.map(n=>'<option value="'+jsEsc(n)+'">').join(''); }).catch(()=>{});
+}
+function fmBatchCancel(){
+  const b=fm.batch; if(b&&b.saving) return;
+  if(b&&b.floors.length&&!confirm('Discard these floors?')) return;
+  fm.batch=null; fmLoadList();
+}
+function fmMkCanvas(src,w,h,max){
+  const s=Math.min(1,max/Math.max(w,h)), c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(w*s)); c.height=Math.max(1,Math.round(h*s));
+  const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+  ctx.imageSmoothingQuality='high'; ctx.drawImage(src,0,0,c.width,c.height); return c;
+}
+// "FH_FL4_plan.pdf" -> "Floor 4"; else a "LEVEL 3"-style title on the page; else page/file name.
+function fmGuessFloor(fileName,pageNo,pageCount,texts){
+  const t=(texts||[]).find(x=>/^(floor|level)\s*\d{1,3}$/i.test(x.str));
+  if(t) return t.str.replace(/^(floor|level)\s*/i,(a,w)=>w[0].toUpperCase()+w.slice(1).toLowerCase()+' ');
+  const m=String(fileName).match(/(?:^|[^a-z])(?:floor|flr|fl|level|lvl)[\s_\-.]*(\d{1,3})(?!\d)/i);
+  if(m) return 'Floor '+(+m[1])+(pageCount>1?' (p'+pageNo+')':'');
+  const base=String(fileName).replace(/\.[^.]+$/,'');
+  return pageCount>1? base+' p'+pageNo : base;
+}
+// Renders + reads one floor and keeps only what's needed (a JPEG, a thumbnail, pins).
+async function fmBatchProcess(src,w,h,pdfPage,vp){
+  const det=(src instanceof HTMLCanvasElement && Math.max(w,h)<=FM_DETECT_MAX)? src : fmMkCanvas(src,w,h,FM_DETECT_MAX);
+  const W=det.width, H=det.height;
+  let pins=[], method='none', texts=null;
+  if(pdfPage){
+    const pm=await fmReadPdfMarkup(pdfPage,vp); texts=pm.texts;
+    if(pm.markers.length){ pins=pm.markers.map(m=>({x:(m.x0+m.x1)/2/W, y:(m.y0+m.y1)/2/H, label:m.label})); method='pdf'; }
+  }
+  if(!pins.length){
+    await new Promise(r=>setTimeout(r,0)); // let the progress line paint before the heavy pass
+    const boxes=fmDetectBoxes(det,FM_COLORS[0].rgb,90);
+    const labels=texts? fmLabelsFromText(boxes,texts) : boxes.map(()=> '');
+    pins=boxes.map((b,i)=>({x:b.cx, y:b.cy, label:labels[i]||''}));
+    if(boxes.length) method=labels.some(Boolean)? 'text' : 'color';
+  }
+  const disp=fmMkCanvas(det,W,H,FM_DISPLAY_MAX);
+  const blob=await new Promise((res,rej)=>disp.toBlob(b=>b?res(b):rej(new Error('Could not encode the plan image')),'image/jpeg',0.85));
+  const th=fmMkCanvas(disp,disp.width,disp.height,480), tx=th.getContext('2d');
+  tx.fillStyle='#E11D8F'; pins.forEach(p=>{ tx.beginPath(); tx.arc(p.x*th.width,p.y*th.height,3,0,Math.PI*2); tx.fill(); });
+  const out={blob, imgW:disp.width, imgH:disp.height, thumb:th.toDataURL('image/jpeg',0.8), pins, method, texts};
+  if(det!==src){ det.width=det.height=0; } disp.width=disp.height=0; // free the big canvases now
+  return out;
+}
+async function fmBatchAddFiles(input){
+  const b=fm.batch, files=[...(input.files||[])]; input.value=''; if(!files.length) return;
+  b.err='';
+  for(const file of files){
+    try{
+      if(/pdf$/i.test(file.type)||/\.pdf$/i.test(file.name)){
+        b.processing='Opening '+file.name+'…'; fmPaint();
+        const lib=await fmEnsurePdfJs();
+        const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()), isEvalSupported:false}).promise;
+        for(let n=1;n<=pdf.numPages;n++){
+          if(fm.batch!==b) return;
+          b.processing='Reading '+file.name+(pdf.numPages>1?' — page '+n+' of '+pdf.numPages:'')+'…'; fmPaint();
+          const page=await pdf.getPage(n), vp1=page.getViewport({scale:1});
+          const vp=page.getViewport({scale:FM_DETECT_MAX/Math.max(vp1.width,vp1.height)});
+          const c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
+          const ctx=c.getContext('2d',{willReadFrequently:true}); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
+          await page.render({canvasContext:ctx, viewport:vp}).promise;
+          const r=await fmBatchProcess(c,c.width,c.height,page,vp); c.width=c.height=0;
+          fmBatchAddFloor(b,file.name,n,pdf.numPages,r);
+        }
+      } else {
+        b.processing='Reading '+file.name+'…'; fmPaint();
+        const bmp=await createImageBitmap(file);
+        const r=await fmBatchProcess(bmp,bmp.width,bmp.height,null,null); if(bmp.close) bmp.close();
+        fmBatchAddFloor(b,file.name,1,1,r);
+      }
+    }catch(e){ b.err=(b.err?b.err+' · ':'')+'Could not read '+file.name+': '+(e.message||e); }
+  }
+  if(fm.batch!==b) return;
+  b.processing=''; fmBatchPair(); fmPaint();
+}
+function fmBatchAddFloor(b,fileName,pageNo,pageCount,r){
+  const label=fmGuessFloor(fileName,pageNo,pageCount,r.texts); delete r.texts;
+  // Pages with no desks (cover sheets, legends) start unticked in multi-page PDFs.
+  b.floors.push(Object.assign({key:Math.random().toString(36).slice(2), fileName, page:pageNo, pageCount, label,
+    include: r.pins.length>0 || pageCount===1, sheetId:'', sheetPicked:false}, r));
+  fmPaint();
+}
+function fmBatchSheetIds(s){ return new Set(fmSheetIdentifiers(s&&s.view? s.view : null).map(fmNorm)); }
+function fmBatchStats(f){
+  const b=fm.batch, s=b.sheets.find(x=>x.id===f.sheetId);
+  const ids=s&&s.view? fmBatchSheetIds(s) : null;
+  const numbered=f.pins.filter(p=>p.label).length;
+  const matched=ids? f.pins.filter(p=>p.label&&ids.has(fmNorm(p.label))).length : null;
+  return {total:f.pins.length, numbered, matched};
+}
+// Pair each floor with the sheet matching most of its desk numbers (unless the tester picked one).
+function fmBatchPair(){
+  const b=fm.batch; if(!b) return;
+  const loaded=b.sheets.filter(s=>s.view);
+  b.floors.forEach(f=>{
+    if(f.sheetPicked && b.sheets.some(s=>s.id===f.sheetId)) return;
+    let best=null, bestN=-1;
+    loaded.forEach(s=>{ const ids=fmBatchSheetIds(s); const n=f.pins.filter(p=>p.label&&ids.has(fmNorm(p.label))).length; if(n>bestN){ best=s; bestN=n; } });
+    f.sheetId= best? best.id : (b.sheets[0]? b.sheets[0].id : '');
+  });
+}
+function fmBatchSearch(q){
+  const b=fm.batch; b.search=q; clearTimeout(b.searchTimer);
+  if(!q.trim()){ b.results=[]; fmBatchRenderResults(); return; }
+  b.searchTimer=setTimeout(async()=>{
+    const req=++b.searchReq;
+    try{ const r=await jsApi('/jobsheet/search?q='+encodeURIComponent(q.trim())); if(req!==b.searchReq) return; b.results=r.results||[]; }
+    catch(e){ if(req!==b.searchReq) return; b.results=[]; }
+    fmBatchRenderResults();
+  },300);
+}
+function fmBatchRenderResults(){
+  const el=document.getElementById('fm-b-results'); if(!el) return;
+  el.innerHTML=(fm.batch.results||[]).filter(s=>!fm.batch.sheets.some(x=>x.id===s.id)).map(s=>
+    `<button class="fm-result" data-id="${jsEsc(s.id)}" data-name="${jsEsc(s.name)}" onclick="fmBatchAddSheet(this.dataset.id,this.dataset.name)">${jsEsc(s.name)}${s.workspaceName?`<small>${jsEsc(s.workspaceName)}</small>`:''}</button>`).join('');
+}
+async function fmBatchAddSheet(id,name){
+  const b=fm.batch; if(b.sheets.some(s=>s.id===id)) return;
+  const s={id,name,view:null,err:''}; b.sheets.push(s); b.search=''; b.results=[];
+  if(!b.job) b.job=name;
+  fmBatchPair(); fmPaint();
+  try{ s.view=await jsApi('/jobsheet/sheet?id='+encodeURIComponent(id)); }
+  catch(e){ s.err=e.message||'Failed to load'; }
+  if(fm.batch!==b) return;
+  fmBatchPair(); fmPaint();
+}
+function fmBatchRemoveSheet(id){ const b=fm.batch; b.sheets=b.sheets.filter(s=>s.id!==id); b.floors.forEach(f=>{ if(f.sheetId===id){ f.sheetId=''; f.sheetPicked=false; } }); fmBatchPair(); fmPaint(); }
+function fmBatchSet(key,field,value){
+  const f=fm.batch.floors.find(x=>x.key===key); if(!f) return;
+  if(field==='sheetId'){ f.sheetId=value; f.sheetPicked=true; fmPaint(); return; }
+  if(field==='include'){ f.include=!!value; fmBatchRenderFooter(); return; }
+  f[field]=value;
+}
+function fmBatchRemoveFloor(key){ const b=fm.batch; b.floors=b.floors.filter(f=>f.key!==key); fmPaint(); }
+function fmPaintBatch(root){
+  const b=fm.batch;
+  const methodText={pdf:'numbers read from the PDF', text:'boxes found, numbers from the PDF text', color:'boxes found — numbers need adding later', none:'no desks found'};
+  const sheetOpts=f=>'<option value="">— no sheet —</option>'+b.sheets.map(s=>`<option value="${jsEsc(s.id)}"${s.id===f.sheetId?' selected':''}>${jsEsc(s.name)}</option>`).join('');
+  const floors=b.floors.map(f=>{
+    const st=fmBatchStats(f);
+    const warn= !f.pins.length? 'No desks found on this page' : (st.numbered<st.total? (st.total-st.numbered)+' desks need numbers (add them with Edit pins after saving)' : (st.matched!=null&&st.matched<st.numbered? (st.numbered-st.matched)+' desk numbers aren\'t in this sheet' : ''));
+    return `<div class="fm-floor-row${f.include?'':' off'}">`+
+      `<img src="${f.thumb}" alt="">`+
+      `<div class="fm-floor-fields">`+
+        `<label class="js-check" style="font-weight:600"><input type="checkbox" ${f.include?'checked':''} onchange="fmBatchSet('${f.key}','include',this.checked)"> Include</label>`+
+        `<input class="fm-input" maxlength="60" value="${jsEsc(f.label)}" placeholder="Floor label" oninput="fmBatchSet('${f.key}','label',this.value)">`+
+        `<select class="js-select" onchange="fmBatchSet('${f.key}','sheetId',this.value)">${sheetOpts(f)}</select>`+
+        `<div class="fm-muted">${jsEsc(f.fileName)}${f.pageCount>1?' · page '+f.page:''} · ${jsEsc(methodText[f.method])}</div>`+
+      `</div>`+
+      `<div class="fm-floor-stats"><b>${st.total}</b> desks`+(st.matched!=null? `<br><b>${st.matched}</b> match the sheet` : '')+
+        (warn? `<div class="fm-warn" style="font-size:12px;margin-top:4px">${jsEsc(warn)}</div>` : '')+
+        `<button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="fmBatchRemoveFloor('${f.key}')">Remove</button></div>`+
+    `</div>`; }).join('');
+  root.innerHTML=
+    '<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmBatchCancel()">← Back</button><h2 class="fm-title">Several floors at once</h2></div>'+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">1</span>Job</div>`+
+      `<div style="display:flex;gap:10px;flex-wrap:wrap"><input class="fm-input" style="flex:1;min-width:220px" maxlength="160" placeholder="Job name (groups the floors, e.g. Lambda — Building 2)" value="${jsEsc(b.job)}" oninput="fm.batch.job=this.value">`+
+      `<input class="fm-input" style="flex:1;min-width:220px" maxlength="200" list="fm-b-proj-names" placeholder="Crew-calendar project (optional)" value="${jsEsc(b.project)}" oninput="fm.batch.project=this.value">`+
+      `<datalist id="fm-b-proj-names">${(b.projects||[]).map(n=>'<option value="'+jsEsc(n)+'">').join('')}</datalist></div></div>`+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">2</span>Job sheets</div>`+
+      (b.sheets.length? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+b.sheets.map(s=>
+        `<span class="fm-share-row" style="padding:6px 10px;display:inline-flex">📄 ${jsEsc(s.name)} <span class="fm-muted">${s.err? '· '+jsEsc(s.err) : (s.view? '· '+s.view.rows.length+' rows' : '· loading…')}</span>`+
+        `<button class="btn btn-sm btn-ghost" style="padding:2px 8px" data-id="${jsEsc(s.id)}" onclick="fmBatchRemoveSheet(this.dataset.id)">×</button></span>`).join('')+'</div>' : '')+
+      `<input class="fm-input" type="search" placeholder="Search Smartsheet to add a job sheet…" value="${jsEsc(b.search)}" oninput="fmBatchSearch(this.value)"><div class="fm-results" id="fm-b-results"></div></div>`+
+    `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">3</span>Floor plans</div>`+
+      `<label class="btn btn-sm${b.processing?' disabled':''}">📂 Select floor plans (PDFs or images — pick several)<input type="file" multiple accept="application/pdf,.pdf,image/png,image/jpeg,image/webp" style="display:none" ${b.processing?'disabled':''} onchange="fmBatchAddFiles(this)"></label>`+
+      `<div class="fm-muted" style="margin-top:6px">Every page of a PDF becomes a floor. You can add more files any time.</div>`+
+      (b.processing? `<div class="fm-status">${jsEsc(b.processing)}</div>` : '')+(b.err? `<div class="fm-status fm-warn">${jsEsc(b.err)}</div>` : '')+`</div>`+
+    (b.floors.length? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">4</span>Check the floors</div><div style="display:grid;gap:10px">${floors}</div><div id="fm-b-footer"></div></div>` : '');
+  fmBatchRenderResults(); fmBatchRenderFooter();
+}
+function fmBatchRenderFooter(){
+  const el=document.getElementById('fm-b-footer'); if(!el) return;
+  const b=fm.batch, inc=b.floors.filter(f=>f.include), noSheet=inc.filter(f=>!f.sheetId).length;
+  el.innerHTML='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">'+
+    `<button class="btn btn-primary" ${!inc.length||noSheet||b.saving||b.processing?'disabled':''} onclick="fmBatchSave()">${b.saving? 'Saving '+b.saving.done+' of '+b.saving.total+'…' : 'Save '+inc.length+' floor'+(inc.length===1?'':'s')}</button>`+
+    (noSheet? `<span class="fm-warn" style="font-size:13px">${noSheet} floor${noSheet>1?'s have':' has'} no job sheet — add one in step 2 or untick ${noSheet>1?'them':'it'}.</span>` : '')+
+    (b.saveErr? `<span class="fm-warn" style="font-size:13px">${jsEsc(b.saveErr)}</span>` : '')+'</div>';
+}
+async function fmBatchSave(){
+  const b=fm.batch; if(!b||b.saving) return;
+  const inc=b.floors.filter(f=>f.include&&f.sheetId&&!f.savedId);
+  if(!inc.length) return;
+  const job=(b.job||'').trim(), project=(b.project||'').trim();
+  if(inc.length>1 && !job){ b.saveErr='Give the job a name (step 1) so the floors are grouped together.'; fmBatchRenderFooter(); return; }
+  b.saving={done:0,total:inc.length}; b.saveErr=''; fmBatchRenderFooter();
+  const failed=[];
+  for(const f of inc){
+    const s=b.sheets.find(x=>x.id===f.sheetId), label=(f.label||'').trim();
+    try{
+      const fd=new FormData();
+      fd.append('meta', JSON.stringify({name: job? (label? job+' — '+label : job) : (label||s.name), sheetId:s.id, sheetName:s.name,
+        jobName:job, floorLabel:label, project, imgW:f.imgW, imgH:f.imgH, pins:f.pins}));
+      fd.append('image', f.blob, 'floormap.jpg');
+      const r=await fmFetch('POST','/floormaps', fd); f.savedId=r.map.id;
+    }catch(e){ failed.push((label||f.fileName)+': '+(e.message||e)); }
+    b.saving.done++; fmBatchRenderFooter();
+  }
+  b.saving=null; fm.maps=null;
+  if(failed.length){ b.saveErr='Saved '+(inc.length-failed.length)+' of '+inc.length+'. Failed — '+failed.join(' · ')+'. Press Save again to retry those.'; fmPaint(); return; }
+  fm.saveMsg='Saved '+inc.length+' floor'+(inc.length===1?'':'s')+(job?' for '+job:'')+'.';
+  fm.batch=null; fmLoadList();
 }
 
 // ── Map view ──
