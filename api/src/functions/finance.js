@@ -191,7 +191,7 @@ app.http('financeSettings', {
       const s = sanitizeSettings(await request.json().catch(() => ({})), user);
       await container.items.upsert(s);
       audit(context, user, 'finance.settings.update', {});
-      return { jsonBody: { settings: s, items: ITEMS } };
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { settings: s, items: ITEMS } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
@@ -260,7 +260,7 @@ app.http('financeJob', {
       if (request.method === 'DELETE') {
         try { await container.item(id, id).delete(); } catch (e) { if (e.code !== 404) throw e; }
         audit(context, user, 'finance.job.clear', { jobId });
-        return { jsonBody: { ok: true } };
+        return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { ok: true } };
       }
       const body = await request.json().catch(() => ({}));
       const units = {};
@@ -274,7 +274,7 @@ app.http('financeJob', {
       };
       await container.items.upsert(doc);
       audit(context, user, 'finance.job.update', { jobId });
-      return { jsonBody: { saved: { units: doc.units, hours: doc.hours, shift: doc.shift, note: doc.note, updatedAt: doc.updatedAt, updatedBy: doc.updatedBy } } };
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { saved: { units: doc.units, hours: doc.hours, shift: doc.shift, note: doc.note, updatedAt: doc.updatedAt, updatedBy: doc.updatedBy } } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
