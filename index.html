@@ -1626,9 +1626,39 @@ const fmCacheGet=key=>fmCacheOp('readonly',st=>st.get(key)).then(v=>v===true?nul
 const fmCachePut=(key,val)=>fmCacheOp('readwrite',st=>st.put(val,key)).then(v=>!!v);
 const fmCacheDel=key=>fmCacheOp('readwrite',st=>st.delete(key));
 const fmCacheClear=()=>fmCacheOp('readwrite',st=>st.clear());
+// Ids of the maps saved on this device FOR THE SIGNED-IN ACCOUNT (another
+// account's copies can't be opened, so they mustn't show "Saved offline").
 async function fmCachedIds(){
   const keys=await fmCacheOp('readonly',st=>st.getAllKeys());
-  return new Set(Array.isArray(keys)? keys.filter(k=>String(k).indexOf('map:')===0).map(k=>String(k).slice(4)) : []);
+  const mapKeys=Array.isArray(keys)? keys.filter(k=>String(k).indexOf('map:')===0) : [];
+  const owner=fmOwner(), out=new Set();
+  for(const k of mapKeys){ const rec=await fmCacheGet(k); if(rec && rec.owner===owner) out.add(String(k).slice(4)); }
+  return out;
+}
+// A cell the server has accepted: write it into every saved floor-map copy of
+// that sheet on this device, so a map reopened offline (or from its copy) shows
+// the desk as it really is. Serialized so two patches can't overwrite each other.
+let fmCacheChain=Promise.resolve();
+function fmPatchSavedMaps(sheetId,rowId,colKey,value){
+  const run=async()=>{
+    const keys=await fmCacheOp('readonly',st=>st.getAllKeys());
+    const owner=fmOwner();
+    for(const k of (Array.isArray(keys)? keys : [])){
+      if(String(k).indexOf('map:')!==0) continue;
+      const rec=await fmCacheGet(k);
+      if(!rec||rec.owner!==owner||!rec.map||String(rec.map.sheetId)!==String(sheetId)||!rec.sheet) continue;
+      const r=rec.sheet.rows.find(x=>String(x._rowId)===String(rowId)); if(!r) continue;
+      r[colKey]=value; await fmCachePut(k,rec);
+    }
+  };
+  fmCacheChain=fmCacheChain.then(run,run).catch(()=>{});
+  return fmCacheChain;
+}
+// Pins saved to the server: keep the saved copy's pins in step.
+function fmPatchSavedPins(map){
+  const key='map:'+fmIdOf(map.id);
+  const run=async()=>{ const rec=await fmCacheGet(key); if(rec&&rec.owner===fmOwner()){ rec.map=map; await fmCachePut(key,rec); } };
+  fmCacheChain=fmCacheChain.then(run,run).catch(()=>{});
 }
 // Only genuine connection failures (tagged .offline by the fetch wrappers) count;
 // a plain TypeError is a bug and must surface as one, not as "offline".
@@ -1670,7 +1700,9 @@ async function fmOverlayOutbox(sheet,sid){
 async function fmCacheSaveMap(id,b){
   const rec={map:b.map, sheet:fmSheetForCache(b.sheet), acts:b.acts||null, savedAt:Date.now(), owner:fmOwner()};
   if(!b.reusedBlob && !(await fmCachePut('img:'+id,{attachmentId:b.map.attachmentId, blob:b.blob}))) return false;
-  return fmCachePut('map:'+id,rec);
+  // Same queue as the per-cell patches, so a patch can't be overwritten by an older snapshot or vice versa.
+  const p=fmCacheChain.then(()=>fmCachePut('map:'+id,rec)); fmCacheChain=p.catch(()=>{});
+  return p;
 }
 // Everything one map needs, fetched fresh. If the saved copy already holds the
 // same plan image (it's fixed at creation) the image isn't downloaded again.
@@ -2262,8 +2294,12 @@ async function fmOpenMap(id){
   try{
     const b=await fmFetchMapBundle(id,null);
     if(fm.openToken!==tok) return;
+    if(b.sheet){
+      fmCacheSaveMap(id,b); // snapshots the server's view synchronously, before queued edits are laid over it
+      await fmOverlayOutbox(b.sheet,b.map.sheetId); // ticks still queued offline (e.g. from Job Sheets) show here too
+      if(fm.openToken!==tok) return;
+    }
     fmApply(b.map,b.sheet,b.blob,b.acts,b.sheetError,null);
-    if(b.sheet) fmCacheSaveMap(id,b);
   }catch(e){
     if(fm.openToken!==tok) return;
     fm.error=fmIsOffline(e)? 'No connection, and this map hasn\'t been saved on this device yet. Open it once with signal (or use "Save for offline" on the list) and it will work offline after that.' : (e.message||'Failed to load floor map');
@@ -2298,10 +2334,15 @@ async function fmRefreshOpen(id,tok,cached){
     if(b.sheet){ await fmOverlayOutbox(b.sheet,b.map.sheetId); if(fm.openToken!==tok || fm.mode!=='map') return; }
     fm.refreshing=false;
     const map=(fm.editing||fm.dirty)? fm.map : b.map;
+    // Only the sheet fetch failed but the saved copy has one: keep showing it AS the
+    // saved copy ("Couldn't update … showing the copy saved …"), not as if it were live.
+    const keptCopy=!b.sheet && !!fm.sheet;
+    const sheetError=keptCopy? '' : b.sheetError, cachedAt=keptCopy? fm.cachedAt : null;
+    if(keptCopy) fm.refreshError=String(b.sheetError||'job sheet unavailable').slice(0,120);
     if(b.reusedBlob){
-      fm.map=map; fm.sheet=sheet; fm.sheetError=b.sheetError; fm.cachedAt=null; fm.offline=false;
+      fm.map=map; fm.sheet=sheet; fm.sheetError=sheetError; fm.cachedAt=cachedAt; fm.offline=false;
       fmBuildRowIndex(); fmSetActs(b.acts||fm.rawActs); fmRenderBanner(); fmAfterEdit();
-    } else fmApply(map,sheet,b.blob,b.acts||fm.rawActs,b.sheetError,null);
+    } else fmApply(map,sheet,b.blob,b.acts||fm.rawActs,sheetError,cachedAt);
   }catch(e){
     if(fm.openToken!==tok || fm.mode!=='map') return;
     fm.refreshing=false;
@@ -2562,7 +2603,7 @@ async function fmSavePins(){
   if(!fm.dirty) return;
   try{
     const r=await fmFetch('PUT','/floormaps/'+encodeURIComponent(fmIdOf(fm.map.id)), {pins:fm.map.pins});
-    fm.map=r.map; fm.dirty=false; fm.maps=null;
+    fm.map=r.map; fm.dirty=false; fm.maps=null; fmPatchSavedPins(r.map);
     fmRenderToolbar(); fmDrawPins(); fmRenderSide();
   }catch(e){ alert('Save failed: '+(e.message||e)); }
 }
@@ -2932,8 +2973,9 @@ async function fmReloadSheet(){
   if(!fm.map||fm.map.sheetId!==sid) return;
   fm.sheet=s; fmBuildRowIndex(); fmAfterEdit();
   // Keep the saved copy's rows current too (small record; the image isn't rewritten).
-  const key='map:'+fmIdOf(fm.map.id), c=await fmCacheGet(key);
-  if(c && c.owner===fmOwner()){ c.sheet=forCache; c.savedAt=Date.now(); fmCachePut(key,c); }
+  const key='map:'+fmIdOf(fm.map.id);
+  const run=async()=>{ const c=await fmCacheGet(key); if(c && c.owner===fmOwner()){ c.sheet=forCache; c.savedAt=Date.now(); await fmCachePut(key,c); } };
+  fmCacheChain=fmCacheChain.then(run,run).catch(()=>{});
 }
 function fmAfterEdit(){
   if(fm.mode!=='map'||!fm.map) return;
@@ -2956,13 +2998,18 @@ async function fmSaveField(rid,colKey,value){
   const columnId=colKey.slice(1), meta=fmMeta(r,colKey), sheetId=fm.map.sheetId;
   try{
     await jsSaveCellLive(sheetId,r._rowId,columnId,value,meta);
-    r[colKey]=value; fmRecentEdits.push({rowId:r._rowId,colKey,value,t:Date.now()}); if(fmRecentEdits.length>200) fmRecentEdits.shift();
+    // A refresh may have swapped in new row objects while this saved: write to the
+    // row that's on screen now (and the old one, in case nothing replaced it).
+    r[colKey]=value; const cur=fmRowById(rid); if(cur) cur[colKey]=value;
+    fmRecentEdits.push({rowId:r._rowId,colKey,value,t:Date.now()}); if(fmRecentEdits.length>200) fmRecentEdits.shift();
+    fmPatchSavedMaps(sheetId,r._rowId,colKey,value); // the saved copy must match the server too
     setSt('Saved','ok'); fmAfterEdit();
   }catch(e){
     if(e.offline){
       await jsOutboxSupersede(sheetId,r._rowId,columnId,'cell');
       await jsOutboxAdd(Object.assign({kind:'cell',sheetId,rowId:r._rowId,columnId,value},meta));
-      r[colKey]=value; setSt('Saved offline — will sync','ok'); fmAfterEdit(); jsRefreshOutbox();
+      r[colKey]=value; const cur=fmRowById(rid); if(cur) cur[colKey]=value;
+      setSt('Saved offline — will sync','ok'); fmAfterEdit(); jsRefreshOutbox();
     } else {
       setSt(e.message||'Save failed','err');
       const inp=document.querySelector('#fm-modal input[type="checkbox"][data-key="'+colKey+'"]'); if(inp) inp.checked=!!r[colKey];
@@ -3123,6 +3170,7 @@ function jsPatchSaved(sid,rowId,colKey,value){
 }
 function jsServerApply(rowId,colKey,value,sid){
   jsRecentEdits.push({rowId,colKey,value,t:Date.now()}); if(jsRecentEdits.length>200) jsRecentEdits.shift();
+  const msid=sid||jsSheetId; if(msid) fmPatchSavedMaps(msid,rowId,colKey,value); // floor maps of this sheet saved on the device
   if(sid && String(sid)!==String(jsSheetId)){ jsPatchSaved(sid,rowId,colKey,value); return; }
   if(!jsServer) return;
   const sr=jsServer.rows.find(x=>String(x._rowId)===String(rowId)); if(sr) sr[colKey]=value;
@@ -3697,6 +3745,9 @@ async function jsSyncOutbox(){
       await jsOutboxDelete(item.id);
       // A tick synced while a different sheet is open: bring that sheet's saved copy up to date too.
       if(item.kind==='cell' && String(item.sheetId)!==String(jsSheetId)) jsPatchSaved(item.sheetId,item.rowId,'c'+item.columnId,item.value);
+      // ...and every saved floor-map copy of that sheet (the queued item is gone now, so
+      // the map's outbox overlay would no longer re-apply it).
+      if(item.kind==='cell') fmPatchSavedMaps(item.sheetId,item.rowId,'c'+item.columnId,item.value);
     }catch(e){
       if(e.offline){ stoppedOffline=true; break; }
       item.status='failed'; item.error=(e.message||'Failed').slice(0,140);
