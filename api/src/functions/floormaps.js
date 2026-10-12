@@ -22,6 +22,7 @@ const MAX_PINS = 3000;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_JOB_NAME = 160;
 const MAX_FLOOR_LABEL = 60;
+const MAX_PROJECT = 200; // the crew-calendar project name a map is linked to
 
 function floormapError(e, context) {
   if (e instanceof AuthError) return authErrorResponse(e, context);
@@ -70,6 +71,7 @@ function summarize(m) {
     // are the floors of one job; floorLabel is that map's name within it.
     jobName: m.jobName || '',
     floorLabel: m.floorLabel || '',
+    project: m.project || '',
     pinCount: Array.isArray(m.pins) ? m.pins.length : 0,
     updatedAt: m.updatedAt || null,
     updatedBy: m.updatedBy || null,
@@ -86,7 +88,7 @@ async function readMap(container, docId) {
   }
 }
 
-// GET    /api/floormaps        -> { maps: [summary] }
+// GET    /api/floormaps        -> { maps: [summary] }   (?project=<calendar project> to filter)
 // GET    /api/floormaps/{id}   -> { map }
 // POST   /api/floormaps        -> multipart: meta (JSON: name, sheetId, sheetName,
 //                                 imgW, imgH, pins, jobName?, floorLabel?) + image file -> { map }
@@ -105,10 +107,19 @@ app.http('floormaps', {
 
       if (request.method === 'GET') {
         if (!docId) {
-          const { resources } = await container.items.query({
-            query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
-            parameters: [{ name: '@p', value: ID_PREFIX }],
-          }).fetchAll();
+          // ?project=<name> -> only maps linked to that crew-calendar project
+          // (case-insensitive), used by the job popup's "Floor map" button. A
+          // map whose job name equals the project name counts as linked too.
+          const project = clean(request.query && request.query.get('project'), MAX_PROJECT);
+          const { resources } = await container.items.query(project
+            ? {
+              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) AND (LOWER(c.project) = LOWER(@proj) OR LOWER(c.jobName) = LOWER(@proj)) ORDER BY c.updatedAt DESC',
+              parameters: [{ name: '@p', value: ID_PREFIX }, { name: '@proj', value: project }],
+            }
+            : {
+              query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
+              parameters: [{ name: '@p', value: ID_PREFIX }],
+            }).fetchAll();
           return { jsonBody: { maps: resources.map(summarize) } };
         }
         const map = await readMap(container, docId);
@@ -144,6 +155,7 @@ app.http('floormaps', {
           sheetName: clean(meta.sheetName, 200),
           jobName: clean(meta.jobName, MAX_JOB_NAME),
           floorLabel: clean(meta.floorLabel, MAX_FLOOR_LABEL),
+          project: clean(meta.project, MAX_PROJECT),
           attachmentId: String(att.id),
           imgW: Math.max(0, parseInt(meta.imgW, 10) || 0),
           imgH: Math.max(0, parseInt(meta.imgH, 10) || 0),
@@ -181,6 +193,7 @@ app.http('floormaps', {
         // Only an explicit string changes these (a stray null/number leaves them alone).
         jobName: typeof body.jobName === 'string' ? clean(body.jobName, MAX_JOB_NAME) : (existing.jobName || ''),
         floorLabel: typeof body.floorLabel === 'string' ? clean(body.floorLabel, MAX_FLOOR_LABEL) : (existing.floorLabel || ''),
+        project: typeof body.project === 'string' ? clean(body.project, MAX_PROJECT) : (existing.project || ''),
         pins: body.pins !== undefined ? sanitizePins(body.pins) : existing.pins,
         updatedAt: new Date().toISOString(),
         updatedBy: user.upn,

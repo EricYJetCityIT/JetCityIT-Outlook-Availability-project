@@ -1878,23 +1878,31 @@ function fmShowDetails(){
     '<div><div class="js-field-label">Job name (maps with the same job name are grouped)</div><input class="fm-input" id="fm-d-job" maxlength="160" list="fm-job-names2" value="'+jsEsc(m.jobName||'')+'" placeholder="Leave blank to group by sheet"></div>'+
     '<datalist id="fm-job-names2">'+fmJobNames().map(n=>'<option value="'+jsEsc(n)+'">').join('')+'</datalist>'+
     '<div><div class="js-field-label">Floor label</div><input class="fm-input" id="fm-d-floor" maxlength="60" value="'+jsEsc(m.floorLabel||'')+'" placeholder="e.g. Floor 2"></div>'+
+    '<div><div class="js-field-label">Crew-calendar project</div><input class="fm-input" id="fm-d-proj" maxlength="200" list="fm-proj-names" value="'+jsEsc(m.project||'')+'" placeholder="Pick or type the project name from the calendar">'+
+      '<datalist id="fm-proj-names"></datalist><div class="fm-muted" style="margin-top:4px">Jobs with this project name get a 🗺️ Floor map button (Testers only).</div></div>'+
     '<div id="fm-d-msg" style="font-size:12.5px;color:var(--text3)"></div>'+
     '<div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="fmSaveDetails()">Save</button><button class="btn btn-sm" onclick="fmCloseDetail()">Cancel</button></div></div>';
   document.getElementById('fm-modal-backdrop').classList.add('open');
+  // Suggest the projects on the calendar right now (1 week back .. 2 weeks ahead).
+  JCITDispatch.searchJobs('').then(list=>{
+    const dl=document.getElementById('fm-proj-names'); if(!dl) return;
+    const names=[...new Set((list||[]).map(j=>String(j.project||'').trim()).filter(Boolean))].sort();
+    dl.innerHTML=names.map(n=>'<option value="'+jsEsc(n)+'">').join('');
+  }).catch(()=>{});
 }
 async function fmSaveDetails(){
   const g=id=>(document.getElementById(id)||{}).value||'', msg=document.getElementById('fm-d-msg');
-  const body={name:g('fm-d-name').trim(), jobName:g('fm-d-job').trim(), floorLabel:g('fm-d-floor').trim()};
+  const body={name:g('fm-d-name').trim(), jobName:g('fm-d-job').trim(), floorLabel:g('fm-d-floor').trim(), project:g('fm-d-proj').trim()};
   if(msg){ msg.style.color='var(--text3)'; msg.textContent='Saving…'; }
   const id=fmIdOf(fm.map.id), tok=fm.openToken;
   try{
     const r=await fmFetch('PUT','/floormaps/'+encodeURIComponent(id),body);
     if(!fm.map||fmIdOf(fm.map.id)!==id) return;
-    Object.assign(fm.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''});
-    const c=await fmCacheGet('map:'+id); if(c&&c.owner===fmOwner()){ Object.assign(c.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''}); fmCachePut('map:'+id,c); }
+    Object.assign(fm.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||'',project:r.map.project||''});
+    const c=await fmCacheGet('map:'+id); if(c&&c.owner===fmOwner()){ Object.assign(c.map,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||'',project:r.map.project||''}); fmCachePut('map:'+id,c); }
     // Keep the saved list in step too, so an offline list/floors bar shows the new grouping.
     const lc=await fmCacheGet('list');
-    if(lc&&lc.owner===fmOwner()&&Array.isArray(lc.maps)){ const e=lc.maps.find(x=>x.id===r.map.id); if(e){ Object.assign(e,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||''}); fmCachePut('list',lc); } }
+    if(lc&&lc.owner===fmOwner()&&Array.isArray(lc.maps)){ const e=lc.maps.find(x=>x.id===r.map.id); if(e){ Object.assign(e,{name:r.map.name,jobName:r.map.jobName||'',floorLabel:r.map.floorLabel||'',project:r.map.project||''}); fmCachePut('list',lc); } }
     fm.maps=null; fm.floors=null; fmCloseDetail(); fmRenderToolbar(); fmLoadFloors(tok);
   }catch(e){ if(msg){ msg.style.color='var(--red)'; msg.textContent=fmIsOffline(e)? 'You need a connection to change map details.' : (e.message||'Save failed'); } }
 }
@@ -5524,7 +5532,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${currentUserIsTester?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor map</button>`:''}${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -5757,6 +5765,7 @@ const JCITDispatch=(function(){
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
     if(act==='planlink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobPlanModal({id:j.id,project:j.project,client:j.client,date:j.date,leadNames:crewOf(j).filter(c=>c.lead).map(c=>c.name)}); return; }
+    if(act==='floormaplink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobFloorMap(j.project); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return;
       // Closing the assign modal without saving reverts any pending crew edits
       // back to the last-saved state so they don't linger in the local view.
@@ -6392,6 +6401,45 @@ function enterPlanningTab(){
   document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
   var view=document.getElementById('view-planning'); if(view) view.classList.add('active');
   var tab=document.getElementById('tab-planning'); if(tab) tab.classList.add('active');
+}
+
+// The job popup's "🗺️ Floor map" button (Testers only, like the Floor Maps tab).
+// Finds the maps linked to this job's PROJECT NAME (a map's "Crew-calendar
+// project" in ⚙ Details, or a map whose job name equals it): one map opens
+// straight away in the Floor Maps tab; several (e.g. one per floor) get a
+// picker; none explains how to link one.
+async function openJobFloorMap(project){
+  project=String(project||'').trim();
+  let maps=[];
+  try{ if(project) maps=(await fmFetch('GET','/floormaps?project='+encodeURIComponent(project))).maps||[]; }
+  catch(e){ alert('Could not look up floor maps: '+(e.message||e)); return; }
+  if(maps.length===1){ fmGoToMap(maps[0].id); return; }
+  maps.sort((a,b)=>String(a.floorLabel||a.name).localeCompare(String(b.floorLabel||b.name),undefined,{numeric:true}));
+  const ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'+
+    '<div class="dp-modal-hd"><span class="dp-modal-title">🗺️ Floor map</span><button class="dp-close" data-jfm="close">✕</button></div>'+
+    '<div class="dp-modal-bd">'+(maps.length
+      ? '<div style="font-size:13px;color:var(--text3);margin-bottom:10px">'+maps.length+' floor maps are linked to <b>'+jsEsc(project)+'</b>:</div><div style="display:grid;gap:8px">'+
+        maps.map(m=>'<button class="btn btn-sm" style="justify-content:flex-start" data-jfm="open" data-id="'+jsEsc(fmIdOf(m.id))+'">'+jsEsc(m.floorLabel? m.floorLabel+' · '+m.name : m.name)+' <span style="color:var(--text3);margin-left:auto">'+m.pinCount+' desks</span></button>').join('')+'</div>'
+      : '<div style="font-size:14px;color:var(--text2)">No floor map is linked to <b>'+jsEsc(project||'this job')+'</b> yet.</div>'+
+        '<div style="font-size:13px;color:var(--text3);margin-top:8px">To link one: open the map in Floor Maps → ⚙ Details → <b>Crew-calendar project</b>, and pick this project.</div>')+
+    '</div><div class="dp-modal-ft"><span></span>'+(maps.length?'':'<button class="btn btn-sm" data-jfm="tab">Go to Floor Maps</button>')+'<button class="btn btn-sm" data-jfm="close">Close</button></div></div>';
+  document.body.appendChild(ov);
+  const onKey=ev=>{ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  ov.addEventListener('click',ev=>{
+    if(ev.target===ov||ev.target.closest('[data-jfm="close"]')){ cleanup(); return; }
+    const o=ev.target.closest('[data-jfm="open"]'); if(o){ cleanup(); fmGoToMap(o.getAttribute('data-id')); return; }
+    if(ev.target.closest('[data-jfm="tab"]')){ cleanup(); fmGoToMap(null); }
+  });
+}
+// Leaves the calendar job popup and shows a map (or the map list) in Floor Maps.
+function fmGoToMap(id){
+  const closeBtn=document.querySelector('#dp-modal-root [data-dpact="close"]'); if(closeBtn) closeBtn.click();
+  if(id){ fmOpenMap(fmIdOf(id)); } else if(fm.mode!=='list'){ fm.mode='list'; }
+  switchTab('floormap');
+  window.scrollTo({top:0,behavior:'smooth'});
 }
 
 // Quick-look modal opened from a job's detail popup (the "📋 Project plan"
