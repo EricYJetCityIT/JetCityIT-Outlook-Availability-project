@@ -1870,7 +1870,7 @@ function finAddClient(){
 function finRemoveClient(name){ fin.settings=finReadSettingsForm(); delete fin.settings.clientPrices[name]; finPaint(); }
 // Reads the rate sheet PDF in the browser (PDF.js) and fills the price fields;
 // nothing is saved until "Save settings". Lines look like
-// "Standard System Disconnect/Reconnect $35.00 ea" / "Project Management $125.00/hr".
+// "<item name> $NN.NN ea" / "<item name> $NNN.NN/hr".
 async function finImportRateSheet(input){
   const file=input.files&&input.files[0]; input.value=''; if(!file) return;
   const msg=document.getElementById('fin-import-msg'); msg.textContent='Reading '+file.name+'…';
