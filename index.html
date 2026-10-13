@@ -787,6 +787,29 @@ body.is-tester #tab-floormap{display:inline-block}
 .fin-unit input{width:84px;padding:6px 8px;border-radius:6px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font:inherit;text-align:right}
 .fin-rep{font-size:13px;color:var(--text);border-left:3px solid var(--border2);padding-left:10px;margin-bottom:8px;display:grid;gap:3px}
 .fin-live{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:var(--text2);background:var(--surface2);border-radius:8px;padding:10px 12px}
+/* Financial charts — palette slots 1 (blue) + 2 (orange) from the validated data-viz palette, own dark steps */
+.fin-viz{--fin-s1:#2a78d6;--fin-s2:#eb6834;--fin-grid:#E4E7EC}
+:root[data-theme="dark"] .fin-viz{--fin-s1:#3987e5;--fin-s2:#d95926;--fin-grid:#2C343F}
+.fin-chart{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.fin-viz-svg{width:100%;min-width:560px;height:auto;display:block;overflow:visible} /* below ~560px the chart scrolls sideways instead of shrinking its labels */
+.fin-s1{fill:var(--fin-s1)}
+.fin-s2{fill:var(--fin-s2)}
+.fin-grid{stroke:var(--fin-grid);stroke-width:1}
+.fin-axis-line{stroke:var(--border2);stroke-width:1}
+.fin-ref{stroke:var(--text2);stroke-width:1.5;stroke-dasharray:4 3}
+.fin-axis{fill:var(--text3);font-size:12px;font-family:inherit;font-variant-numeric:tabular-nums}
+.fin-axis-strong{fill:var(--text2)}
+.fin-hit{fill:transparent;cursor:default}
+.fin-hit.on{fill:var(--text);fill-opacity:.04}
+.fin-legend{display:flex;gap:16px;font-size:12.5px;color:var(--text2);margin-bottom:6px}
+.fin-key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.fin-key-1{background:var(--fin-s1)}.fin-key-2{background:var(--fin-s2)}
+.fin-tip{position:fixed;display:none;z-index:1300;background:var(--surface);color:var(--text);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-size:12.5px;line-height:1.5;box-shadow:0 6px 20px rgba(15,23,36,.16);pointer-events:none;max-width:260px}
+.fin-hero{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.fin-hero-v{font-size:34px;font-weight:650;letter-spacing:-.5px;color:var(--text)}
+.fin-hero-l{font-size:14px;color:var(--text2)}
+.fin-callout{font-size:13px;color:#92400E;background:#FEF3C7;border-radius:8px;padding:8px 10px;margin-bottom:10px}
+.fin-callout-ok{color:var(--green-dark);background:var(--green-light)}
 .fin-flag{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:grid;gap:6px;background:var(--surface)}
 .fin-flag-text{font-size:13px;color:var(--text2);margin-top:3px;line-height:1.45}
 .fin-flag-btns{display:inline-flex;gap:6px;flex-wrap:wrap}
@@ -1835,19 +1858,126 @@ function finPaint(){
     ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>'],
     ['Possible extra billing',(openFlags? openFlags+' <span class="fin-sub">'+(openAmt? '≈ '+finMoney(openAmt)+' · ' : '')+'need a decision</span>' : '0 <span class="fin-sub">all decided</span>')]]
     .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
-  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="fin.view='${k}';finPaint()">${l}</button>`).join('');
+  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['trends','📈 Trends'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="finSetView('${k}')">${l}</button>`).join('');
   let body;
   if(fin.view==='settings') body=finSettingsHtml();
   else if(fin.view==='extra') body=finExtraHtml(jobs);
+  else if(fin.view==='trends') body=finTrendsHtml(jobs);
   else if(fin.view==='jobs') body=finJobsHtml(jobs);
   else body=finClientsHtml(jobs);
   root.innerHTML=head+
     (!finSettingsReady()&&fin.view!=='settings'? '<div class="fm-banner fm-warn">Add your cost rates and prices in <b>⚙ Settings</b> to see real revenue and margins.</div>' : '')+
     `<div class="fin-tiles">${tiles}</div><div class="js-mode-toggle" style="margin:14px 0">${nav}</div>${body}`+
     '<div class="js-modal-backdrop" id="fin-modal-backdrop" onclick="if(event.target===this)finCloseJob()"><div class="js-modal" id="fin-modal" style="max-width:680px"></div></div>';
+  if(fin.view==='trends') finBindTips();
   if(fin.openId) finOpenJob(fin.openId);
 }
 function finSetRange(r){ fin.range=r; if(r!=='custom') finLoad(); else finPaint(); }
+// Trends compare months, so a single-month range is widened to year-to-date.
+function finSetView(v){
+  fin.view=v;
+  if(v==='trends'&&(fin.range==='month'||fin.range==='last')){ fin.range='ytd'; fin.trendsWidened=true; finLoad(); return; }
+  finPaint();
+}
+
+// ── Trends: monthly revenue vs cost, client concentration, rev / labor hour by job type ──
+// Charts follow the shared data-viz rules: one $ axis (margin % lives in the
+// tooltip + table, never a second axis), thin capped bars with rounded data
+// ends, recessive hairline grid, legend for 2 series, text in text tokens,
+// hover tooltip on every mark, and a table view under each chart.
+const FIN_TYPE_OF={dr:'Moves & restacks',reconnect:'Moves & restacks',partial:'Moves & restacks',deploy:'Deployments & setup',unbox:'Deployments & setup',unpack:'Deployments & setup',arm:'Deployments & setup',
+  server:'Server work',support:'Support & PM (hourly)',pm:'Support & PM (hourly)',phone:'Peripherals',printer:'Peripherals',printerDisc:'Peripherals',device:'Peripherals'};
+function finJobType(j){
+  const by={}; (fin.items||[]).forEach(it=>{ const q=j.c.units[it.key]||0, p=finPrice(j.client,it.key)||0; if(q){ const t=FIN_TYPE_OF[it.key]||'Other'; by[t]=(by[t]||0)+q*(p||1); } });
+  const best=Object.entries(by).sort((a,b)=>b[1]-a[1])[0]; return best? best[0] : 'No units yet';
+}
+const finK=v=>{ const a=Math.abs(v); return (v<0?'−':'')+'$'+(a>=1e6? (Math.round(a/1e5)/10)+'M' : a>=1e3? (Math.round(a/100)/10)+'k' : Math.round(a)); };
+function finNiceMax(v){ if(v<=0) return 1; const p=Math.pow(10,Math.floor(Math.log10(v))), n=v/p; return (n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10)*p; }
+// Rounded data-end, square baseline: vertical column.
+function finColPath(x,y,w,h){ const r=Math.min(4,w/2,h); return `M${x},${y+h}V${y+r}Q${x},${y} ${x+r},${y}H${x+w-r}Q${x+w},${y} ${x+w},${y+r}V${y+h}Z`; }
+function finBarPath(x,y,w,h){ const r=Math.min(4,h/2,w); return `M${x},${y}H${x+w-r}Q${x+w},${y} ${x+w},${y+r}V${y+h-r}Q${x+w},${y+h} ${x+w-r},${y+h}H${x}Z`; }
+function finTrendsHtml(jobs){
+  if(!jobs.length) return '<div class="empty"><p>No jobs in this date range.</p></div>';
+  const note=fin.trendsWidened? '<div class="fm-muted" style="margin-bottom:10px">Trends compare months, so the range was widened to <b>year to date</b>.</div>' : '';
+  fin.trendsWidened=false;
+  // 1) by month
+  const months=new Map();
+  jobs.forEach(j=>{ const k=j.date.slice(0,7); const m=months.get(k)||{k,rev:0,cost:0,hours:0,jobs:0,conf:0}; m.rev+=j.c.revenue; m.cost+=j.c.cost; m.hours+=j.c.hours; m.jobs++; if(j.c.unitsSrc==='confirmed') m.conf++; months.set(k,m); });
+  const ms=[...months.values()].sort((a,b)=>a.k.localeCompare(b.k));
+  const mName=k=>new Date(+k.slice(0,4),+k.slice(5,7)-1,1).toLocaleDateString(undefined,{month:'short',year:ms.length>12?'2-digit':undefined});
+  const W=720,H=250,L=56,R=12,T=14,B=30, pw=W-L-R, ph=H-T-B;
+  const max=finNiceMax(Math.max(1,...ms.map(m=>Math.max(m.rev,m.cost)))), y=v=>T+ph-v/max*ph;
+  const band=pw/ms.length, bw=Math.min(24,(band-14)/2);
+  let svg=`<svg class="fin-viz-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Revenue and labor cost by month">`;
+  for(let i=0;i<=4;i++){ const v=max*i/4, yy=y(v); svg+=`<line class="fin-grid" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text class="fin-axis" x="${L-8}" y="${yy+4}" text-anchor="end">${finK(v)}</text>`; }
+  ms.forEach((m,i)=>{
+    const cx=L+band*i+band/2, x1=cx-bw-1, x2=cx+1;
+    const tip=`<b>${jsEsc(mName(m.k))}</b><br>Revenue ${finMoney(m.rev)}<br>Labor cost ${finMoney(m.cost)}<br>Margin ${finMoney(m.rev-m.cost)} · ${finPct(m.rev>0?(m.rev-m.cost)/m.rev:null)}<br>${m.jobs} jobs · ${m.conf} confirmed`;
+    if(m.rev>0) svg+=`<path class="fin-s1" d="${finColPath(x1,y(m.rev),bw,T+ph-y(m.rev))}"/>`;
+    if(m.cost>0) svg+=`<path class="fin-s2" d="${finColPath(x2,y(m.cost),bw,T+ph-y(m.cost))}"/>`;
+    svg+=`<text class="fin-axis" x="${cx}" y="${H-10}" text-anchor="middle">${jsEsc(mName(m.k))}</text>`;
+    svg+=`<rect class="fin-hit" x="${L+band*i}" y="${T}" width="${band}" height="${ph}" data-tip="${jsEsc(tip)}"/>`;
+  });
+  svg+=`<line class="fin-axis-line" x1="${L}" x2="${W-R}" y1="${T+ph}" y2="${T+ph}"/></svg>`;
+  const monthTable='<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Month</th><th>Revenue</th><th>Labor cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th>Jobs</th></tr></thead><tbody>'+
+    ms.map(m=>`<tr><td>${jsEsc(mName(m.k))}</td><td>${finMoney(m.rev)}</td><td>${finMoney(m.cost)}</td><td class="${m.rev-m.cost<0?'fin-neg':''}">${finMoney(m.rev-m.cost)}</td><td>${finPct(m.rev>0?(m.rev-m.cost)/m.rev:null)}</td><td>${finMoney(m.hours>0?m.rev/m.hours:null)}</td><td>${m.jobs} <span class="fm-muted">(${m.conf} confirmed)</span></td></tr>`).join('')+'</tbody></table></div>';
+  const sec1=`<div class="fm-sec fin-viz"><div class="fm-sec-h">Revenue and labor cost by month</div>`+
+    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Revenue</span><span><i class="fin-key fin-key-2"></i>Labor cost</span></div><div class="fin-chart">${svg}</div>${monthTable}</div>`;
+  // 2) client concentration
+  const byClient=new Map(); jobs.forEach(j=>{ const k=j.client||'(no client)'; byClient.set(k,(byClient.get(k)||0)+j.c.revenue); });
+  const total=[...byClient.values()].reduce((a,v)=>a+v,0);
+  let cl=[...byClient.entries()].map(([name,rev])=>({name,rev})).filter(c=>c.rev>0).sort((a,b)=>b.rev-a.rev);
+  let sec2;
+  if(!total){ sec2='<div class="fm-sec fin-viz"><div class="fm-sec-h">Client concentration</div><div class="fm-muted">No revenue yet in this range — add prices in ⚙ Settings or confirm units on jobs.</div></div>'; }
+  else {
+    const top3=cl.slice(0,3).reduce((a,c)=>a+c.rev,0)/total, top1=cl[0].rev/total;
+    if(cl.length>8){ const rest=cl.slice(7); cl=cl.slice(0,7).concat([{name:'Other ('+rest.length+' clients)',rev:rest.reduce((a,c)=>a+c.rev,0)}]); }
+    const rowH=30, cw=720, lab=190, val=120, bwid=cw-lab-val, ch=cl.length*rowH+6;
+    let s2=`<svg class="fin-viz-svg" viewBox="0 0 ${cw} ${ch}" role="img" aria-label="Share of revenue by client">`;
+    cl.forEach((c,i)=>{ const share=c.rev/total, w=Math.max(2,share*bwid), yy=i*rowH+6;
+      s2+=`<text class="fin-axis fin-axis-strong" x="${lab-10}" y="${yy+15}" text-anchor="end">${jsEsc(c.name.length>26? c.name.slice(0,25)+'…' : c.name)}</text>`+
+        `<path class="fin-s1" d="${finBarPath(lab,yy+2,w,18)}"/>`+
+        `<text class="fin-axis" x="${lab+w+8}" y="${yy+15}">${Math.round(share*100)}% · ${finK(c.rev)}</text>`+
+        `<rect class="fin-hit" x="0" y="${yy}" width="${cw}" height="${rowH}" data-tip="${jsEsc('<b>'+jsEsc(c.name)+'</b><br>'+finMoney(c.rev)+' · '+Math.round(share*100)+'% of revenue')}"/>`; });
+    s2+='</svg>';
+    const conc= top3>0.5? `<div class="fin-callout">⚠ <b>Concentrated:</b> the top 3 clients bring in ${Math.round(top3*100)}% of revenue${top1>0.3?` — ${jsEsc(cl[0].name)} alone is ${Math.round(top1*100)}%`:''}. Losing one would hurt.</div>`
+      : `<div class="fin-callout fin-callout-ok">✓ Spread out: the top 3 clients are ${Math.round(top3*100)}% of revenue.</div>`;
+    sec2=`<div class="fm-sec fin-viz"><div class="fm-sec-h">Client concentration</div><div class="fin-hero"><span class="fin-hero-v">${Math.round(top3*100)}%</span><span class="fin-hero-l">of revenue comes from the top 3 clients</span></div>${conc}<div class="fin-chart">${s2}</div></div>`;
+  }
+  // 3) revenue per labor hour by job type, against the average labor cost per hour
+  const byType=new Map(); jobs.forEach(j=>{ const t=finJobType(j); const a=byType.get(t)||{t,rev:0,cost:0,hours:0,jobs:0}; a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; a.jobs++; byType.set(t,a); });
+  const types=[...byType.values()].filter(a=>a.hours>0).map(a=>Object.assign(a,{ph:a.rev/a.hours})).sort((a,b)=>b.ph-a.ph);
+  const allH=jobs.reduce((a,j)=>a+j.c.hours,0), allCost=jobs.reduce((a,j)=>a+j.c.cost,0), costPh=allH>0? allCost/allH : 0;
+  let sec3;
+  if(!types.length){ sec3='<div class="fm-sec fin-viz"><div class="fm-sec-h">Revenue per labor hour by job type</div><div class="fm-muted">No labor hours in this range.</div></div>'; }
+  else {
+    const rowH=30, cw=720, lab=190, val=110, bwid=cw-lab-val, ch=types.length*rowH+26, tmax=finNiceMax(Math.max(costPh,...types.map(a=>a.ph))*1.05), xs=v=>lab+v/tmax*bwid;
+    let s3=`<svg class="fin-viz-svg" viewBox="0 0 ${cw} ${ch}" role="img" aria-label="Revenue per labor hour by job type">`;
+    types.forEach((a,i)=>{ const yy=i*rowH+6, w=Math.max(2,xs(a.ph)-lab);
+      s3+=`<text class="fin-axis fin-axis-strong" x="${lab-10}" y="${yy+15}" text-anchor="end">${jsEsc(a.t)}</text>`+
+        `<path class="fin-s1" d="${finBarPath(lab,yy+2,w,18)}"/><text class="fin-axis" x="${lab+w+8}" y="${yy+15}">${finMoney(a.ph)}/hr</text>`+
+        `<rect class="fin-hit" x="0" y="${yy}" width="${cw}" height="${rowH}" data-tip="${jsEsc('<b>'+jsEsc(a.t)+'</b><br>'+finMoney(a.ph)+' revenue per labor hour<br>'+a.jobs+' jobs · '+finNum(a.hours)+' labor hrs<br>Margin '+finPct(a.rev>0?(a.rev-a.cost)/a.rev:null))}"/>`; });
+    if(costPh>0){ const cx=xs(costPh); s3+=`<line class="fin-ref" x1="${cx}" x2="${cx}" y1="2" y2="${ch-20}"/><text class="fin-axis" x="${cx}" y="${ch-6}" text-anchor="middle">labor cost ${finMoney(costPh)}/hr</text>`; }
+    s3+='</svg>';
+    sec3=`<div class="fm-sec fin-viz"><div class="fm-sec-h">Revenue per labor hour by job type</div>`+
+      `<div class="fm-muted" style="margin-bottom:6px">Each job is typed by its biggest billed item. The line is your average labor cost per hour — bars to its right earn more than the labor costs.</div><div class="fin-chart">${s3}</div>`+
+      '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Job type</th><th>Jobs</th><th>Labor hrs</th><th>Revenue</th><th>Rev / labor hr</th><th>Margin %</th></tr></thead><tbody>'+
+      types.map(a=>`<tr><td>${jsEsc(a.t)}</td><td>${a.jobs}</td><td>${finNum(a.hours)}</td><td>${finMoney(a.rev)}</td><td>${finMoney(a.ph)}</td><td>${finPct(a.rev>0?(a.rev-a.cost)/a.rev:null)}</td></tr>`).join('')+'</tbody></table></div></div>';
+  }
+  return note+sec1+sec2+sec3+'<div class="fin-tip" id="fin-tip" role="tooltip"></div>';
+}
+// One floating tooltip for every chart mark (hit areas are larger than the marks).
+function finBindTips(){
+  const tip=document.getElementById('fin-tip'); if(!tip) return;
+  document.querySelectorAll('#fin-root .fin-hit').forEach(h=>{
+    const show=e=>{ tip.innerHTML=h.getAttribute('data-tip'); tip.style.display='block';
+      const pt=e.touches? e.touches[0] : e, tw=tip.offsetWidth;
+      tip.style.left=Math.min(window.innerWidth-tw-12, pt.clientX+14)+'px'; tip.style.top=(pt.clientY+14)+'px';
+      h.classList.add('on'); };
+    h.addEventListener('mousemove',show); h.addEventListener('touchstart',show,{passive:true});
+    h.addEventListener('mouseleave',()=>{ tip.style.display='none'; h.classList.remove('on'); });
+  });
+}
 
 function finClientsHtml(jobs){
   const by=new Map();
