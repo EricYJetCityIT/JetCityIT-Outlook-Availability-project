@@ -1858,18 +1858,22 @@ function finPaint(){
     ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>'],
     ['Possible extra billing',(openFlags? openFlags+' <span class="fin-sub">'+(openAmt? '≈ '+finMoney(openAmt)+' · ' : '')+'need a decision</span>' : '0 <span class="fin-sub">all decided</span>')]]
     .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
-  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['trends','📈 Trends'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="finSetView('${k}')">${l}</button>`).join('');
+  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['trends','📈 Trends'],['forecast','🔮 Forecast'],['quote','🧮 Quote check'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="finSetView('${k}')">${l}</button>`).join('');
   let body;
   if(fin.view==='settings') body=finSettingsHtml();
   else if(fin.view==='extra') body=finExtraHtml(jobs);
   else if(fin.view==='trends') body=finTrendsHtml(jobs);
+  else if(fin.view==='forecast') body=finForecastHtml();
+  else if(fin.view==='quote') body=finQuoteHtml();
   else if(fin.view==='jobs') body=finJobsHtml(jobs);
   else body=finClientsHtml(jobs);
   root.innerHTML=head+
     (!finSettingsReady()&&fin.view!=='settings'? '<div class="fm-banner fm-warn">Add your cost rates and prices in <b>⚙ Settings</b> to see real revenue and margins.</div>' : '')+
     `<div class="fin-tiles">${tiles}</div><div class="js-mode-toggle" style="margin:14px 0">${nav}</div>${body}`+
     '<div class="js-modal-backdrop" id="fin-modal-backdrop" onclick="if(event.target===this)finCloseJob()"><div class="js-modal" id="fin-modal" style="max-width:680px"></div></div>';
-  if(fin.view==='trends') finBindTips();
+  if(fin.view==='trends'||fin.view==='forecast') finBindTips();
+  if(fin.view==='quote') finQuoteCalc();
+  if((fin.view==='forecast'||fin.view==='quote')&&!fin.fc.data&&!fin.fc.loading&&!fin.fc.error) finLoadForecast();
   if(fin.openId) finOpenJob(fin.openId);
 }
 function finSetRange(r){ fin.range=r; if(r!=='custom') finLoad(); else finPaint(); }
@@ -1966,6 +1970,153 @@ function finTrendsHtml(jobs){
   }
   return note+sec1+sec2+sec3+'<div class="fin-tip" id="fin-tip" role="tooltip"></div>';
 }
+// ── Forecast + quote check ──
+// Both need recent history (last 90 days: each client's revenue per labor
+// hour, the crew's real pace per unit) and the forecast also needs scheduled
+// jobs, so they load their own window (today-90 .. today + N weeks),
+// independent of the date range picked for the other views.
+fin.fc={weeks:4, data:null, loading:false, error:'', plans:null, q:null};
+async function finLoadForecast(){
+  const t=new Date(); t.setHours(0,0,0,0);
+  const a=new Date(t); a.setDate(a.getDate()-90); const b=new Date(t); b.setDate(b.getDate()+fin.fc.weeks*7);
+  fin.fc.loading=true; fin.fc.error=''; finPaint();
+  try{ fin.fc.data=await finApi('GET','/jobs?from='+finIso(a)+'&to='+finIso(b)); fin.fc.today=finIso(t); }
+  catch(e){ fin.fc.error=e.message||'Failed to load'; }
+  fin.fc.loading=false; finPaint();
+}
+function finSetWeeks(w){ fin.fc.weeks=+w; fin.fc.data=null; finLoadForecast(); }
+// Recent history: revenue / labor hour per client (+ overall), and labor-minutes
+// per unit by job type from CONFIRMED jobs only (suggested units are too rough).
+function finHistory(){
+  const d=fin.fc.data; if(!d) return null;
+  const today=fin.fc.today, past=d.jobs.filter(j=>j.date<today).map(j=>Object.assign({},j,{c:finCalc(j)}));
+  const per={}, all={rev:0,hours:0}, pace={};
+  past.forEach(j=>{ if(j.c.revenue>0&&j.c.hours>0){ const k=j.client||'(no client)'; per[k]=per[k]||{rev:0,hours:0,jobs:0}; per[k].rev+=j.c.revenue; per[k].hours+=j.c.hours; per[k].jobs++; all.rev+=j.c.revenue; all.hours+=j.c.hours; }
+    if(j.c.unitsSrc==='confirmed'&&j.c.hours>0){ const t=finJobType(j); let n=0; (fin.items||[]).forEach(it=>{ if(it.unit==='ea'&&FIN_TYPE_OF[it.key]===t) n+=j.c.units[it.key]||0; });
+      if(n>0){ pace[t]=pace[t]||{hours:0,units:0,jobs:0}; pace[t].hours+=j.c.hours; pace[t].units+=n; pace[t].jobs++; } } });
+  return {per, all: all.hours>0? all.rev/all.hours : null, pace};
+}
+function finForecastJobs(){
+  const d=fin.fc.data, h=finHistory(); if(!d||!h) return [];
+  return d.jobs.filter(j=>j.date>=fin.fc.today).map(j=>{
+    const c=finCalc(j), k=j.client||'(no client)', cr=h.per[k];
+    let rate=null, basis;
+    if(j.saved&&c.revenue>0){ return {j,c,rev:c.revenue,cost:c.cost,basis:'Confirmed units'}; }
+    if(cr&&cr.hours>0){ rate=cr.rev/cr.hours; basis=`${jsEsc(k)} avg ${finMoney(rate)}/labor hr (${cr.jobs} jobs, last 90 days)`; }
+    else if(h.all){ rate=h.all; basis=`No recent ${jsEsc(k)} history — company avg ${finMoney(rate)}/labor hr`; }
+    else basis='No revenue history yet';
+    return {j,c,rev: rate!=null? c.hours*rate : 0, cost:c.cost, basis, noHours:c.hours<=0};
+  });
+}
+function finWeekStart(iso){ const d=new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10)); const dow=(d.getDay()+6)%7; d.setDate(d.getDate()-dow); return finIso(d); }
+// Paired revenue/cost columns on one $ axis (shared by Trends' look).
+function finColumnsSvg(groups,aria){
+  const W=720,H=240,L=56,R=12,T=14,B=30,pw=W-L-R,ph=H-T-B;
+  const max=finNiceMax(Math.max(1,...groups.map(g=>Math.max(g.a,g.b)))), y=v=>T+ph-v/max*ph, band=pw/Math.max(1,groups.length), bw=Math.min(24,(band-14)/2);
+  let s=`<svg class="fin-viz-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${jsEsc(aria)}">`;
+  for(let i=0;i<=4;i++){ const v=max*i/4, yy=y(v); s+=`<line class="fin-grid" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text class="fin-axis" x="${L-8}" y="${yy+4}" text-anchor="end">${finK(v)}</text>`; }
+  groups.forEach((g,i)=>{ const cx=L+band*i+band/2;
+    if(g.a>0) s+=`<path class="fin-s1" d="${finColPath(cx-bw-1,y(g.a),bw,T+ph-y(g.a))}"/>`;
+    if(g.b>0) s+=`<path class="fin-s2" d="${finColPath(cx+1,y(g.b),bw,T+ph-y(g.b))}"/>`;
+    s+=`<text class="fin-axis" x="${cx}" y="${H-10}" text-anchor="middle">${jsEsc(g.label)}</text><rect class="fin-hit" x="${L+band*i}" y="${T}" width="${band}" height="${ph}" data-tip="${jsEsc(g.tip)}"/>`; });
+  return s+`<line class="fin-axis-line" x1="${L}" x2="${W-R}" y1="${T+ph}" y2="${T+ph}"/></svg>`;
+}
+function finForecastHtml(){
+  const fc=fin.fc;
+  const weeksSel=`<label class="fm-muted">Look ahead <select class="js-select" onchange="finSetWeeks(this.value)" style="padding:5px 8px">${[2,4,8].map(w=>`<option value="${w}"${fc.weeks===w?' selected':''}>${w} weeks</option>`).join('')}</select></label>`;
+  if(fc.loading||!fc.data) return `<div class="fm-sec">${weeksSel}<div class="fm-muted" style="margin-top:10px">${fc.error? jsEsc(fc.error) : 'Loading scheduled jobs and recent history…'}</div></div>`;
+  const rows=finForecastJobs();
+  if(!rows.length) return `<div class="fm-sec">${weeksSel}<div class="empty"><p>No jobs on the calendar in the next ${fc.weeks} weeks.</p></div></div>`;
+  const tot=rows.reduce((a,r)=>{ a.rev+=r.rev; a.cost+=r.cost; a.hours+=r.c.hours; return a; },{rev:0,cost:0,hours:0});
+  const noHours=rows.filter(r=>r.noHours).length;
+  const weeks=new Map(); rows.forEach(r=>{ const k=finWeekStart(r.j.date); const w=weeks.get(k)||{k,rev:0,cost:0,jobs:0}; w.rev+=r.rev; w.cost+=r.cost; w.jobs++; weeks.set(k,w); });
+  const wl=k=>'Wk of '+new Date(+k.slice(0,4),+k.slice(5,7)-1,+k.slice(8,10)).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+  const groups=[...weeks.values()].sort((a,b)=>a.k.localeCompare(b.k)).map(w=>({label:wl(w.k),a:w.rev,b:w.cost,
+    tip:`<b>${wl(w.k)}</b><br>Expected revenue ${finMoney(w.rev)}<br>Labor cost ${finMoney(w.cost)}<br>Margin ${finMoney(w.rev-w.cost)} · ${finPct(w.rev>0?(w.rev-w.cost)/w.rev:null)}<br>${w.jobs} jobs`}));
+  const tiles=[['Expected revenue',finMoney(tot.rev)],['Labor cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
+    ['Scheduled',rows.length+' jobs <span class="fin-sub">'+finNum(tot.hours)+' labor hrs</span>']].map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
+  return `<div class="fm-sec fin-viz"><div class="fm-sec-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">Next ${fc.weeks} weeks ${weeksSel}</div>`+
+    '<div class="fm-muted" style="margin-bottom:10px">Jobs already on the crew calendar. Labor = calendar duration × crew at your role rates; revenue = that labor × each client\'s actual revenue per labor hour over the last 90 days.</div>'+
+    `<div class="fin-tiles" style="margin-bottom:12px">${tiles}</div>`+
+    (noHours? `<div class="fin-callout">⚠ ${noHours} scheduled job${noHours>1?'s have':' has'} no duration on the calendar, so ${noHours>1?'they count':'it counts'} as $0 here.</div>` : '')+
+    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Expected revenue</span><span><i class="fin-key fin-key-2"></i>Labor cost</span></div><div class="fin-chart">${finColumnsSvg(groups,'Expected revenue and labor cost by week')}</div>`+
+    '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Date</th><th>Job</th><th>Crew × hrs</th><th>Exp. revenue</th><th>Labor cost</th><th>Margin</th><th>Based on</th></tr></thead><tbody>'+
+    rows.sort((a,b)=>a.j.date.localeCompare(b.j.date)).map(r=>`<tr><td style="white-space:nowrap">${jsEsc(r.j.date)}${r.j.startTime?'<div class="fm-muted">'+jsEsc(r.j.startTime)+'</div>':''}</td><td><b>${jsEsc(r.j.project)}</b><div class="fm-muted">${jsEsc(r.j.client||'')}</div></td>`+
+      `<td>${r.c.crew} × ${jsEsc(r.j.duration||'?')}${r.noHours?' <span class="fin-chip fin-chip-bad">no duration</span>':''}</td><td>${finMoney(r.rev)}</td><td>${finMoney(r.cost)}</td><td class="${r.rev-r.cost<0?'fin-neg':''}">${finMoney(r.rev-r.cost)}</td><td class="fm-muted" style="font-size:12px">${r.basis}${r.c.night.fraction>0?' · overnight':''}</td></tr>`).join('')+
+    '</tbody></table></div></div>'+'<div class="fin-tip" id="fin-tip" role="tooltip"></div>';
+}
+
+// Quote check: a scratch calculator (nothing is saved).
+function finQuoteHtml(){
+  const q=fin.fc.q=fin.fc.q||{client:'',units:{},crew:3,hours:'',shift:false,target:40,plan:''};
+  const clients=[...new Set([...((fin.data&&fin.data.clients)||[]),...Object.keys(fin.settings.clientPrices||{})])].filter(Boolean).sort();
+  if(fin.fc.plans===null){ fin.fc.plans=[]; ppFetch('').then(d=>{ fin.fc.plans=(d&&d.plans)||[]; if(fin.view==='quote') finPaint(); }).catch(()=>{}); }
+  const items=(fin.items||[]).map(it=>`<label class="fin-unit"><span>${jsEsc(it.label)} <span class="fm-muted">/${it.unit}</span></span><input type="number" min="0" step="${it.unit==='hr'?'0.25':'1'}" data-qk="${it.key}" value="${q.units[it.key]||''}" oninput="finQuoteRead()"></label>`).join('');
+  return '<div class="fm-sec"><div class="fm-sec-h">Quote check</div>'+
+    '<div class="fm-muted" style="margin-bottom:10px">Try a job before you quote it: units at this client\'s prices, crew and hours at your role rates. Nothing here is saved.</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+      `<select class="js-select" onchange="fin.fc.q.client=this.value;finQuoteCalc()"><option value="">Standard prices</option>${clients.map(c=>`<option value="${jsEsc(c)}"${q.client===c?' selected':''}>${jsEsc(c)}</option>`).join('')}</select>`+
+      (fin.fc.plans&&fin.fc.plans.length? `<select class="js-select" onchange="finQuoteFromPlan(this.value)"><option value="">Fill from a Project Plan…</option>${fin.fc.plans.map(p=>`<option value="${jsEsc(p.id)}"${q.plan===p.id?' selected':''}>${jsEsc(p.project||'Untitled plan')} (${p.discTotal} disc / ${p.reconTotal} recon)</option>`).join('')}</select>` : '')+
+    '</div>'+
+    `<div class="fin-units-grid">${items}</div>`+
+    '<div class="fin-units-grid" style="margin-top:8px">'+
+      `<label class="fin-unit"><span>Crew size (incl. 1 lead)</span><input type="number" min="1" step="1" id="fin-q-crew" value="${q.crew}" oninput="finQuoteRead()"></label>`+
+      `<label class="fin-unit"><span>Hours on site <span class="fm-muted">(blank = your recent pace)</span></span><input type="number" min="0" step="0.25" id="fin-q-hours" value="${q.hours}" oninput="finQuoteRead()"></label>`+
+      `<label class="fin-unit"><span>Target margin</span><input type="number" min="0" max="95" step="1" id="fin-q-target" value="${q.target}" oninput="finQuoteRead()"> %</label>`+
+      `<label class="fin-unit"><span>Overnight (shift premium)</span><input type="checkbox" id="fin-q-shift" ${q.shift?'checked':''} onchange="finQuoteRead()" style="width:auto"></label>`+
+    '</div><div id="fin-q-out" style="margin-top:12px"></div></div>';
+}
+function finQuoteRead(){
+  const q=fin.fc.q; q.units={};
+  document.querySelectorAll('#fin-root input[data-qk]').forEach(i=>{ const v=parseFloat(i.value); if(v>0) q.units[i.dataset.qk]=v; });
+  q.crew=Math.max(1,parseInt((document.getElementById('fin-q-crew')||{}).value,10)||1);
+  q.hours=(document.getElementById('fin-q-hours')||{}).value||'';
+  q.target=Math.min(95,Math.max(0,parseFloat((document.getElementById('fin-q-target')||{}).value)||0));
+  q.shift=!!(document.getElementById('fin-q-shift')||{}).checked;
+  finQuoteCalc();
+}
+function finQuoteFromPlan(id){
+  const p=(fin.fc.plans||[]).find(x=>x.id===id), q=fin.fc.q; q.plan=id; if(!p) return;
+  // A desk disconnected AND reconnected is one D/R unit; extra disconnects are disconnect-only.
+  const dr=Math.min(p.discTotal||0,p.reconTotal||0), extraDisc=Math.max(0,(p.discTotal||0)-(p.reconTotal||0)), extraRec=Math.max(0,(p.reconTotal||0)-(p.discTotal||0));
+  q.units={}; if(dr) q.units.dr=dr; if(extraDisc) q.units.partial=extraDisc; if(extraRec) q.units.reconnect=extraRec;
+  if(p.client){ const m=((fin.data&&fin.data.clients)||[]).find(c=>c.toLowerCase()===String(p.client).toLowerCase()); if(m) q.client=m; }
+  finPaint();
+}
+function finQuoteCalc(){
+  const el=document.getElementById('fin-q-out'), q=fin.fc.q; if(!el||!q) return;
+  const s=fin.settings, rr=s.roleRates||{}, h=finHistory();
+  let rev=0, missing=[], eaUnits=0;
+  (fin.items||[]).forEach(it=>{ let n=q.units[it.key]||0; if(!n) return; if(it.key==='support'&&n<(s.minCallHours||0)) n=s.minCallHours;
+    const p=finPrice(q.client,it.key); if(p==null){ missing.push(it.label); return; } rev+=n*p; if(it.unit==='ea') eaUnits+=n; });
+  if(q.shift&&s.shiftPremiumPct) rev*=1+s.shiftPremiumPct/100;
+  const supportP=finPrice(q.client,'support'), minimum=supportP!=null&&s.minCallHours? s.minCallHours*supportP*(s.minPerTech?q.crew:1) : 0;
+  const belowMin=rev>0&&rev<minimum;
+  // Cost per labor hour for this crew: 1 lead + (crew-1) techs.
+  const costPh= rr.lead==null&&rr.tech==null? null : ((rr.lead||0)+(q.crew-1)*(rr.tech||0))/q.crew;
+  // Hours: typed, or from recent pace on the same job type.
+  const pseudo={c:{units:q.units}, client:q.client}, type=finJobType(pseudo), pace=h&&h.pace[type];
+  let laborH=null, hoursNote='';
+  if(q.hours!==''&&+q.hours>0){ laborH=+q.hours*q.crew; hoursNote=`${finNum(+q.hours)} h on site × ${q.crew} crew`; }
+  else if(pace&&eaUnits>0){ laborH=pace.hours/pace.units*eaUnits; hoursNote=`your recent ${type.toLowerCase()} pace: ${finNum(pace.hours/pace.units*60)} labor-min per unit (${pace.jobs} confirmed jobs) → ~${finNum(laborH/q.crew)} h on site for ${q.crew}`; }
+  const cost= laborH!=null&&costPh!=null? laborH*costPh : null, margin= cost!=null? rev-cost : null;
+  const beH= costPh? rev/costPh : null, tgtH= costPh? rev*(1-q.target/100)/costPh : null;
+  const perUnit=hrs=> eaUnits>0&&hrs!=null? finNum(hrs*60/eaUnits)+' labor-min per unit' : '—';
+  const onSite=hrs=> hrs!=null? finNum(hrs/q.crew)+' h on site for '+q.crew : '—';
+  el.innerHTML=(rev<=0? '<div class="fm-muted">Enter some units to see the numbers.</div>' :
+    `<div class="fin-tiles"><div class="fin-tile"><div class="fin-tile-l">Quote value</div><div class="fin-tile-v">${finMoney(rev)}</div></div>`+
+    `<div class="fin-tile"><div class="fin-tile-l">Labor cost</div><div class="fin-tile-v">${cost!=null?finMoney(cost):'—'}</div></div>`+
+    `<div class="fin-tile"><div class="fin-tile-l">Margin</div><div class="fin-tile-v ${margin!=null&&margin<0?'fin-neg':''}">${margin!=null?finMoney(margin)+' <span class="fin-sub">'+finPct(rev>0?margin/rev:null)+'</span>':'—'}</div></div></div>`+
+    '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><tbody>'+
+      `<tr><td>Hours used</td><td>${laborH!=null? finNum(laborH)+' labor hrs — '+hoursNote : 'Enter hours on site (no confirmed jobs of this type to learn a pace from yet)'}</td></tr>`+
+      `<tr><td><b>Break-even</b></td><td>${beH!=null? finNum(beH)+' labor hrs · '+onSite(beH)+' · '+perUnit(beH) : 'Set cost rates in ⚙ Settings'}</td></tr>`+
+      `<tr><td><b>For a ${q.target}% margin</b></td><td>${tgtH!=null? finNum(tgtH)+' labor hrs · '+onSite(tgtH)+' · '+perUnit(tgtH) : '—'}</td></tr>`+
+      `<tr><td>Rev / labor hr</td><td>${laborH? finMoney(rev/laborH) : '—'}${costPh!=null? ' <span class="fm-muted">vs crew cost '+finMoney(costPh)+'/hr</span>' : ''}</td></tr>`+
+    '</tbody></table></div>')+
+    (belowMin? `<div class="fin-callout" style="margin-top:10px">⚠ Under the ${s.minCallHours}-hour call-out minimum (${finMoney(minimum)}) — quote at least that.</div>` : '')+
+    (missing.length? `<div class="fin-callout" style="margin-top:10px">No price set for: ${missing.map(jsEsc).join(', ')} (⚙ Settings).</div>` : '');
+}
+
 // One floating tooltip for every chart mark (hit areas are larger than the marks).
 function finBindTips(){
   const tip=document.getElementById('fin-tip'); if(!tip) return;
