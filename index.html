@@ -835,9 +835,13 @@ body.is-tester #tab-floormap{display:inline-block}
    full Planning-tab view, #pp-root, or the job-popup quick-look modal's body,
    #jp-print-area) and its own action buttons (.pp-noprint). */
 @media print{
-  body *{visibility:hidden}
-  #pp-root,#pp-root *,#jp-print-area,#jp-print-area *{visibility:visible}
-  #pp-root,#jp-print-area{position:absolute;left:0;top:0;width:100%}
+  /* Scoped to "not printing another report": these rules used to apply to EVERY
+     print, which blanked the Floor Maps closeout (body.fm-printing) and the
+     Financial report (body.fin-printing) -- they print their own #fm-print /
+     #fin-print block instead. */
+  body:not(.fm-printing):not(.fin-printing) *{visibility:hidden}
+  body:not(.fm-printing):not(.fin-printing) :is(#pp-root,#pp-root *,#jp-print-area,#jp-print-area *){visibility:visible}
+  body:not(.fm-printing):not(.fin-printing) :is(#pp-root,#jp-print-area){position:absolute;left:0;top:0;width:100%}
   .pp-noprint{display:none !important}
 }
 
