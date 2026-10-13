@@ -23,6 +23,12 @@ const { audit } = require('../lib/audit');
 const CONTAINER_ID = 'dispatch';
 const SETTINGS_ID = 'finance:settings';
 const JOB_PREFIX = 'finjob:';
+// Decisions on "possible extra billing" flags (shift premium, call-out
+// minimum, delays/added scope, missing report), per job:
+//   finflag:<jobId>  { flags: { <kind>: { status: 'tobill'|'billed'|'ignore', note, by, at } } }
+const FLAG_PREFIX = 'finflag:';
+const FLAG_KINDS = ['shift', 'minimum', 'delay', 'report'];
+const FLAG_STATUSES = ['tobill', 'billed', 'ignore', ''];
 
 // The rate-sheet line items (labels only; prices live in Cosmos).
 const ITEMS = [
@@ -78,6 +84,7 @@ function defaultSettings() {
     prices: Object.fromEntries(ITEMS.map((i) => [i.key, null])),
     shiftPremiumPct: null,
     minCallHours: 4,
+    minPerTech: false, // false = the call-out minimum is per visit; true = per tech on the crew
     clientPrices: {},
     updatedAt: null, updatedBy: null,
   };
@@ -92,6 +99,7 @@ function sanitizeSettings(body, user) {
   s.shiftPremiumPct = Number.isFinite(pct) && pct >= 0 && pct <= 200 ? pct : null;
   const mh = Number(body && body.minCallHours);
   s.minCallHours = Number.isFinite(mh) && mh >= 0 && mh <= 24 ? mh : 4;
+  s.minPerTech = !!(body && body.minPerTech);
   const cp = (body && body.clientPrices) || {};
   Object.keys(cp).slice(0, 300).forEach((client) => {
     const name = clean(client, 200); if (!name) return;
@@ -104,7 +112,7 @@ function sanitizeSettings(body, user) {
 }
 
 // ── Daily Project Report rows (only the columns the money view needs) ──────
-const REPORT_COLS = ['Project Name', 'Service Date', 'Crew Size', 'Total Hours', 'Device QTY Details',
+const REPORT_COLS = ['Project Name', 'Service Date', 'Project Start', 'Project Finish', 'Duration', 'Crew Size', 'Total Hours', 'Device QTY Details',
   'CO Impact', 'Work Details/Record Labor/Issues Resolved', 'Added Scope/Project Delays/Issues', 'Status', 'Job ID', 'Lead'];
 async function fetchReportRows(fromIso, toIso) {
   const sheetId = getReportSheetId(), headers = { Authorization: `Bearer ${getToken()}` };
@@ -132,6 +140,7 @@ async function fetchReportRows(fromIso, toIso) {
       deviceQty: r['Device QTY Details'] || '', coImpact: r['CO Impact'] || '', status: r.Status || '',
       work: r['Work Details/Record Labor/Issues Resolved'] || '', scope: r['Added Scope/Project Delays/Issues'] || '',
       lead: r.Lead || '',
+      start: r['Project Start'] || '', finish: r['Project Finish'] || '', duration: parseFloat(r.Duration) || null,
     });
   });
   return out;
@@ -217,15 +226,20 @@ app.http('financeJobs', {
       const jobs = (state.jobs || [])
         .filter((j) => j.date && j.date >= from && j.date <= to && !j.cancelled && j.status !== 'Cancelled')
         .map((j) => ({ ...j }));
-      const [reports, savedRes] = await Promise.all([
+      const [reports, savedRes, flagRes] = await Promise.all([
         fetchReportRows(from, to),
         container.items.query({
           query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)',
           parameters: [{ name: '@p', value: JOB_PREFIX }],
         }).fetchAll(),
+        container.items.query({
+          query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)',
+          parameters: [{ name: '@p', value: FLAG_PREFIX }],
+        }).fetchAll(),
       ]);
       attachReports(jobs, reports);
       const saved = new Map(savedRes.resources.map((d) => [d.jobId, d]));
+      const flags = new Map(flagRes.resources.map((d) => [d.jobId, d.flags || {}]));
       audit(context, user, 'finance.jobs.read', { from, to, count: jobs.length });
       return {
         headers: { 'Cache-Control': 'no-store' },
@@ -233,10 +247,40 @@ app.http('financeJobs', {
           from, to, items: ITEMS, clients: state.clientOptions || [],
           jobs: jobs.sort((a, b) => String(a.date).localeCompare(String(b.date))).map((j) => {
             const s = saved.get(j.id);
-            return { ...jobSummary(j), saved: s ? { units: s.units || {}, hours: s.hours || {}, shift: !!s.shift, note: s.note || '', updatedAt: s.updatedAt, updatedBy: s.updatedBy } : null };
+            return { ...jobSummary(j), flags: flags.get(j.id) || {}, saved: s ? { units: s.units || {}, hours: s.hours || {}, shift: !!s.shift, note: s.note || '', updatedAt: s.updatedAt, updatedBy: s.updatedBy } : null };
           }),
         },
       };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// PUT /api/finance/flags/{jobId}  JSON { kind, status, note } -- record a decision on one
+// "possible extra billing" flag (status '' clears it back to undecided).
+app.http('financeFlag', {
+  methods: ['PUT'],
+  authLevel: 'anonymous',
+  route: 'finance/flags/{id}',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireFinance(user);
+      const jobId = String(request.params.id || '');
+      if (!/^ss-\d{6,}$/.test(jobId)) return { status: 400, jsonBody: { error: 'Bad job id' } };
+      const body = await request.json().catch(() => ({}));
+      if (!FLAG_KINDS.includes(body.kind)) return { status: 400, jsonBody: { error: 'Unknown flag' } };
+      const status = FLAG_STATUSES.includes(body.status) ? body.status : '';
+      const container = getContainer(CONTAINER_ID);
+      const id = FLAG_PREFIX + jobId;
+      const doc = (await readDoc(container, id)) || { id, type: 'financeFlags', jobId, flags: {} };
+      if (status) doc.flags[body.kind] = { status, note: clean(body.note, 500), by: user.upn, at: new Date().toISOString() };
+      else delete doc.flags[body.kind];
+      doc.updatedAt = new Date().toISOString();
+      await container.items.upsert(doc);
+      audit(context, user, 'finance.flag.update', { jobId, kind: body.kind, status });
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { flags: doc.flags } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

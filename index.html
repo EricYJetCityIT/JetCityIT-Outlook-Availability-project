@@ -787,6 +787,9 @@ body.is-tester #tab-floormap{display:inline-block}
 .fin-unit input{width:84px;padding:6px 8px;border-radius:6px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font:inherit;text-align:right}
 .fin-rep{font-size:13px;color:var(--text);border-left:3px solid var(--border2);padding-left:10px;margin-bottom:8px;display:grid;gap:3px}
 .fin-live{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13.5px;color:var(--text2);background:var(--surface2);border-radius:8px;padding:10px 12px}
+.fin-flag{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:grid;gap:6px;background:var(--surface)}
+.fin-flag-text{font-size:13px;color:var(--text2);margin-top:3px;line-height:1.45}
+.fin-flag-btns{display:inline-flex;gap:6px;flex-wrap:wrap}
 .fin-client-over{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;display:grid;gap:8px}
 .pp-tl{width:100%;border-collapse:collapse;font-size:13px}
 .pp-tl th{font-weight:400;color:var(--text3);text-align:left;padding:5px 8px}
@@ -1691,12 +1694,126 @@ function finCalc(j){
     const p=finPrice(j.client,it.key); if(p==null){ priceMissing=true; return; }
     revenue+=q*p;
   });
-  if(sv&&sv.shift&&s.shiftPremiumPct) revenue*=1+s.shiftPremiumPct/100;
+  // Shift premium on the share of the work done 11 PM–6 AM. Unconfirmed jobs get it
+  // automatically when the times say so; a confirmed job uses the box Finance ticked.
+  const night=finNightInfo(j), pct=(s.shiftPremiumPct||0)/100, base=revenue;
+  const shiftFrac= sv? (sv.shift? (night.fraction>0? night.fraction : 1) : 0) : night.fraction;
+  const shiftAmount=base*pct*shiftFrac;
+  revenue+=shiftAmount;
+  const shiftMissed= (sv&&!sv.shift&&night.fraction>0&&pct>0)? base*pct*night.fraction : 0;
+  // Call-out minimum: min hours x support rate, per visit (or per tech if set).
+  const supportP=finPrice(j.client,'support');
+  const minimum= (supportP!=null&&s.minCallHours)? s.minCallHours*supportP*(s.minPerTech? crew : 1) : null;
+  const belowMin= minimum!=null&&revenue>0&&revenue<minimum? minimum-revenue : 0;
   const margin=revenue-cost;
   return {hours, hoursSrc, crew, leadH, techH, pmH, cost, rateMissing, units, unitsSrc, revenue, priceMissing, margin,
-    marginPct: revenue>0? margin/revenue : null, perHour: hours>0? revenue/hours : null};
+    marginPct: revenue>0? margin/revenue : null, perHour: hours>0? revenue/hours : null,
+    night, shiftFrac, shiftAmount, shiftMissed, minimum, belowMin};
 }
-function finJobs(){ return ((fin.data&&fin.data.jobs)||[]).map(j=>Object.assign({},j,{c:finCalc(j)})); }
+
+// ── Possible extra billing ──
+// "9:00AM", "09:00 AM", "7:22PM", "21:30" -> minutes after midnight (or null).
+function finParseTime(t){
+  const m=String(t||'').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?$/i); if(!m) return null;
+  let h=+m[1]; const mi=+(m[2]||0), ap=(m[3]||'').toLowerCase();
+  if(h>24||mi>59) return null;
+  if(ap==='p'&&h<12) h+=12; if(ap==='a'&&h===12) h=0;
+  return h*60+mi;
+}
+// How much of the job fell in the 11 PM–6 AM window. Uses the report's actual
+// start/finish when there is one (checked against its Duration, so a typo like
+// "10:00AM → 12:30AM" for a 2.25 h job is read as 12:30 PM), else the calendar's
+// start time + duration.
+function finNightInfo(j){
+  const rep=(j.reports||[]).find(r=>finParseTime(r.start)!=null);
+  let S, E, src;
+  if(rep){
+    S=finParseTime(rep.start); const F=finParseTime(rep.finish), D=rep.duration;
+    if(F!=null){ E=F<=S? F+1440 : F; if(D&&Math.abs((E-S)/60-D)>1.5) E=S+D*60; }
+    else if(D) E=S+D*60;
+    src='report';
+  } else {
+    S=finParseTime(j.startTime); const D=parseFloat(j.duration)||0;
+    if(S!=null&&D>0){ E=S+D*60; src='calendar'; }
+  }
+  if(S==null||E==null||E<=S) return {fraction:0, hours:0, src:'', span:''};
+  const ov=(a,b)=>Math.max(0,Math.min(E,b)-Math.max(S,a));
+  const nightMin=ov(-60,360)+ov(1380,1800)+ov(2820,3240); // early-morning, overnight, next overnight
+  const fmt=m=>{ m=((m%1440)+1440)%1440; const h=Math.floor(m/60), mi=m%60; return ((h%12)||12)+':'+String(mi).padStart(2,'0')+(h<12?' AM':' PM'); };
+  return {fraction: nightMin/(E-S), hours: nightMin/60, src, span: fmt(S)+'–'+fmt(E)};
+}
+// Report text that says nothing ("None", "na", "N/A", "no", "0.0") vs something real.
+function finMeaningful(t){
+  const s=String(t||'').trim(); if(!s) return '';
+  const rest=s.replace(/^(?:none|no|na|n\/a|nothing|0(?:\.0+)?|-+|x)\b[\s.,;:!-]*/i,'').trim();
+  return /[a-z]{3,}/i.test(rest)? s : '';
+}
+// "2 hours and 15 minutes", "3 hours 45 min", "30min extra", "1.5 hrs" -> hours.
+function finTextHours(t){
+  let s=' '+String(t||'').toLowerCase()+' ', h=0;
+  s=s.replace(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b(?:\s*(?:and|&)?\s*(\d+)\s*(?:minutes?|mins?|m)\b)?/g,(m,a,b)=>{ h+=(+a)+(b? +b/60 : 0); return ' '; });
+  s.replace(/(\d+)\s*(?:minutes?|mins?)\b/g,(m,a)=>{ h+=(+a)/60; return ' '; });
+  return Math.round(h*100)/100;
+}
+const FIN_BILLABLE_RE=/\b(access|badge|wait(?:ed|ing)?|delay\w*|late|no power|power|elevator|dock|driv\w*|travel|extra|charg\w*|added|additional|change order|\bco\b|minimum|not ready|blocked|locked)\b/i;
+const FIN_FLAG_LABEL={shift:'Overnight shift premium',minimum:'Below call-out minimum',delay:'Delays / added scope',report:'No Daily Report'};
+// Every open question about money on one job: [{kind, text, amount, likely}]
+function finFlagsFor(j,c){
+  const out=[], s=fin.settings, today=finIso(new Date());
+  if(c.night.fraction>0) out.push({kind:'shift', amount: c.shiftMissed||null,
+    text:`Worked ${c.night.span} (${finNum(c.night.hours)} h overnight, from the ${c.night.src==='report'?'Daily Report':'calendar'})`+
+      (c.shiftMissed? ` — confirmed WITHOUT the premium` : (j.saved? ' — premium applied' : ' — premium included in the estimate'))});
+  if(c.belowMin>0) out.push({kind:'minimum', amount:c.belowMin,
+    text:`Billed ${finMoney(c.revenue)}; the ${s.minCallHours}-hour minimum is ${finMoney(c.minimum)}${s.minPerTech?' ('+c.crew+' techs)':''}`});
+  const parts=[];
+  (j.reports||[]).forEach(r=>{
+    const sc=finMeaningful(r.scope), co=finMeaningful(r.coImpact);
+    if(sc) parts.push({label:'Added scope / delays', t:sc}); if(co) parts.push({label:'CO impact', t:co});
+    if((sc&&/work details/i.test(sc)||co&&/work details/i.test(co))&&r.work) parts.push({label:'Work details', t:r.work});
+  });
+  if(parts.length){
+    const all=parts.map(p=>p.t).join(' ');
+    const hrs=finTextHours(parts.filter(p=>p.label!=='Work details').map(p=>p.t).join(' ')), sp=finPrice(j.client,'support');
+    out.push({kind:'delay', amount: hrs&&sp!=null? hrs*sp : null, hours:hrs, likely:FIN_BILLABLE_RE.test(all),
+      text:parts.map(p=>`<b>${jsEsc(p.label)}:</b> ${jsEsc(p.t)}`).join('<br>'), html:true});
+  }
+  if(!(j.reports||[]).length && j.date<today) out.push({kind:'report', amount:null, text:'No Daily Project Report found — hours are estimated and there\'s no record of delays or extra work.'});
+  return out.map(f=>Object.assign(f,{status:(j.flags&&j.flags[f.kind]&&j.flags[f.kind].status)||'', decision:(j.flags||{})[f.kind]||null}));
+}
+function finJobs(){ return ((fin.data&&fin.data.jobs)||[]).map(j=>{ const c=finCalc(j); return Object.assign({},j,{c, fl:finFlagsFor(j,c)}); }); }
+const FIN_STATUS=[['tobill','To bill'],['billed','Billed'],['ignore','Not billable']];
+function finFlagButtons(jobId,f){
+  return '<span class="fin-flag-btns">'+FIN_STATUS.map(([k,l])=>`<button class="fm-chip${f.status===k?' on':''}" onclick="event.stopPropagation();finSetFlag('${jsEsc(jobId)}','${f.kind}','${f.status===k?'':k}')">${l}</button>`).join('')+'</span>';
+}
+async function finSetFlag(jobId,kind,status){
+  try{
+    const r=await finApi('PUT','/flags/'+encodeURIComponent(jobId),{kind,status});
+    const j=fin.data.jobs.find(x=>x.id===jobId); if(j) j.flags=r.flags;
+    const keep=fin.openId; finPaint(); if(keep) finOpenJob(keep);
+  }catch(e){ alert('Could not save: '+(e.message||e)); }
+}
+function finExtraHtml(jobs){
+  const filt=fin.extraFilter||'open';
+  const rows=[]; jobs.forEach(j=>j.fl.forEach(f=>rows.push({j,f})));
+  const show=rows.filter(({f})=> filt==='all'? true : filt==='open'? f.status==='' : f.status===filt);
+  const sum=k=>rows.filter(r=>r.f.kind===k&&(r.f.status===''||r.f.status==='tobill')).reduce((a,r)=>a+(r.f.amount||0),0);
+  const cnt=k=>rows.filter(r=>r.f.kind===k&&(r.f.status===''||r.f.status==='tobill')).length;
+  const kinds=['shift','minimum','delay','report'];
+  const head='<div class="fin-tiles" style="margin-bottom:12px">'+kinds.map(k=>`<div class="fin-tile"><div class="fin-tile-l">${FIN_FLAG_LABEL[k]}</div><div class="fin-tile-v">${cnt(k)} <span class="fin-sub">${sum(k)? '≈ '+finMoney(sum(k)) : (k==='report'||k==='delay'? 'to review' : '')}</span></div></div>`).join('')+'</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'+[['open','Needs a decision'],['tobill','To bill'],['billed','Billed'],['ignore','Not billable'],['all','All']].map(([k,l])=>
+      `<button class="fm-chip${filt===k?' on':''}" onclick="fin.extraFilter='${k}';finPaint()">${l}</button>`).join('')+'</div>';
+  if(!show.length) return head+'<div class="empty"><p>Nothing here for this date range. 🎉</p></div>';
+  const order={shift:0,minimum:1,delay:2,report:3};
+  show.sort((a,b)=> order[a.f.kind]-order[b.f.kind] || (b.f.likely?1:0)-(a.f.likely?1:0) || String(b.j.date).localeCompare(String(a.j.date)));
+  return head+'<div class="fin-table-wrap"><table class="fin-table"><thead><tr><th>Date</th><th>Job</th><th>What we found</th><th>Possible $</th><th>Decision</th></tr></thead><tbody>'+
+    show.map(({j,f})=>`<tr class="fin-row" onclick="finOpenJob('${jsEsc(j.id)}')"><td style="white-space:nowrap">${jsEsc(j.date)}</td>`+
+      `<td><b>${jsEsc(j.project)}</b><div class="fm-muted">${jsEsc(j.client||'')}${(j.lead||[]).length?' · lead '+jsEsc(j.lead.join(', ')):''}</div></td>`+
+      `<td><span class="fin-chip ${f.kind==='report'?'fin-chip-warn':'fin-chip-sug'}">${FIN_FLAG_LABEL[f.kind]}</span>${f.likely?' <span class="fin-chip fin-chip-bad">likely billable</span>':''}<div class="fin-flag-text">${f.html? f.text : jsEsc(f.text)}</div>`+
+        (f.decision&&f.decision.status? `<div class="fm-muted" style="margin-top:4px">${jsEsc(FIN_STATUS.find(s=>s[0]===f.decision.status)[1])} · ${jsEsc(f.decision.by||'')}</div>` : '')+`</td>`+
+      `<td style="white-space:nowrap">${f.amount? '≈ '+finMoney(f.amount)+(f.hours? `<div class="fm-muted">${finNum(f.hours)} h × support rate</div>` : '') : '—'}</td>`+
+      `<td>${finFlagButtons(j.id,f)}</td></tr>`).join('')+
+    '</tbody></table></div><div class="fm-muted" style="margin-top:8px">“Possible $” is a starting point: shift premium on the overnight share, the gap to the call-out minimum, or hours mentioned in the report × the support rate. Mark each one so it drops off “Needs a decision”.</div>';
+}
 function finSettingsReady(){ const s=fin.settings; return !!(s&&s.roleRates&&(s.roleRates.lead!=null||s.roleRates.tech!=null)&&s.prices&&Object.values(s.prices).some(v=>v!=null)); }
 
 function finPaint(){
@@ -1712,12 +1829,16 @@ function finPaint(){
   if(fin.error){ root.innerHTML=head+`<div class="empty"><p>${jsEsc(fin.error)}</p></div>`; return; }
   const jobs=finJobs();
   const tot=jobs.reduce((a,j)=>{ a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; if(j.c.unitsSrc==='confirmed') a.conf++; else a.todo++; return a; },{rev:0,cost:0,hours:0,conf:0,todo:0});
+  const undecided=[]; jobs.forEach(j=>j.fl.forEach(f=>{ if(!f.status) undecided.push(f); }));
+  const openFlags=undecided.length, openAmt=undecided.reduce((a,f)=>a+(f.amount||0),0);
   const tiles=[['Revenue',finMoney(tot.rev)],['Labor cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
-    ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>']]
+    ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>'],
+    ['Possible extra billing',(openFlags? openFlags+' <span class="fin-sub">'+(openAmt? '≈ '+finMoney(openAmt)+' · ' : '')+'need a decision</span>' : '0 <span class="fin-sub">all decided</span>')]]
     .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
-  const nav=[['clients','By client'],['jobs','By job'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="fin.view='${k}';finPaint()">${l}</button>`).join('');
+  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="fin.view='${k}';finPaint()">${l}</button>`).join('');
   let body;
   if(fin.view==='settings') body=finSettingsHtml();
+  else if(fin.view==='extra') body=finExtraHtml(jobs);
   else if(fin.view==='jobs') body=finJobsHtml(jobs);
   else body=finClientsHtml(jobs);
   root.innerHTML=head+
@@ -1774,10 +1895,10 @@ function finOpenJob(id){
   const j=finJobs().find(x=>x.id===id); const modal=document.getElementById('fin-modal'); if(!j||!modal) return;
   fin.openId=id;
   const c=j.c, sv=j.saved||{}, ho=sv.hours||{};
-  const reps=(j.reports||[]).map(r=>`<div class="fin-rep"><div class="fm-muted">Daily report · ${jsEsc(r.date)} · ${r.totalHours!=null?finNum(r.totalHours)+' hrs':'no hours'} · crew ${r.crewSize||'?'}${r.matchedBy==='fuzzy'?' · <span class="fm-warn">matched by similar name — check it\'s this job</span>':''}</div>`+
+  const reps=(j.reports||[]).map(r=>`<div class="fin-rep"><div class="fm-muted">Daily report · ${jsEsc(r.date)}${r.start? ' · '+jsEsc(r.start)+(r.finish? '–'+jsEsc(r.finish) : '') : ''} · ${r.totalHours!=null?finNum(r.totalHours)+' hrs':'no hours'} · crew ${r.crewSize||'?'}${r.matchedBy==='fuzzy'?' · <span class="fm-warn">matched by similar name — check it\'s this job</span>':''}</div>`+
     (r.deviceQty? `<div><b>Device QTY:</b> ${jsEsc(r.deviceQty)}</div>` : '<div class="fm-muted">No device quantities written.</div>')+
-    (r.coImpact&&!/^none$/i.test(r.coImpact)? `<div><b>CO impact:</b> ${jsEsc(r.coImpact)}</div>` : '')+
-    (r.scope&&!/^none$/i.test(r.scope)? `<div><b>Added scope / delays:</b> ${jsEsc(r.scope)}</div>` : '')+'</div>').join('')
+    (finMeaningful(r.coImpact)? `<div><b>CO impact:</b> ${jsEsc(r.coImpact)}</div>` : '')+
+    (finMeaningful(r.scope)? `<div><b>Added scope / delays:</b> ${jsEsc(r.scope)}</div>` : '')+'</div>').join('')
     || '<div class="fm-muted">No Daily Project Report matched this job — hours are estimated from the calendar.</div>';
   const items=(fin.items||[]).map(it=>{ const p=finPrice(j.client,it.key);
     return `<label class="fin-unit"><span>${jsEsc(it.label)} <span class="fm-muted">${p!=null?finMoney(p)+'/'+it.unit:'no price'}</span></span>`+
@@ -1787,8 +1908,12 @@ function finOpenJob(id){
     `<div class="js-modal-head"><div><div class="js-modal-title">${jsEsc(j.project)}</div><div class="fm-muted">${jsEsc(j.date)} · ${jsEsc(j.client||'no client')} · lead ${jsEsc((j.lead||[]).join(', ')||'—')} · crew ${c.crew}</div></div><button class="js-modal-close" onclick="finCloseJob()" aria-label="Close">&times;</button></div>`+
     '<div class="js-modal-body">'+
       `<div>${reps}</div>`+
+      (j.fl.length? '<div><div class="js-field-label">Possible extra billing</div><div style="display:grid;gap:8px">'+j.fl.map(f=>
+        `<div class="fin-flag"><div><span class="fin-chip ${f.kind==='report'?'fin-chip-warn':'fin-chip-sug'}">${FIN_FLAG_LABEL[f.kind]}</span>${f.likely?' <span class="fin-chip fin-chip-bad">likely billable</span>':''}${f.amount?' <b>≈ '+finMoney(f.amount)+'</b>':''}</div>`+
+        `<div class="fin-flag-text">${f.html? f.text : jsEsc(f.text)}</div>${finFlagButtons(j.id,f)}</div>`).join('')+'</div></div>' : '')+
       `<div><div class="js-field-label">Units billed ${c.unitsSrc==='confirmed'?'(confirmed)':c.unitsSrc==='none'?'':'(suggested from the report — check before confirming)'}</div><div class="fin-units-grid">${items}</div>`+
-        `<label class="js-check" style="margin-top:8px"><input type="checkbox" id="fin-shift" ${sv.shift?'checked':''} onchange="finLive()"> Shift premium (${fin.settings.shiftPremiumPct!=null?fin.settings.shiftPremiumPct+'%':'not set'}) — work between 11 PM and 6 AM</label></div>`+
+        `<label class="js-check" style="margin-top:8px"><input type="checkbox" id="fin-shift" ${(j.saved? sv.shift : c.night.fraction>0)?'checked':''} onchange="finLive()"> Shift premium (${fin.settings.shiftPremiumPct!=null?fin.settings.shiftPremiumPct+'%':'not set'}) — work between 11 PM and 6 AM`+
+          (c.night.fraction>0? ` <span class="fin-chip fin-chip-sug">${finNum(c.night.hours)} h overnight · ${jsEsc(c.night.span)}</span>` : '')+`</label></div>`+
       `<div><div class="js-field-label">Labor hours <span class="fm-muted">(blank = from the report${c.hoursSrc==='estimate'?' / calendar estimate':''})</span></div><div class="fin-units-grid">${hrs}</div></div>`+
       `<div><div class="js-field-label">Note</div><textarea class="js-edit" id="fin-note" rows="2" maxlength="1000">${jsEsc(sv.note||'')}</textarea></div>`+
       '<div class="fin-live" id="fin-live"></div>'+
@@ -1842,6 +1967,7 @@ function finSettingsHtml(){
       '<div class="fin-units-grid">'+items.map(it=>`<label class="fin-unit"><span>${jsEsc(it.label)} <span class="fm-muted">/${it.unit}</span></span><input type="number" min="0" step="0.01" id="fin-p-${it.key}" value="${s.prices&&s.prices[it.key]!=null?s.prices[it.key]:''}" placeholder="$"></label>`).join('')+
         `<label class="fin-unit"><span>Shift premium (11 PM–6 AM)</span><input type="number" min="0" max="200" step="1" id="fin-shiftpct" value="${s.shiftPremiumPct!=null?s.shiftPremiumPct:''}" placeholder="%"></label>`+
         `<label class="fin-unit"><span>Minimum hours for a support call-out</span><input type="number" min="0" max="24" step="0.5" id="fin-minh" value="${s.minCallHours!=null?s.minCallHours:4}"></label>`+
+        `<label class="fin-unit"><span>Minimum applies</span><select class="js-select" id="fin-minper" style="padding:5px 8px"><option value="visit"${s.minPerTech?'':' selected'}>per visit</option><option value="tech"${s.minPerTech?' selected':''}>per tech on the crew</option></select></label>`+
       '</div><div class="fm-status" id="fin-import-msg"></div></div>'+
     '<div class="fm-sec"><div class="fm-sec-h">Client prices (override the standard price)</div>'+
       over.map(cn=>`<div class="fin-client-over" data-client="${jsEsc(cn)}"><div style="display:flex;justify-content:space-between;align-items:center"><b>${jsEsc(cn)}</b><button class="btn btn-sm btn-ghost" data-c="${jsEsc(cn)}" onclick="finRemoveClient(this.dataset.c)">Remove</button></div><div class="fin-units-grid">`+
@@ -1854,6 +1980,7 @@ function finReadSettingsForm(){
   ['lead','tech','pm'].forEach(k=>{ s.roleRates[k]=v('fin-rr-'+k)===''? null : +v('fin-rr-'+k); });
   (fin.items||[]).forEach(it=>{ s.prices[it.key]=v('fin-p-'+it.key)===''? null : +v('fin-p-'+it.key); });
   s.shiftPremiumPct=v('fin-shiftpct')===''? null : +v('fin-shiftpct'); s.minCallHours=v('fin-minh')===''? 4 : +v('fin-minh');
+  s.minPerTech=v('fin-minper')==='tech';
   document.querySelectorAll('.fin-client-over').forEach(box=>{ const cn=box.dataset.client, o={};
     box.querySelectorAll('input[data-ck]').forEach(i=>{ if(i.value!=='') o[i.dataset.ck]=+i.value; }); s.clientPrices[cn]=o; });
   return s;
