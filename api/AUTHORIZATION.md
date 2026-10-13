@@ -41,7 +41,7 @@ unset means nobody is in the group and the tab stays hidden for everyone.
 |---|---|---|
 | `FINANCE_UPNS` | **Financial** tab — job / client profitability; cost rates and prices live in Cosmos `finance:settings`, never in code (`isFinance`, `requireFinance` on every `/api/finance/*` route) | `is-finance` body class reveals `#tab-invoice` |
 | `PLANNER_UPNS` | **Project Planning** tab — the "Project Planners" group (`isPlanner`, `requirePlanner`) | `is-planner` body class reveals `#tab-planning` |
-| `TESTER_UPNS` | **Job Sheets** + **Floor Maps** tabs — the "Testers" group for in-progress features (`isTester`, `requireTester`; every `/api/jobsheet/*` and `/api/floormaps/*` route, read and write, except the signed-url photo proxy) | `is-tester` body class reveals `#tab-jobsheet` + `#tab-floormap` |
+| `TESTER_UPNS` | **Job Sheets** + **Floor Maps** tabs — the "Testers" group for in-progress features (`isTester`, `requireTester`; every `/api/jobsheet/*` and `/api/floormaps/*` route, read and write, except the signed-url photo proxy and the secret-guarded `POST /api/jobsheet/rollup`, see "Scheduled endpoints" below) | `is-tester` body class reveals `#tab-jobsheet` + `#tab-floormap` |
 
 Set them in the Static Web App → **Configuration** (application settings for the
 managed Functions), e.g.:
@@ -101,6 +101,28 @@ Save. Those users can now change data; everyone else is read-only.
    security group).
 3. Done — their next token includes `"roles": ["DataEditor"]` and the API grants
    edit. No `EDITOR_UPNS` needed (though it still works as an override).
+
+## Scheduled endpoints (shared secret, no sign-in)
+
+Static Web Apps' managed Functions only run HTTP triggers, so the scheduled jobs
+are plain `POST` endpoints called by GitHub Actions cron workflows
+(`.github/workflows/*-schedule.yml`). They send the `SYNC_SECRET` app setting in an
+`X-Sync-Secret` header, compared in constant time; a missing or wrong secret is a
+401 and an unset `SYNC_SECRET` rejects everything. Anyone holding that one secret
+can trigger all of these, so treat it like a password.
+
+| Route | What it does | Workflow |
+|---|---|---|
+| `POST /api/smartsheet-sync` | Mirrors the Crew Calendar sheet into Cosmos | `smartsheet-sync-schedule.yml` |
+| `POST /api/report-match` | Ticks "Proj Rpt Rec'd" for filed reports | `smartsheet-sync-schedule.yml` |
+| `POST /api/availability-reminder` | Emails techs who haven't submitted availability (`?dry=1` reports who would be emailed, including names/emails, and sends nothing) | `availability-reminder-schedule.yml` |
+| `POST /api/jobsheet/rollup` | Nightly per-tech per-day rollup of the Job Sheets / Floor Maps activity log (replies with day counts only; failure details go to the function log) | `jobsheet-rollup-schedule.yml` |
+
+The rollup feeds `GET /api/jobsheet/techtracking` (the Manager view's **Tech
+tracking** tab), which is **Testers-only** (`requireTester`) and returns per-tech
+pace and time data. The tab stays correct even if the nightly job never runs
+(missing days are built on demand); the job only keeps reads fast. Reads reach back
+at most two years.
 
 ## Rate limiting (anti-scraping)
 

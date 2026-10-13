@@ -1,5 +1,6 @@
 const { randomUUID } = require('crypto');
 const { getContainer } = require('./cosmos');
+const { ptDay, invalidateRollupDay } = require('./jobsheetRollup');
 
 // Attribution/job-costing log for the Job Sheets tab. The app writes to
 // Smartsheet as ONE shared admin token, so Smartsheet's own "modified by" /
@@ -18,6 +19,8 @@ const ID_PREFIX = 'jsact:';
 // Mirrors the same cap enforced client-side (index.html JS_DURATION_CAP_SEC);
 // re-checked here too since a client-computed number is never trusted blindly.
 const DURATION_CAP_SEC = 20 * 60;
+const MAX_BACKDATE_MS = 35 * 24 * 3600 * 1000; // an offline-queued save older than this is filed at server time
+const MAX_FUTURE_MS = 24 * 3600 * 1000;         // clock skew allowance
 
 function clean(s, max) {
   return String(s == null ? '' : s).slice(0, max);
@@ -40,9 +43,19 @@ function cleanDuration(v) {
 async function logJobSheetActivity(entry, context) {
   try {
     const container = getContainer(CONTAINER_ID);
-    const capturedAt = entry.capturedAt && !Number.isNaN(Date.parse(entry.capturedAt))
+    let capturedAt = entry.capturedAt && !Number.isNaN(Date.parse(entry.capturedAt))
       ? new Date(entry.capturedAt).toISOString()
       : new Date().toISOString();
+    // The client stamps capturedAt from the device clock, so a phone with a wrong date (or a crafted
+    // request) could file a save in 1970 and make every date range reach back that far. Anything more
+    // than MAX_BACKDATE_MS in the past (far longer than the offline-queue window) or a day into the
+    // future is filed at the server's time instead; the device's claim is kept for debugging.
+    let clientCapturedAt = null;
+    const nowMs = Date.now(), capMs = Date.parse(capturedAt);
+    if (capMs < nowMs - MAX_BACKDATE_MS || capMs > nowMs + MAX_FUTURE_MS) {
+      clientCapturedAt = capturedAt;
+      capturedAt = new Date(nowMs).toISOString();
+    }
     const doc = {
       id: ID_PREFIX + randomUUID(),
       type: 'jobSheetActivity',
@@ -58,9 +71,18 @@ async function logJobSheetActivity(entry, context) {
       durationSec: cleanDuration(entry.durationSec),
       sessionId: clean(entry.sessionId, 80),
       capturedAt,
+      ...(clientCapturedAt ? { clientCapturedAt } : {}),
       createdAt: new Date().toISOString(),
     };
     await container.items.create(doc);
+    // A save stamped with a day that has already ended (an offline-queued edit that synced late)
+    // makes that day's per-day rollup stale: drop its marker so the next read rebuilds it.
+    try {
+      const day = ptDay(Date.parse(capturedAt));
+      if (day < ptDay(Date.now())) await invalidateRollupDay(day);
+    } catch (e) {
+      try { context && context.error('jobsheet rollup invalidation failed', e); } catch (_) { /* never break on logging the failure to log */ }
+    }
   } catch (e) {
     // Swallowed by design -- see comment above; still logged if a context
     // (Azure Functions InvocationContext) was passed, for debuggability.
@@ -91,34 +113,6 @@ async function listJobSheetActivity(sheetId, limit) {
   return resources;
 }
 
-// Every sheet's activity in a date range, newest first, for the Manager view's
-// Tech tracking tab (job costing / pace per tech across all jobs). `from`/`to`
-// are ISO strings (capturedAt is stored as an ISO string, so string comparison is
-// date order); an unparseable bound is ignored. One extra row is requested so
-// the caller can tell the range was cut off (the OLDEST rows are the ones lost).
-// Bound values only ever reach the query as parameters.
-const DEFAULT_ALL_LIMIT = 10000;
-const MAX_ALL_LIMIT = 20000;
-function isoOrNull(v) {
-  if (!v || Number.isNaN(Date.parse(v))) return null;
-  return new Date(v).toISOString();
-}
-async function listAllJobSheetActivity(from, to, limit) {
-  const n = Number.isInteger(limit) ? Math.min(MAX_ALL_LIMIT, Math.max(1, limit)) : DEFAULT_ALL_LIMIT;
-  const f = isoOrNull(from), t = isoOrNull(to);
-  const parameters = [{ name: '@p', value: ID_PREFIX }];
-  let where = 'STARTSWITH(c.id, @p)';
-  if (f) { where += ' AND c.capturedAt >= @from'; parameters.push({ name: '@from', value: f }); }
-  if (t) { where += ' AND c.capturedAt < @to'; parameters.push({ name: '@to', value: t }); }
-  const container = getContainer(CONTAINER_ID);
-  const { resources } = await container.items
-    .query({
-      query: `SELECT TOP ${n + 1} c.sheetId, c.sheetName, c.rowId, c.rowLabel, c.columnLabel, c.action, c.user, c.userName, c.capturedAt, c.durationSec, c.sessionId FROM c WHERE ${where} ORDER BY c.capturedAt DESC`,
-      parameters,
-    })
-    .fetchAll();
-  const truncated = resources.length > n;
-  return { items: truncated ? resources.slice(0, n) : resources, truncated };
-}
-
-module.exports = { logJobSheetActivity, listJobSheetActivity, listAllJobSheetActivity };
+// (The cross-sheet, per-day view the Manager's Tech tracking tab reads lives in
+// jobsheetRollup.js, which folds this log into per-tech per-day rollups.)
+module.exports = { logJobSheetActivity, listJobSheetActivity };

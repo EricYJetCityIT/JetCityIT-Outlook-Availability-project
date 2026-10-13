@@ -1,0 +1,24 @@
+name: Job sheet activity rollup
+
+# Nightly pre-warm of the per-tech, per-day rollups the Manager view's Tech
+# tracking tab reads (api/src/functions/jobsheetRollup.js). Azure Static Web
+# Apps' managed Functions only support HTTP triggers, so this workflow calls
+# the endpoint on a schedule, the same way smartsheet-sync-schedule.yml does.
+# Reuses the SYNC_SECRET repo secret / SYNC_SECRET app setting. Tech tracking is
+# correct without this running (missing days are built on demand); it only keeps
+# reads fast. 10:30 UTC is 2:30/3:30 am Pacific, after the day has ended in both
+# standard and daylight time. A manual run backfills more history.
+on:
+  schedule:
+    - cron: '30 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  rollup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call jobsheet rollup endpoint
+        run: |
+          curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST "https://crew-calendar.jetcityit.com/api/jobsheet/rollup" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"

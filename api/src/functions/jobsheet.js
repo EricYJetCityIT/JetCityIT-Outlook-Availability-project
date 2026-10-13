@@ -1,7 +1,8 @@
 const { app } = require('@azure/functions');
 const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
-const { logJobSheetActivity, listJobSheetActivity, listAllJobSheetActivity } = require('../lib/jobsheetActivity');
+const { logJobSheetActivity, listJobSheetActivity } = require('../lib/jobsheetActivity');
+const { readRange, isDay } = require('../lib/jobsheetRollup');
 
 // Auth failures (401/403/429) go through the shared handler; any other failure
 // (e.g. a Smartsheet API error) returns its real message here. This tab is
@@ -127,10 +128,12 @@ app.http('jobsheetActivityList', {
   },
 });
 
-// GET /api/jobsheet/techtracking?from=<iso>&to=<iso> — the attribution log for
-// EVERY sheet in a date range (newest first), for the Manager view's Tech
-// tracking tab. { items, truncated }: truncated means the range held more than
-// the cap and the oldest rows were left out. Testers-only, like the rest.
+// GET /api/jobsheet/techtracking?from=YYYY-MM-DD&to=YYYY-MM-DD — the per-tech,
+// per-day, per-sheet rollup of the attribution log for the Manager view's Tech
+// tracking tab (see jobsheetRollup.js). Both bounds are inclusive Pacific calendar
+// days and either may be left off (open-ended). { records, truncated, healed,
+// today }: truncated means some days were left out this time (a retry gets
+// further). Testers-only, like the rest.
 app.http('jobsheetTechTracking', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -140,8 +143,14 @@ app.http('jobsheetTechTracking', {
       const user = await requireUser(request);
       requireTester(user);
       const params = new URL(request.url).searchParams;
-      const limit = parseInt(params.get('limit') || '', 10);
-      const out = await listAllJobSheetActivity(params.get('from'), params.get('to'), Number.isFinite(limit) ? limit : undefined);
+      const from = params.get('from') || null, to = params.get('to') || null;
+      if ((from && !isDay(from)) || (to && !isDay(to))) {
+        return { status: 400, jsonBody: { error: 'from and to must be YYYY-MM-DD days' } };
+      }
+      // An already-open page from before this route changed shape sends ?limit=; tell it to reload
+      // rather than letting it read the new response as an empty report.
+      if (params.has('limit')) return { status: 400, jsonBody: { error: 'Tech tracking was updated. Reload the page.' } };
+      const out = await readRange(from, to);
       return { jsonBody: out };
     } catch (e) {
       return jobsheetError(e, context);
