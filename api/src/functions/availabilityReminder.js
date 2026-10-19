@@ -4,6 +4,7 @@ const { fetchSheet, resolveColumns } = require('../lib/smartsheet');
 const { sendMail, listUsers } = require('../lib/graph');
 const { safeEqual } = require('../lib/secure');
 const { audit } = require('../lib/audit');
+const { readInactiveNames, applyInactive } = require('../lib/crewInactive');
 
 const AVAILABILITY_CONTAINER = 'availability';
 const DISPATCH_CONTAINER = 'dispatch';
@@ -80,7 +81,11 @@ async function activeWorkerNames() {
     if (e.code === 404) return [];
     throw e;
   }
-  return (resource && resource.workers ? resource.workers : []).filter((w) => w.active).map((w) => w.name);
+  // People marked inactive (lib/crewInactive.js) are skipped, so nobody who has left keeps
+  // getting reminder emails. If the list can't be read this throws and the run fails (visibly)
+  // instead of emailing people who were meant to be hidden.
+  const inactiveNames = await readInactiveNames(getContainer(DISPATCH_CONTAINER));
+  return applyInactive(resource && resource.workers ? resource.workers : [], inactiveNames).filter((w) => w.active).map((w) => w.name);
 }
 
 // Matches a roster name (e.g. "Ben V", abbreviated to first name + last

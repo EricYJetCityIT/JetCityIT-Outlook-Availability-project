@@ -11,6 +11,7 @@ administer it.
 | **Refresh** the board from Smartsheet on demand (`POST /api/dispatch/refresh`) | Any signed-in `@jetcityit.com` user (read-only pull; runs the same sync the cron uses, guarded by the per-user rate limit) |
 | **Submit / edit own** availability | Any signed-in tech (own record only) |
 | **Reassign crew** on a job (`PUT /api/dispatch/jobs/{id}/crew`) | **Editors only** |
+| **Mark crew inactive** — hide people who left from Assign crew, the Individual availability view and the weekly reminder (`PUT /api/dispatch/inactive-crew`; the list is one Cosmos doc, `crew-inactive`, laid over the synced roster on read — no one is deleted and Smartsheet is untouched) | **Editors only**. The roster from `GET /api/dispatch` marks them `active:false` for everyone; the raw list (`inactiveNames`) is only returned to editors |
 | **Clear a whole week's** availability (`DELETE /api/availability/{week}`) | **Editors only** |
 | Edit **another** tech's availability | **Editors only** |
 

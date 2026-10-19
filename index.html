@@ -5495,7 +5495,7 @@ function mgrSubTabsHtml(){
 async function renderManager(){
   if(mgrMode==='tech'&&!currentUserIsTester) mgrMode='dispatch'; // Testers-only tab
   await ensureAvailabilityLoaded(selectedWeekKey);
-  const names=getNames();
+  let names=getNames();
   const el=document.getElementById('mgr-content');
   const subLbl=document.getElementById('mgr-sub-label');
   const week=getSelectedWeek();
@@ -5520,6 +5520,10 @@ async function renderManager(){
     ttShow();
     return;
   }
+
+  // Individual view: leave out people an editor marked inactive (Team → Inactive crew). If the
+  // dispatch data can't load, nobody is hidden rather than breaking the view.
+  try{ await JCITDispatch.ensureLoaded(); const all=names; names=all.filter(n=>!JCITDispatch.isInactiveName(n,all)); }catch(e){ console.error('inactive filter skipped',e); }
 
   if(!names.length){
     subLbl.textContent='No submissions for week of '+week.label;
@@ -5653,6 +5657,9 @@ const JCITDispatch=(function(){
   // Smartsheet sync — so the Add/Edit "Client" field always reflects the sheet's
   // current picklist without a hardcoded copy. Falls back to JCIT_CLIENTS.
   let syncClientOptions=[];
+  // People an editor has marked inactive (kept server-side; the server already lays them over
+  // `state.workers` as active:false). Only needed here to hide matching availability names.
+  let inactiveNames=[], inactiveVersion='', inactiveError=false;
 
   // Fetches the shared dispatch state from Cosmos DB once per session. That
   // data is now maintained entirely by the server-side Smartsheet sync
@@ -5673,6 +5680,7 @@ const JCITDispatch=(function(){
           state.jobs=data.jobs||[];
           syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
           if(Array.isArray(data.clientOptions)) syncClientOptions=data.clientOptions;
+          inactiveNames=Array.isArray(data.inactiveNames)?data.inactiveNames:[]; inactiveVersion=data.inactiveVersion||''; inactiveError=!!data.inactiveError;
           dispatchLoaded=true;
         }
       }catch(e){console.error('Failed to load dispatch data:',e)}
@@ -5690,8 +5698,37 @@ const JCITDispatch=(function(){
     const data=await res.json();
     state.workers=data.workers||[];
     state.jobs=data.jobs||[];
+    inactiveNames=Array.isArray(data.inactiveNames)?data.inactiveNames:[]; inactiveVersion=data.inactiveVersion||''; inactiveError=!!data.inactiveError;
     syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
     dispatchLoaded=true;
+  }
+  // Editors: replace the inactive-crew list, then re-pull so the roster comes back with it applied.
+  // The save names the list version the screen was showing; if someone saved since, the server
+  // answers 409, we re-pull the current list, and the error says so (nothing is overwritten).
+  async function saveInactiveCrew(names){
+    const token=await getApiToken();
+    const res=await fetch('/api/dispatch/inactive-crew',{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({names,expect:inactiveVersion})});
+    if(!res.ok){
+      let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){}
+      if(res.status===409){ try{ await reloadDispatch(); }catch(_){} }
+      throw new Error(msg);
+    }
+    await reloadDispatch();
+  }
+  // Hides availability submitters (Individual view) who are on the inactive list. Mirrors the
+  // server's rule (api/src/lib/crewInactive.js): an exact match always counts; a first-name +
+  // last-initial match (with the usual nickname aliases) counts only when it can't be someone
+  // else: no OTHER availability name or roster name shares the key (the leaver's own roster
+  // spelling, e.g. "Ben V" for "Ben VanCise", doesn't count as someone else), and the name isn't
+  // exactly an active roster worker. `listNames` = the names being filtered.
+  function isInactiveName(name,listNames){
+    const ex=s=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+    const n=ex(name); if(!n||!inactiveNames.length) return false;
+    if(inactiveNames.some(c=>ex(c)===n)) return true;
+    const k=normNameKey(name); if(!k||!inactiveNames.some(c=>normNameKey(c)===k)) return false;
+    if(state.workers.some(w=>w.active&&ex(w.name)===n)) return false;
+    const others=(listNames||[]).concat(state.workers.map(w=>w.name)).filter(m=>ex(m)!==n&&normNameKey(m)===k&&!inactiveNames.some(c=>ex(c)===ex(m)));
+    return others.length===0;
   }
   // Triggers a fresh Smartsheet -> Cosmos sync (user-authed endpoint), then
   // re-pulls the board. Returns { changed } — whether the sheet had actually
@@ -6102,7 +6139,9 @@ const JCITDispatch=(function(){
       </div>`;
     }).join('');
     const refreshBtn='<button class="dp-refresh" data-dpact="refresh" title="Check Smartsheet for updates" aria-label="Refresh from Smartsheet"><span class="dp-refresh-ic">↻</span></button>';
-    const newJobBtn=canAdd?`<button class="btn btn-primary btn-sm js-editor-only" data-dpact="new" data-date="${weekIso[0]}">+ New job</button>`:'';
+    // Editors on the Manager Dispatch view also get "Team": the roster plus the Inactive crew list
+    // (the old editable-board toolbar that had this button is no longer used anywhere).
+    const newJobBtn=canAdd?`<div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm js-editor-only" data-dpact="roster">Team</button><button class="btn btn-primary btn-sm js-editor-only" data-dpact="new" data-date="${weekIso[0]}">+ New job</button></div>`:'';
     const toolbar=editable?`<div class="dp-toolbar"><div class="dp-actions">
         <button class="btn btn-ghost btn-sm" data-dpact="roster">Team</button>
         <button class="btn btn-ghost btn-sm" data-dpact="data">Data</button>
@@ -6356,7 +6395,7 @@ const JCITDispatch=(function(){
   function myScheduleHtml(name){
     const workers=activeWorkers();
     if(!workers.length) return '<div class="empty"><div class="empty-icon">📅</div><p>No crew members yet.</p></div>';
-    if(!workerByName(name)) name=resolveRosterName(name)||workers[0].name;
+    { const cur=workerByName(name); if(!cur||!cur.active){ const r=resolveRosterName(name), rw=r&&workerByName(r); name=(rw&&rw.active)?r:workers[0].name; } }
     const opts=workers.map(w=>`<option value="${esc(w.name)}"${w.name===name?' selected':''}>${esc(w.name)}</option>`).join('');
     const dates=weekDates();
     const body=dates.map((d,i)=>{
@@ -6458,7 +6497,9 @@ const JCITDispatch=(function(){
       o.id!==j.id && o.date===j.date && !o.cancelled &&
       ((o.lead||[]).indexOf(name)>=0 || (o.technicians||[]).indexOf(name)>=0));
     const fmtBookedJob=(o)=>esc(o.project)+(o.startTime?' · '+esc(o.startTime):'');
-    const rows=activeWorkers()
+    // Inactive people already on THIS job stay listed (tagged), so the crew can still be edited without them being invisible.
+    const onJob=n=>(j.lead||[]).indexOf(n)>=0||(j.technicians||[]).indexOf(n)>=0;
+    const rows=state.workers.filter(w=>w.active||onJob(w.name))
       .map(w=>({w,avail:availabilityFor(w.name,j.date),booked:sameDayBooked(w.name)}))
       .sort((x,y)=>((AVAIL_RANK[x.avail&&x.avail.status]??2)-(AVAIL_RANK[y.avail&&y.avail.status]??2))
         || ((x.booked.length?1:0)-(y.booked.length?1:0)))
@@ -6471,7 +6512,7 @@ const JCITDispatch=(function(){
       return `<div class="dp-assign-row${isTech||isLead?' dp-on':''}" style="align-items:flex-start">
         <span class="dp-avatar" style="background:${a.bg};color:${a.fg}">${esc(initials(w.name))}</span>
         <div style="flex:1;min-width:0">
-          <span class="dp-assign-name" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}" style="display:block">${esc(w.name)}</span>
+          <span class="dp-assign-name" data-dpact="toggle-tech" data-job="${j.id}" data-name="${esc(w.name)}" style="display:block">${esc(w.name)}${w.active?'':' <span style="color:var(--text3);font-weight:400">(inactive)</span>'}</span>
           ${availHtml}${bookedHtml}
         </div>
         <button class="dp-lead-btn${isLead?' dp-on':''}" data-dpact="toggle-lead" data-job="${j.id}" data-name="${esc(w.name)}">★ Lead</button>
@@ -6484,7 +6525,13 @@ const JCITDispatch=(function(){
   function rosterModal(){
     const rows=state.workers.map(w=>`<div class="dp-assign-row"><span class="dp-assign-name" style="cursor:default">${esc(w.name)}${w.active?'':' <span style="color:var(--text3)">(inactive)</span>'}</span></div>`).join('');
     return overlay('Team',
-      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">This list follows job assignments from the synced Smartsheet — assign someone to a job to add them here, unassign them from every job to remove them. It isn't editable directly.</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No crew members yet.</div>'}</div>`,
+      `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">This list follows job assignments from the synced Smartsheet — assign someone to a job to add them here, unassign them from every job to remove them. To hide someone who no longer works here, add them under <b>Inactive crew</b> below.</div><div class="dp-assign-list">${rows||'<div style="font-size:13px;color:var(--text3)">No crew members yet.</div>'}</div>`
+      +`<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">Inactive crew</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">One name per line, as it appears above (e.g. “Ben V”) or the full name. They disappear from Assign crew, the Individual availability view and the weekly reminder emails. Jobs they were already on keep their names, and removing a line brings them back.</div>
+        <textarea id="dp-inactive-text" rows="6"${inactiveError?' disabled':''} style="width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:8px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text)">${esc(inactiveNames.join('\n'))}</textarea>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="btn btn-primary btn-sm" data-dpact="inactive-save"${inactiveError?' disabled':''}>Save inactive list</button><span id="dp-inactive-msg" style="font-size:12px;${inactiveError?'color:var(--red)':'color:var(--text3)'}">${inactiveError?'Couldn’t load the current list, so saving is turned off. Close this and reopen Team to try again.':''}</span></div>
+      </div>`,
       `<span></span><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function dataModal(){
@@ -6752,7 +6799,30 @@ const JCITDispatch=(function(){
       })();
       return;
     }
-    if(act==='roster'){ modal={type:'roster'}; renderModalRoot(); return; }
+    if(act==='inactive-save'){
+      const ta=document.getElementById('dp-inactive-text'), msg=document.getElementById('dp-inactive-msg'); if(!ta) return;
+      const names=ta.value.split('\n').map(s=>s.trim()).filter(Boolean);
+      const known=new Set(state.workers.map(w=>w.name.trim().toLowerCase()));
+      el.disabled=true; if(msg){ msg.style.color='var(--text3)'; msg.textContent='Saving…'; }
+      saveInactiveCrew(names).then(()=>{
+        // Re-render with the roster the server sent back; say which lines matched a roster name
+        // (the rest may be availability-only names, which the Individual view still hides).
+        const stillOpen=modal&&modal.type==='roster';
+        if(stillOpen) renderModalRoot();
+        refreshActiveView();
+        const m2=stillOpen?document.getElementById('dp-inactive-msg'):null;
+        if(m2){ m2.style.color='var(--green-dark)'; const onRoster=names.filter(n=>known.has(n.toLowerCase())).length; m2.textContent='Saved ✓ '+names.length+' hidden'+(names.length?' ('+onRoster+' on the roster list above)':''); }
+      }).catch(err=>{
+        console.error('save inactive crew failed',err);
+        if(/someone else/i.test(String(err.message||''))){ // 409: the list was re-pulled; show it so they can re-apply their change
+          if(modal&&modal.type==='roster'){ renderModalRoot(); const m3=document.getElementById('dp-inactive-msg'); if(m3){ m3.style.color='var(--red)'; m3.textContent='Someone else changed the list, so it was reloaded. Check it and save again.'; } }
+          return;
+        }
+        el.disabled=false; if(msg){ msg.style.color='var(--red)'; msg.textContent='Couldn’t save: '+String(err.message||err).slice(0,120); }
+      });
+      return;
+    }
+    if(act==='roster'){ reloadDispatch().catch(()=>{}).then(()=>{ modal={type:'roster'}; renderModalRoot(); }); return; } // re-pull first so the inactive box shows the current list, not a stale copy
     if(act==='data'){ modal={type:'data'}; renderModalRoot(); return; }
     if(act==='data-export'){ const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const dl=document.createElement('a'); dl.href=URL.createObjectURL(blob); dl.download='jcit-dispatch-'+toISO(new Date())+'.json'; dl.click(); URL.revokeObjectURL(dl.href); return; }
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
@@ -6856,7 +6926,7 @@ const JCITDispatch=(function(){
     }));
   }
 
-  return { boardHtml, myScheduleHtml, ensureLoaded, reportsViewHtml, searchJobs };
+  return { boardHtml, myScheduleHtml, ensureLoaded, reportsViewHtml, searchJobs, isInactiveName };
 })();
 
 async function renderCrewView(){
