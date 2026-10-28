@@ -92,6 +92,29 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px;position:relative}
 .hdr-gear{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;flex:none}
 .hdr-gear:hover{background:var(--surface2);color:var(--text)}
+.hdr-feedback{height:34px;border-radius:17px;padding:0 13px 0 11px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:7px;font:inherit;font-size:13px;font-weight:500;transition:background .12s,color .12s;flex:none}
+.hdr-feedback:hover{background:var(--surface2);color:var(--text)}
+.hdr-feedback:focus-visible,.hdr-gear:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+@media(max-width:700px){.hdr-fb-label{display:none}.hdr-feedback{width:34px;padding:0;justify-content:center;border-radius:50%}}
+/* Feedback box (header button) */
+.fb-note{font-size:12.5px;color:var(--text3);margin-bottom:14px;line-height:1.5}
+.fb-cats{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.fb-cat{padding:6px 12px;border-radius:16px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text2);font:inherit;font-size:12.5px;cursor:pointer}
+.fb-cat.on{background:var(--green-light);border-color:var(--green);color:var(--green-dark);font-weight:600}
+.fb-cat:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.fb-count{font-size:11.5px;color:var(--text3);text-align:right;margin-top:4px}
+.fb-tabs{display:flex;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px;width:fit-content;margin-bottom:14px}
+.fb-tab{padding:5px 14px;border-radius:6px;border:none;background:transparent;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;color:var(--text3)}
+.fb-tab.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
+.fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px;background:var(--surface)}
+.fb-item.done{opacity:.6}
+.fb-item-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--text3);margin-bottom:6px}
+.fb-item-head b{color:var(--text);font-weight:600}
+.fb-tag{display:inline-block;font-size:10.5px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--surface2);color:var(--text2)}
+.fb-tag.problem{background:var(--unavail-bg);color:var(--unavail-text)}
+.fb-tag.suggestion{background:var(--green-light);color:var(--green-dark)}
+.fb-msg{font-size:13.5px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.5}
+.fb-item-act{margin-top:8px;display:flex;justify-content:flex-end}
 .settings-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:14px;z-index:1000;width:240px;display:none}
 .settings-menu.open{display:block}
 .info-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:8px;z-index:1000;width:250px;max-width:calc(100vw - 32px);display:none}
@@ -151,7 +174,10 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 .hdr{background:var(--surface);border-bottom:1px solid var(--border);height:58px;display:flex;align-items:center;padding:0 24px;gap:12px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow-sm)}
 .hdr-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .hdr-logo img{width:100%;height:100%;object-fit:contain}
-.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px}
+.hdr-name{font-weight:600;font-size:15px;letter-spacing:-.3px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ms-user-badge{min-width:0;max-width:150px}
+.ms-badge-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:520px){.hdr{padding:0 12px;gap:8px}.hdr-right{gap:6px}#ms-user-badge{max-width:110px}}
 .company-logo-wrap{display:flex;justify-content:center;align-items:center;padding:28px 0 8px}
 .company-logo-wrap img{height:160px;width:auto;object-fit:contain}
 
@@ -922,6 +948,10 @@ if('serviceWorker' in navigator){
   </div>
   <span class="hdr-name">Team Availability</span>
   <div class="hdr-right">
+    <button class="hdr-feedback" id="fb-btn" onclick="openFeedback(event)" title="Suggestions &amp; feedback" aria-label="Suggestions and feedback">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 5.5A2.5 2.5 0 016.5 3h11A2.5 2.5 0 0120 5.5v8a2.5 2.5 0 01-2.5 2.5H10l-4.2 3.6a.5.5 0 01-.8-.4V16A2.5 2.5 0 014 13.5v-8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8.5h8M8 11.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="hdr-fb-label">Feedback</span>
+    </button>
     <button class="hdr-gear" id="info-btn" onclick="toggleInfoMenu(event)" title="Company info" aria-label="Company info">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M12 11v5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.6" r="1.15" fill="currentColor"/></svg>
     </button>
@@ -7562,6 +7592,133 @@ async function openJobPlanModal(job){
   }
 }
 
+// ── Suggestions & feedback (header button) ───────────────────────────────────
+// Anyone signed in can send a suggestion or a problem report (POST /api/feedback: stored, and
+// the team lead is emailed a copy; the sender's name comes from their sign-in). Editors also get
+// a "Submissions" tab to read them and mark them done.
+function openFeedback(e){
+  if(e) e.stopPropagation();
+  const im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
+  const sm=document.getElementById('settings-menu'); if(sm) sm.classList.remove('open');
+  const opener=document.getElementById('fb-btn');
+  const FB_MAX=2000;
+  const CATS=[['suggestion','💡 Suggestion'],['problem','⚠ Something isn’t working'],['other','Other']];
+  const st={tab:'send',cat:'suggestion',text:'',sent:false,sending:false,err:'',items:null,loading:false,loadErr:'',filter:'new'};
+  const ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:520px;outline:none" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="fb-title">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title" id="fb-title">Suggestions &amp; feedback</span><button class="dp-close" data-fb="close" aria-label="Close">✕</button></div>'
+    +'<div class="dp-modal-bd" data-fb-body></div><div class="dp-modal-ft" data-fb-ft></div></div>';
+  document.body.appendChild(ov);
+  const body=ov.querySelector('[data-fb-body]'), ft=ov.querySelector('[data-fb-ft]');
+  const onKey=function(ev){
+    if(ev.key==='Escape'){ close(); return; }
+    if(ev.key!=='Tab') return;
+    // keep Tab inside the dialog (it is aria-modal)
+    const f=[].slice.call(ov.querySelectorAll('button:not([disabled]),textarea:not([disabled])')).filter(function(x){ return x.offsetParent!==null; });
+    if(!f.length) return;
+    const first=f[0], last=f[f.length-1], a=document.activeElement;
+    if(!ov.contains(a)){ ev.preventDefault(); first.focus(); }
+    else if(ev.shiftKey&&a===first){ ev.preventDefault(); last.focus(); }
+    else if(!ev.shiftKey&&a===last){ ev.preventDefault(); first.focus(); }
+  };
+  // After a re-render replaced the focused button, put focus back inside the dialog (and onto the
+  // primary action after sending) so keyboard and screen-reader users aren't dropped onto the page behind it.
+  function keepFocus(prefer){
+    const el=prefer&&ov.querySelector(prefer);
+    if(el&&!el.disabled){ el.focus(); return; }
+    if(!ov.contains(document.activeElement)) ov.querySelector('.dp-modal').focus();
+  }
+  function close(){ if(st.sending) return; /* don't hide a message that is still going out */ ov.remove(); document.removeEventListener('keydown',onKey); if(opener) opener.focus(); }
+  document.addEventListener('keydown',onKey);
+  const pageLabel=function(){ const t=document.querySelector('.tabs .tab.active'); return t?t.textContent.replace(/\s+/g,' ').trim().slice(0,40):''; };
+  const when=function(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return ''; } };
+  function api(method,path,payload){
+    // A request that never answers must not leave the dialog stuck (closing is blocked while sending).
+    return Promise.race([apiCall(method,path,payload),new Promise(function(_,rej){ setTimeout(function(){ const er=new Error('That took too long. Please check your connection and try again.'); rej(er); },25000); })]);
+  }
+  async function apiCall(method,path,payload){
+    const token=await getApiToken();
+    const res=await fetch('/api/feedback'+(path||''),{method:method,headers:Object.assign({'X-Jetcity-Authorization':'Bearer '+token},payload?{'Content-Type':'application/json'}:{}),body:payload?JSON.stringify(payload):undefined});
+    let data=null; try{ data=await res.json(); }catch(_){}
+    if(!res.ok){ const m=(data&&data.error)||('Request failed ('+res.status+')'); const er=new Error(m); er.status=res.status; throw er; }
+    return data;
+  }
+  function tabsHtml(){
+    if(!currentUserIsEditor) return '';
+    const n=st.items?st.items.filter(function(i){ return i.status!=='done'; }).length:null;
+    return '<div class="fb-tabs" role="tablist"><button class="fb-tab'+(st.tab==='send'?' on':'')+'" role="tab" aria-selected="'+(st.tab==='send')+'" data-fb="tab-send">Send feedback</button>'
+      +'<button class="fb-tab'+(st.tab==='list'?' on':'')+'" role="tab" aria-selected="'+(st.tab==='list')+'" data-fb="tab-list">Submissions'+(n?' ('+n+' new)':'')+'</button></div>';
+  }
+  function renderSend(){
+    if(st.sent){
+      body.innerHTML=tabsHtml()+'<div role="status" style="text-align:center;padding:18px 4px 6px"><div style="font-size:34px;line-height:1">✅</div><div style="font-weight:600;font-size:16px;margin-top:10px">Thanks — it’s been sent</div><div class="fb-note" style="margin-top:6px">We read every one. If it needs an answer, someone will follow up.</div></div>';
+      ft.innerHTML='<button class="btn btn-sm" data-fb="again">Send another</button><button class="btn btn-primary btn-sm" data-fb="close">Close</button>';
+      keepFocus('[data-fb="close"]');
+      return;
+    }
+    body.innerHTML=tabsHtml()
+      +'<div class="fb-note">Tell us what would make this site better, or what isn’t working. It’s sent to Eric and can be read by the site’s editors (the managers who can edit the board), with your name attached. Please don’t put passwords or client secrets in here.</div>'
+      +'<div class="fb-cats" role="group" aria-label="Type of feedback">'+CATS.map(function(c){ return '<button type="button" class="fb-cat'+(st.cat===c[0]?' on':'')+'" aria-pressed="'+(st.cat===c[0])+'" data-fb="cat" data-cat="'+c[0]+'">'+esc(c[1])+'</button>'; }).join('')+'</div>'
+      +'<textarea id="fb-text" rows="6" maxlength="'+FB_MAX+'" placeholder="'+(st.cat==='problem'?'What happened, and where? (the page, what you tapped, what you expected)':'What would you like to see?')+'" aria-label="Your message" style="width:100%;resize:vertical">'+esc(st.text)+'</textarea>'
+      +'<div class="fb-count" id="fb-count">'+st.text.length+' / '+FB_MAX+'</div>'
+      +'<div id="fb-err" role="alert" style="font-size:12.5px;color:var(--red);min-height:16px;margin-top:6px">'+esc(st.err)+'</div>';
+    ft.innerHTML='<button class="btn btn-sm" data-fb="close"'+(st.sending?' disabled':'')+'>Cancel</button><button class="btn btn-primary btn-sm" data-fb="send" id="fb-send"'+(st.text.trim()&&!st.sending?'':' disabled')+'>'+(st.sending?'Sending…':'Send')+'</button>';
+    const ta=body.querySelector('#fb-text'); if(ta&&!st.sending) ta.focus(); else keepFocus();
+  }
+  function renderList(){
+    if(st.loading){ body.innerHTML=tabsHtml()+'<div style="color:var(--text3);font-size:13px;padding:8px 0">Loading…</div>'; ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>'; return; }
+    if(st.loadErr){ body.innerHTML=tabsHtml()+'<div style="color:var(--red);font-size:13px;padding:8px 0">'+esc(st.loadErr)+' <button class="btn btn-ghost btn-sm" data-fb="reload">Try again</button></div>'; ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>'; return; }
+    const all=st.items||[];
+    const shown=all.filter(function(i){ return st.filter==='all'||(st.filter==='done'?i.status==='done':i.status!=='done'); });
+    const chip=function(k,l){ return '<button type="button" class="fb-cat'+(st.filter===k?' on':'')+'" aria-pressed="'+(st.filter===k)+'" data-fb="filter" data-f="'+k+'">'+l+'</button>'; };
+    body.innerHTML=tabsHtml()+'<div class="fb-cats">'+chip('new','New')+chip('done','Done')+chip('all','All')+'</div>'
+      +(shown.length?shown.map(function(i){
+        return '<div class="fb-item'+(i.status==='done'?' done':'')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(when(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div>'
+          +'<div class="fb-msg">'+esc(i.message)+'</div>'
+          +'<div class="fb-item-act"><button class="btn btn-ghost btn-sm" data-fb="status" data-id="'+esc(i.id)+'" data-to="'+(i.status==='done'?'new':'done')+'">'+(i.status==='done'?'Reopen':'Mark done')+'</button></div></div>';
+      }).join(''):'<div style="color:var(--text3);font-size:13px;padding:10px 0">'+(all.length?'Nothing here.':'No feedback yet.')+'</div>');
+    ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>';
+  }
+  async function loadList(){
+    st.loading=true; st.loadErr=''; renderList();
+    try{ const d=await api('GET',''); st.items=d.items||[]; }
+    catch(err){ st.loadErr=String(err.message||err).slice(0,140); }
+    st.loading=false; if(st.tab==='list') renderList();
+  }
+  function render(){ if(st.tab==='list') renderList(); else renderSend(); }
+  async function send(){
+    const text=st.text.trim(); if(!text||st.sending) return;
+    st.sending=true; st.err=''; renderSend();
+    try{ await api('POST','',{category:st.cat,message:text,page:pageLabel()}); st.sent=true; st.text=''; st.items=null; }
+    catch(err){ st.err=err.status===429?String(err.message):('Couldn’t send: '+String(err.message||err).slice(0,140)); }
+    st.sending=false; if(st.tab==='send') renderSend();
+  }
+  ov.addEventListener('input',function(ev){
+    if(ev.target.id!=='fb-text') return;
+    st.text=ev.target.value; const c=ov.querySelector('#fb-count'); if(c) c.textContent=st.text.length+' / '+FB_MAX;
+    const b=ov.querySelector('#fb-send'); if(b) b.disabled=!st.text.trim()||st.sending;
+  });
+  ov.addEventListener('click',function(ev){
+    const b=ev.target.closest('[data-fb]');
+    if(!b){ if(ev.target===ov && !st.text.trim()) close(); return; } // a stray tap outside never throws away a typed message
+    const act=b.getAttribute('data-fb');
+    if(act==='close') close();
+    else if(act==='cat'){ st.cat=b.getAttribute('data-cat'); renderSend(); }
+    else if(act==='send') send();
+    else if(act==='again'){ st.sent=false; st.err=''; renderSend(); }
+    else if(act==='tab-send'){ st.tab='send'; render(); }
+    else if(act==='tab-list'){ st.tab='list'; if(st.items===null) loadList(); else renderList(); }
+    else if(act==='reload') loadList();
+    else if(act==='filter'){ st.filter=b.getAttribute('data-f'); renderList(); }
+    else if(act==='status'){
+      const id=b.getAttribute('data-id'), to=b.getAttribute('data-to'); b.disabled=true;
+      api('PUT','/'+encodeURIComponent(id),{status:to}).then(function(){ const it=(st.items||[]).find(function(x){ return x.id===id; }); if(it) it.status=to; if(st.tab==='list') renderList(); })
+        .catch(function(err){ b.disabled=false; alert('Couldn’t update: '+String(err.message||err).slice(0,140)); });
+    }
+  });
+  render();
+}
+
 function openTeamContacts(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
@@ -7746,7 +7903,8 @@ function finishLogin(name){
     const badge = document.createElement('div');
     badge.id = 'ms-user-badge';
     badge.style.cssText = 'display:flex;align-items:center;gap:6px;background:var(--green-light);color:var(--green-dark);font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px';
-    badge.innerHTML = '<span style="width:7px;height:7px;background:var(--green);border-radius:50%;display:inline-block"></span>' + name;
+    badge.innerHTML = '<span style="width:7px;height:7px;background:var(--green);border-radius:50%;display:inline-block;flex:none"></span><span class="ms-badge-name"></span>';
+    badge.lastChild.textContent = name; badge.title = name; // textContent: the name is shown as text, never parsed as HTML
     right.insertBefore(badge, gear);
   }
   document.getElementById('ms-login-overlay').style.display = 'none';

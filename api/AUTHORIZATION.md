@@ -10,6 +10,8 @@ administer it.
 | **Read** availability, crew calendar, and dispatch — **including client phone numbers** | Any signed-in `@jetcityit.com` user (techs need this to call/text on site) |
 | **Refresh** the board from Smartsheet on demand (`POST /api/dispatch/refresh`) | Any signed-in `@jetcityit.com` user (read-only pull; runs the same sync the cron uses, guarded by the per-user rate limit) |
 | **Submit / edit own** availability | Any signed-in tech (own record only) |
+| **Send feedback / a suggestion** (`POST /api/feedback`, the header's Feedback button; stored in Cosmos as `feedback:<uuid>` and emailed to the team lead; sender identity comes from the sign-in token; about 10 per person per hour, counted in memory per server instance so it resets on restart; the stored items, with the sender's name and email, can be read by any editor) | Any signed-in `@jetcityit.com` user |
+| **Read the feedback list / mark items done** (`GET /api/feedback`, `PUT /api/feedback/{id}`) | **Editors only** |
 | **Reassign crew** on a job (`PUT /api/dispatch/jobs/{id}/crew`) | **Editors only** |
 | **Mark crew inactive** — hide people who left from Assign crew, the Individual availability view and the weekly reminder (`PUT /api/dispatch/inactive-crew`; the list is one Cosmos doc, `crew-inactive`, laid over the synced roster on read — no one is deleted and Smartsheet is untouched) | **Editors only**. The roster from `GET /api/dispatch` marks them `active:false` for everyone; the raw list (`inactiveNames`) is only returned to editors |
 | **Clear a whole week's** availability (`DELETE /api/availability/{week}`) | **Editors only** |

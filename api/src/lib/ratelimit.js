@@ -26,7 +26,7 @@ function checkRateLimit(key, max = MAX_PER_WINDOW, windowMs = WINDOW_MS) {
     const now = Date.now();
     let entry = hits.get(key);
     if (!entry || now - entry.windowStart >= windowMs) {
-      entry = { count: 0, windowStart: now };
+      entry = { count: 0, windowStart: now, windowMs };
       hits.set(key, entry);
     }
     entry.count += 1;
@@ -34,7 +34,7 @@ function checkRateLimit(key, max = MAX_PER_WINDOW, windowMs = WINDOW_MS) {
     // Opportunistic cleanup so the map can't grow unbounded.
     if (hits.size > 5000) {
       for (const [k, v] of hits) {
-        if (now - v.windowStart >= windowMs) hits.delete(k);
+        if (now - v.windowStart >= (v.windowMs || windowMs)) hits.delete(k); // each entry expires on its own window
       }
     }
 
