@@ -114,7 +114,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .fb-tag.problem{background:var(--unavail-bg);color:var(--unavail-text)}
 .fb-tag.suggestion{background:var(--green-light);color:var(--green-dark)}
 .fb-msg{font-size:13.5px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.5}
-.fb-item-act{margin-top:8px;display:flex;justify-content:flex-end}
+.fb-item-act{margin-top:8px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
 .settings-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:14px;z-index:1000;width:240px;display:none}
 .settings-menu.open{display:block}
 .info-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:8px;z-index:1000;width:250px;max-width:calc(100vw - 32px);display:none}
@@ -7603,7 +7603,7 @@ function openFeedback(e){
   const opener=document.getElementById('fb-btn');
   const FB_MAX=2000;
   const CATS=[['suggestion','💡 Suggestion'],['problem','⚠ Something isn’t working'],['other','Other']];
-  const st={tab:'send',cat:'suggestion',text:'',sent:false,sending:false,err:'',items:null,loading:false,loadErr:'',filter:'new'};
+  const st={tab:'send',cat:'suggestion',text:'',sent:false,sending:false,err:'',items:null,loading:false,loadErr:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{}};
   const ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:520px;outline:none" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="fb-title">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title" id="fb-title">Suggestions &amp; feedback</span><button class="dp-close" data-fb="close" aria-label="Close">✕</button></div>'
@@ -7625,8 +7625,8 @@ function openFeedback(e){
   // primary action after sending) so keyboard and screen-reader users aren't dropped onto the page behind it.
   function keepFocus(prefer){
     const el=prefer&&ov.querySelector(prefer);
-    if(el&&!el.disabled){ el.focus(); return; }
-    if(!ov.contains(document.activeElement)) ov.querySelector('.dp-modal').focus();
+    if(el&&!el.disabled){ el.focus({preventScroll:true}); return; }
+    if(!ov.contains(document.activeElement)) ov.querySelector('.dp-modal').focus({preventScroll:true});
   }
   function close(){ if(st.sending) return; /* don't hide a message that is still going out */ ov.remove(); document.removeEventListener('keydown',onKey); if(opener) opener.focus(); }
   document.addEventListener('keydown',onKey);
@@ -7675,7 +7675,12 @@ function openFeedback(e){
       +(shown.length?shown.map(function(i){
         return '<div class="fb-item'+(i.status==='done'?' done':'')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(when(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div>'
           +'<div class="fb-msg">'+esc(i.message)+'</div>'
-          +'<div class="fb-item-act"><button class="btn btn-ghost btn-sm" data-fb="status" data-id="'+esc(i.id)+'" data-to="'+(i.status==='done'?'new':'done')+'">'+(i.status==='done'?'Reopen':'Mark done')+'</button></div></div>';
+          +(st.deleting[i.id]
+            ?'<div class="fb-item-act" role="status"><span style="font-size:12.5px;color:var(--text3)">Deleting…</span></div>'
+            :st.confirmDel===i.id
+            ?'<div class="fb-item-act" role="alert"><span style="font-size:12.5px;color:var(--red);margin-right:auto">Delete this for good?</span><button class="btn btn-sm btn-danger" data-fb="del-yes" data-id="'+esc(i.id)+'">Yes, delete</button><button class="btn btn-sm" data-fb="del-no" id="fb-keep">Keep</button></div>'
+            :'<div class="fb-item-act"><button class="btn btn-ghost btn-sm" data-fb="status" data-id="'+esc(i.id)+'" data-to="'+(i.status==='done'?'new':'done')+'">'+(i.status==='done'?'Reopen':'Mark done')+'</button><button class="btn btn-ghost btn-sm" data-fb="del" data-id="'+esc(i.id)+'" aria-label="Delete this feedback">Delete</button></div>')
+          +'</div>';
       }).join(''):'<div style="color:var(--text3);font-size:13px;padding:10px 0">'+(all.length?'Nothing here.':'No feedback yet.')+'</div>');
     ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>';
   }
@@ -7706,10 +7711,28 @@ function openFeedback(e){
     else if(act==='cat'){ st.cat=b.getAttribute('data-cat'); renderSend(); }
     else if(act==='send') send();
     else if(act==='again'){ st.sent=false; st.err=''; renderSend(); }
-    else if(act==='tab-send'){ st.tab='send'; render(); }
-    else if(act==='tab-list'){ st.tab='list'; if(st.items===null) loadList(); else renderList(); }
+    else if(act==='tab-send'){ st.tab='send'; st.confirmDel=null; render(); }
+    else if(act==='tab-list'){ st.tab='list'; st.confirmDel=null; if(st.items===null) loadList(); else renderList(); }
     else if(act==='reload') loadList();
-    else if(act==='filter'){ st.filter=b.getAttribute('data-f'); renderList(); }
+    else if(act==='filter'){ st.filter=b.getAttribute('data-f'); st.confirmDel=null; renderList(); }
+    else if(act==='del'){ st.confirmDel=b.getAttribute('data-id'); st.confirmAt=Date.now(); renderList(); keepFocus('#fb-keep'); }
+    else if(act==='del-no'){ st.confirmDel=null; renderList(); keepFocus('.fb-tab.on'); }
+    else if(act==='del-yes'){
+      if(Date.now()-st.confirmAt<500) return; // a double-click on Delete must not skate through the confirmation
+      const id=b.getAttribute('data-id');
+      if(st.deleting[id]) return;
+      st.deleting[id]=true; if(st.confirmDel===id) st.confirmDel=null; renderList();
+      const finish=function(removed){
+        delete st.deleting[id];
+        if(removed&&st.items) st.items=st.items.filter(function(x){ return x.id!==id; });
+        if(st.tab==='list') renderList();
+      };
+      api('DELETE','/'+encodeURIComponent(id)).then(function(){ finish(true); })
+        .catch(function(err){
+          if(err.status===404){ finish(true); return; } // already gone: drop it from the list
+          finish(false); alert('Couldn’t delete: '+String(err.message||err).slice(0,140));
+        });
+    }
     else if(act==='status'){
       const id=b.getAttribute('data-id'), to=b.getAttribute('data-to'); b.disabled=true;
       api('PUT','/'+encodeURIComponent(id),{status:to}).then(function(){ const it=(st.items||[]).find(function(x){ return x.id===id; }); if(it) it.status=to; if(st.tab==='list') renderList(); })

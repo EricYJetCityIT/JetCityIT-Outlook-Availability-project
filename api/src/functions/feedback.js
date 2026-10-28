@@ -63,8 +63,9 @@ async function notify(doc, context) {
 // POST   /api/feedback        { category, message, page? }  -> any signed-in user
 // GET    /api/feedback        -> { items } newest first (editors only)
 // PUT    /api/feedback/{id}   { status: 'new'|'done' }      -> editors only
+// DELETE /api/feedback/{id}   -> editors only; removes the item for good (the emailed copy is separate)
 app.http('feedback', {
-  methods: ['GET', 'POST', 'PUT'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
   authLevel: 'anonymous',
   route: 'feedback/{id?}',
   handler: async (request, context) => {
@@ -117,9 +118,27 @@ app.http('feedback', {
         return { jsonBody: { items: items.map(publicItem) } };
       }
 
-      // PUT: mark done / reopen
       const id = String(request.params.id || '');
       if (id.indexOf(ID_PREFIX) !== 0) return { status: 400, jsonBody: { error: 'Missing feedback id' } };
+
+      if (request.method === 'DELETE') {
+        let found;
+        try {
+          ({ resource: found } = await container.item(id, id).read());
+        } catch (e) {
+          if (e && e.code === 404) found = null; else throw e;
+        }
+        if (!found || found.type !== 'feedback') return { status: 404, jsonBody: { error: 'Not found' } }; // never deletes anything that isn't a feedback item
+        try {
+          await container.item(id, id).delete();
+        } catch (e) {
+          if (!(e && e.code === 404)) throw e; // already gone (e.g. two editors deleting at once) is fine
+        }
+        audit(context, user, 'feedback.delete', { id }); // resource id only, never the message or sender
+        return { jsonBody: { ok: true } };
+      }
+
+      // PUT: mark done / reopen
       const body = await request.json().catch(() => null);
       if (!body || (body.status !== 'new' && body.status !== 'done')) return { status: 400, jsonBody: { error: "status must be 'new' or 'done'" } };
       let cur;
@@ -131,7 +150,7 @@ app.http('feedback', {
       if (!cur || cur.type !== 'feedback') return { status: 404, jsonBody: { error: 'Not found' } };
       const next = { ...cur, status: body.status, updatedAt: new Date().toISOString(), updatedBy: oneLine(user.upn, 200) };
       await container.item(id, id).replace(next);
-      audit(context, user, 'feedback.status', { status: body.status });
+      audit(context, user, 'feedback.status', { id, status: body.status });
       return { jsonBody: { ok: true, item: publicItem(next) } };
     } catch (e) {
       return feedbackError(e, context);
