@@ -103,9 +103,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .fb-cat.on{background:var(--green-light);border-color:var(--green);color:var(--green-dark);font-weight:600}
 .fb-cat:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .fb-count{font-size:11.5px;color:var(--text3);text-align:right;margin-top:4px}
-.fb-tabs{display:flex;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px;width:fit-content;margin-bottom:14px}
-.fb-tab{padding:5px 14px;border-radius:6px;border:none;background:transparent;font:inherit;font-size:12.5px;font-weight:500;cursor:pointer;color:var(--text3)}
-.fb-tab.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
+.mgr-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;vertical-align:1px;box-sizing:border-box}
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px;background:var(--surface)}
 .fb-item.done{opacity:.6}
 .fb-item-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--text3);margin-bottom:6px}
@@ -332,7 +330,8 @@ input[type=text]::placeholder{color:var(--text3)}
 
 /* ── Mgr sub-tabs ── */
 .mgr-sub-tabs{display:flex;gap:4px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px;width:fit-content}
-.mgr-sub-tab{padding:6px 16px;border-radius:6px;border:none;background:transparent;font-size:12px;font-weight:500;cursor:pointer;color:var(--text3);font-family:inherit;transition:background .12s,color .12s}
+.mgr-sub-tabs{max-width:100%;overflow-x:auto}
+.mgr-sub-tab{flex:none;white-space:nowrap;padding:6px 16px;border-radius:6px;border:none;background:transparent;font-size:12px;font-weight:500;cursor:pointer;color:var(--text3);font-family:inherit;transition:background .12s,color .12s}
 .mgr-sub-tab.active{background:var(--surface);color:var(--text);box-shadow:var(--shadow-sm)}
 
 /* ── Empty ── */
@@ -1040,7 +1039,7 @@ if('serviceWorker' in navigator){
     </button>
     <button class="tab" id="tab-manager" onclick="switchTab('manager')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" stroke-width="2"/></svg>
-      Manager view
+      Manager view<span class="mgr-badge" id="tab-mgr-badge" style="display:none"></span>
     </button>
     <button class="tab" id="tab-planning" onclick="switchTab('planning')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="4" y="3" width="16" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 3v3h8V3" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h8M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -5499,6 +5498,9 @@ function ttPaint(){
 
 // ── Manager view ──────────────────────────────────────────────────────────────
 let mgrMode='dispatch';
+// Manager view → Feedback state (the code is further down, next to openFeedback)
+const fbm={items:null,loading:false,err:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{},focusKey:null,seq:0,mut:0};
+let fbOpenCount=null, fbPoll=null;
 let crewMode='board';
 let crewSelectedWorker='';
 let currentUserName='';
@@ -5518,12 +5520,14 @@ function mgrSubTabsHtml(){
       <button class="mgr-sub-tab ${mgrMode==='individual'?'active':''}" onclick="setMgrMode('individual')">Individual</button>
       <button class="mgr-sub-tab ${mgrMode==='dispatch'?'active':''}" onclick="setMgrMode('dispatch')">Dispatch</button>
       <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>${currentUserIsTester?`
-      <button class="mgr-sub-tab ${mgrMode==='tech'?'active':''}" onclick="setMgrMode('tech')">Tech tracking</button>`:''}
+      <button class="mgr-sub-tab ${mgrMode==='tech'?'active':''}" onclick="setMgrMode('tech')">Tech tracking</button>`:''}${currentUserIsEditor?`
+      <button class="mgr-sub-tab ${mgrMode==='feedback'?'active':''}" onclick="setMgrMode('feedback')">Feedback${fbBadgeHtml()}</button>`:''}
     </div>`;
 }
 
 async function renderManager(){
   if(mgrMode==='tech'&&!currentUserIsTester) mgrMode='dispatch'; // Testers-only tab
+  if(mgrMode==='feedback'&&!currentUserIsEditor) mgrMode='dispatch'; // Manager view people only
   await ensureAvailabilityLoaded(selectedWeekKey);
   let names=getNames();
   const el=document.getElementById('mgr-content');
@@ -5541,6 +5545,13 @@ async function renderManager(){
     subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
     el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.reportsViewHtml()}`;
+    return;
+  }
+
+  if(mgrMode==='feedback'){
+    subLbl.textContent='Feedback & suggestions';
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div><div id="fbm-root"></div>`;
+    fbmShow();
     return;
   }
 
@@ -7592,10 +7603,24 @@ async function openJobPlanModal(job){
   }
 }
 
-// ── Suggestions & feedback (header button) ───────────────────────────────────
-// Anyone signed in can send a suggestion or a problem report (POST /api/feedback: stored, and
-// the team lead is emailed a copy; the sender's name comes from their sign-in). Editors also get
-// a "Submissions" tab to read them and mark them done.
+// ── Suggestions & feedback ───────────────────────────────────────────────────
+// Anyone signed in can send a suggestion or a problem report from the header button (POST
+// /api/feedback: stored, and the team lead is emailed a copy; the sender's name comes from their
+// sign-in). READING, completing and deleting submissions is for people with Manager view access
+// only: that lives in Manager view → Feedback (further down), and the API enforces it too, so a
+// regular tech never sees what anyone else sent.
+function fbApi(method,path,payload){
+  // A request that never answers must not leave the screen stuck on "Sending…" / "Loading…".
+  return Promise.race([fbApiCall(method,path,payload),new Promise(function(_,rej){ setTimeout(function(){ rej(new Error('That took too long. Please check your connection and try again.')); },25000); })]);
+}
+async function fbApiCall(method,path,payload){
+  const token=await getApiToken();
+  const res=await fetch('/api/feedback'+(path||''),{method:method,headers:Object.assign({'X-Jetcity-Authorization':'Bearer '+token},payload?{'Content-Type':'application/json'}:{}),body:payload?JSON.stringify(payload):undefined});
+  let data=null; try{ data=await res.json(); }catch(_){}
+  if(!res.ok){ const m=(data&&data.error)||('Request failed ('+res.status+')'); const er=new Error(m); er.status=res.status; throw er; }
+  return data;
+}
+
 function openFeedback(e){
   if(e) e.stopPropagation();
   const im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
@@ -7603,7 +7628,7 @@ function openFeedback(e){
   const opener=document.getElementById('fb-btn');
   const FB_MAX=2000;
   const CATS=[['suggestion','💡 Suggestion'],['problem','⚠ Something isn’t working'],['other','Other']];
-  const st={tab:'send',cat:'suggestion',text:'',sent:false,sending:false,err:'',items:null,loading:false,loadErr:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{}};
+  const st={cat:'suggestion',text:'',sent:false,sending:false,err:''};
   const ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:520px;outline:none" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="fb-title">'
     +'<div class="dp-modal-hd"><span class="dp-modal-title" id="fb-title">Suggestions &amp; feedback</span><button class="dp-close" data-fb="close" aria-label="Close">✕</button></div>'
@@ -7630,34 +7655,15 @@ function openFeedback(e){
   }
   function close(){ if(st.sending) return; /* don't hide a message that is still going out */ ov.remove(); document.removeEventListener('keydown',onKey); if(opener) opener.focus(); }
   document.addEventListener('keydown',onKey);
-  const pageLabel=function(){ const t=document.querySelector('.tabs .tab.active'); return t?t.textContent.replace(/\s+/g,' ').trim().slice(0,40):''; };
-  const when=function(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return ''; } };
-  function api(method,path,payload){
-    // A request that never answers must not leave the dialog stuck (closing is blocked while sending).
-    return Promise.race([apiCall(method,path,payload),new Promise(function(_,rej){ setTimeout(function(){ const er=new Error('That took too long. Please check your connection and try again.'); rej(er); },25000); })]);
-  }
-  async function apiCall(method,path,payload){
-    const token=await getApiToken();
-    const res=await fetch('/api/feedback'+(path||''),{method:method,headers:Object.assign({'X-Jetcity-Authorization':'Bearer '+token},payload?{'Content-Type':'application/json'}:{}),body:payload?JSON.stringify(payload):undefined});
-    let data=null; try{ data=await res.json(); }catch(_){}
-    if(!res.ok){ const m=(data&&data.error)||('Request failed ('+res.status+')'); const er=new Error(m); er.status=res.status; throw er; }
-    return data;
-  }
-  function tabsHtml(){
-    if(!currentUserIsEditor) return '';
-    const n=st.items?st.items.filter(function(i){ return i.status!=='done'; }).length:null;
-    return '<div class="fb-tabs" role="tablist"><button class="fb-tab'+(st.tab==='send'?' on':'')+'" role="tab" aria-selected="'+(st.tab==='send')+'" data-fb="tab-send">Send feedback</button>'
-      +'<button class="fb-tab'+(st.tab==='list'?' on':'')+'" role="tab" aria-selected="'+(st.tab==='list')+'" data-fb="tab-list">Submissions'+(n?' ('+n+' new)':'')+'</button></div>';
-  }
-  function renderSend(){
+  const pageLabel=function(){ const t=document.querySelector('.tabs .tab.active'); if(!t) return ''; const c=t.cloneNode(true); c.querySelectorAll('.mgr-badge').forEach(function(x){ x.remove(); }); return c.textContent.replace(/\s+/g,' ').trim().slice(0,40); }; // the red count lives inside the tab button, so leave it out of the page name
+  function render(){
     if(st.sent){
-      body.innerHTML=tabsHtml()+'<div role="status" style="text-align:center;padding:18px 4px 6px"><div style="font-size:34px;line-height:1">✅</div><div style="font-weight:600;font-size:16px;margin-top:10px">Thanks — it’s been sent</div><div class="fb-note" style="margin-top:6px">We read every one. If it needs an answer, someone will follow up.</div></div>';
+      body.innerHTML='<div role="status" style="text-align:center;padding:18px 4px 6px"><div style="font-size:34px;line-height:1">✅</div><div style="font-weight:600;font-size:16px;margin-top:10px">Thanks — it’s been sent</div><div class="fb-note" style="margin-top:6px">We read every one. If it needs an answer, someone will follow up.</div></div>';
       ft.innerHTML='<button class="btn btn-sm" data-fb="again">Send another</button><button class="btn btn-primary btn-sm" data-fb="close">Close</button>';
       keepFocus('[data-fb="close"]');
       return;
     }
-    body.innerHTML=tabsHtml()
-      +'<div class="fb-note">Tell us what would make this site better, or what isn’t working. It’s sent to Eric and can be read by the site’s editors (the managers who can edit the board), with your name attached. Please don’t put passwords or client secrets in here.</div>'
+    body.innerHTML='<div class="fb-note">Tell us what would make this site better, or what isn’t working. It’s sent to Eric and the managers who have access to the Manager view, with your name attached. Other techs can’t see it. Please don’t put passwords or client secrets in here.</div>'
       +'<div class="fb-cats" role="group" aria-label="Type of feedback">'+CATS.map(function(c){ return '<button type="button" class="fb-cat'+(st.cat===c[0]?' on':'')+'" aria-pressed="'+(st.cat===c[0])+'" data-fb="cat" data-cat="'+c[0]+'">'+esc(c[1])+'</button>'; }).join('')+'</div>'
       +'<textarea id="fb-text" rows="6" maxlength="'+FB_MAX+'" placeholder="'+(st.cat==='problem'?'What happened, and where? (the page, what you tapped, what you expected)':'What would you like to see?')+'" aria-label="Your message" style="width:100%;resize:vertical">'+esc(st.text)+'</textarea>'
       +'<div class="fb-count" id="fb-count">'+st.text.length+' / '+FB_MAX+'</div>'
@@ -7665,38 +7671,12 @@ function openFeedback(e){
     ft.innerHTML='<button class="btn btn-sm" data-fb="close"'+(st.sending?' disabled':'')+'>Cancel</button><button class="btn btn-primary btn-sm" data-fb="send" id="fb-send"'+(st.text.trim()&&!st.sending?'':' disabled')+'>'+(st.sending?'Sending…':'Send')+'</button>';
     const ta=body.querySelector('#fb-text'); if(ta&&!st.sending) ta.focus(); else keepFocus();
   }
-  function renderList(){
-    if(st.loading){ body.innerHTML=tabsHtml()+'<div style="color:var(--text3);font-size:13px;padding:8px 0">Loading…</div>'; ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>'; return; }
-    if(st.loadErr){ body.innerHTML=tabsHtml()+'<div style="color:var(--red);font-size:13px;padding:8px 0">'+esc(st.loadErr)+' <button class="btn btn-ghost btn-sm" data-fb="reload">Try again</button></div>'; ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>'; return; }
-    const all=st.items||[];
-    const shown=all.filter(function(i){ return st.filter==='all'||(st.filter==='done'?i.status==='done':i.status!=='done'); });
-    const chip=function(k,l){ return '<button type="button" class="fb-cat'+(st.filter===k?' on':'')+'" aria-pressed="'+(st.filter===k)+'" data-fb="filter" data-f="'+k+'">'+l+'</button>'; };
-    body.innerHTML=tabsHtml()+'<div class="fb-cats">'+chip('new','New')+chip('done','Done')+chip('all','All')+'</div>'
-      +(shown.length?shown.map(function(i){
-        return '<div class="fb-item'+(i.status==='done'?' done':'')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(when(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div>'
-          +'<div class="fb-msg">'+esc(i.message)+'</div>'
-          +(st.deleting[i.id]
-            ?'<div class="fb-item-act" role="status"><span style="font-size:12.5px;color:var(--text3)">Deleting…</span></div>'
-            :st.confirmDel===i.id
-            ?'<div class="fb-item-act" role="alert"><span style="font-size:12.5px;color:var(--red);margin-right:auto">Delete this for good?</span><button class="btn btn-sm btn-danger" data-fb="del-yes" data-id="'+esc(i.id)+'">Yes, delete</button><button class="btn btn-sm" data-fb="del-no" id="fb-keep">Keep</button></div>'
-            :'<div class="fb-item-act"><button class="btn btn-ghost btn-sm" data-fb="status" data-id="'+esc(i.id)+'" data-to="'+(i.status==='done'?'new':'done')+'">'+(i.status==='done'?'Reopen':'Mark done')+'</button><button class="btn btn-ghost btn-sm" data-fb="del" data-id="'+esc(i.id)+'" aria-label="Delete this feedback">Delete</button></div>')
-          +'</div>';
-      }).join(''):'<div style="color:var(--text3);font-size:13px;padding:10px 0">'+(all.length?'Nothing here.':'No feedback yet.')+'</div>');
-    ft.innerHTML='<span></span><button class="btn btn-sm" data-fb="close">Close</button>';
-  }
-  async function loadList(){
-    st.loading=true; st.loadErr=''; renderList();
-    try{ const d=await api('GET',''); st.items=d.items||[]; }
-    catch(err){ st.loadErr=String(err.message||err).slice(0,140); }
-    st.loading=false; if(st.tab==='list') renderList();
-  }
-  function render(){ if(st.tab==='list') renderList(); else renderSend(); }
   async function send(){
     const text=st.text.trim(); if(!text||st.sending) return;
-    st.sending=true; st.err=''; renderSend();
-    try{ await api('POST','',{category:st.cat,message:text,page:pageLabel()}); st.sent=true; st.text=''; st.items=null; }
+    st.sending=true; st.err=''; render();
+    try{ await fbApi('POST','',{category:st.cat,message:text,page:pageLabel()}); st.sent=true; st.text=''; if(currentUserIsEditor) fbRefreshCount(); }
     catch(err){ st.err=err.status===429?String(err.message):('Couldn’t send: '+String(err.message||err).slice(0,140)); }
-    st.sending=false; if(st.tab==='send') renderSend();
+    st.sending=false; render();
   }
   ov.addEventListener('input',function(ev){
     if(ev.target.id!=='fb-text') return;
@@ -7708,38 +7688,105 @@ function openFeedback(e){
     if(!b){ if(ev.target===ov && !st.text.trim()) close(); return; } // a stray tap outside never throws away a typed message
     const act=b.getAttribute('data-fb');
     if(act==='close') close();
-    else if(act==='cat'){ st.cat=b.getAttribute('data-cat'); renderSend(); }
+    else if(act==='cat'){ st.cat=b.getAttribute('data-cat'); render(); }
     else if(act==='send') send();
-    else if(act==='again'){ st.sent=false; st.err=''; renderSend(); }
-    else if(act==='tab-send'){ st.tab='send'; st.confirmDel=null; render(); }
-    else if(act==='tab-list'){ st.tab='list'; st.confirmDel=null; if(st.items===null) loadList(); else renderList(); }
-    else if(act==='reload') loadList();
-    else if(act==='filter'){ st.filter=b.getAttribute('data-f'); st.confirmDel=null; renderList(); }
-    else if(act==='del'){ st.confirmDel=b.getAttribute('data-id'); st.confirmAt=Date.now(); renderList(); keepFocus('#fb-keep'); }
-    else if(act==='del-no'){ st.confirmDel=null; renderList(); keepFocus('.fb-tab.on'); }
-    else if(act==='del-yes'){
-      if(Date.now()-st.confirmAt<500) return; // a double-click on Delete must not skate through the confirmation
-      const id=b.getAttribute('data-id');
-      if(st.deleting[id]) return;
-      st.deleting[id]=true; if(st.confirmDel===id) st.confirmDel=null; renderList();
-      const finish=function(removed){
-        delete st.deleting[id];
-        if(removed&&st.items) st.items=st.items.filter(function(x){ return x.id!==id; });
-        if(st.tab==='list') renderList();
-      };
-      api('DELETE','/'+encodeURIComponent(id)).then(function(){ finish(true); })
-        .catch(function(err){
-          if(err.status===404){ finish(true); return; } // already gone: drop it from the list
-          finish(false); alert('Couldn’t delete: '+String(err.message||err).slice(0,140));
-        });
-    }
-    else if(act==='status'){
-      const id=b.getAttribute('data-id'), to=b.getAttribute('data-to'); b.disabled=true;
-      api('PUT','/'+encodeURIComponent(id),{status:to}).then(function(){ const it=(st.items||[]).find(function(x){ return x.id===id; }); if(it) it.status=to; if(st.tab==='list') renderList(); })
-        .catch(function(err){ b.disabled=false; alert('Couldn’t update: '+String(err.message||err).slice(0,140)); });
-    }
+    else if(act==='again'){ st.sent=false; st.err=''; render(); }
   });
   render();
+}
+
+// ── Manager view → Feedback (people with Manager view access only) ──────────────
+// Lists what staff sent through the header Feedback button, with Mark done / Reopen / Delete, and
+// keeps a count of the ones still waiting (the red number on the Manager view tab and on this
+// sub-tab). The API refuses everyone else (editors only), so this is not just hidden in the page.
+function fbWhen(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_){ return ''; } }
+function fbBadgeHtml(){ return '<span class="mgr-badge" id="mgr-fb-subbadge"'+(fbOpenCount>0?'':' style="display:none"')+'>'+(fbOpenCount>99?'99+':(fbOpenCount||''))+'</span>'; }
+function fbApplyCount(){
+  const n=fbOpenCount, txt=n>99?'99+':String(n);
+  ['tab-mgr-badge','mgr-fb-subbadge'].forEach(function(id){
+    const el=document.getElementById(id); if(!el) return;
+    if(n>0){ el.textContent=txt; el.style.display=''; el.setAttribute('aria-label',n+' new'); } else { el.textContent=''; el.style.display='none'; el.removeAttribute('aria-label'); }
+  });
+}
+async function fbRefreshCount(){
+  if(!currentUserIsEditor) return;
+  try{ const d=await fbApi('GET','?summary=1'); if(typeof d.open==='number'){ fbOpenCount=d.open; fbApplyCount(); } }
+  catch(e){ /* keep the last number; the next check tries again */ }
+}
+function fbStartPolling(){
+  if(fbPoll||!currentUserIsEditor) return;
+  fbRefreshCount();
+  fbPoll=setInterval(function(){ if(!document.hidden) fbRefreshCount(); },180000);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) fbRefreshCount(); });
+}
+async function fbmLoad(silent){
+  const my=++fbm.seq, mutAtStart=fbm.mut;
+  if(!silent||fbm.items===null){ fbm.loading=true; }
+  fbm.err=''; fbmPaint();
+  let d=null;
+  try{ d=await fbApi('GET',''); }
+  catch(err){ if(my===fbm.seq) fbm.err=String(err.message||err).slice(0,140); }
+  if(my!==fbm.seq) return;                                  // a newer load started: ignore this older answer
+  if(d&&fbm.mut!==mutAtStart){ fbmLoad(true); return; }     // a mark-done/delete finished while this was in flight: the answer may predate it, so ask again
+  if(d) fbm.items=d.items||[];
+  fbm.loading=false; fbmPaint(); fbRefreshCount(); // the exact count comes from the server (the list is capped)
+}
+function fbmShow(){ fbm.confirmDel=null; if(fbm.items===null) fbmLoad(false); else { fbmPaint(); fbmLoad(true); } }
+function fbmPaint(){
+  const root=document.getElementById('fbm-root'); if(!root||mgrMode!=='feedback') return;
+  const fa=document.activeElement, fk=(fa&&root.contains(fa)&&fa.getAttribute)?fa.getAttribute('data-fk'):null;
+  const key=fbm.focusKey||fk; fbm.focusKey=null;
+  let h='';
+  if(fbm.loading&&fbm.items===null) h='<div class="tt-empty">Loading…</div>';
+  else if(fbm.err&&fbm.items===null) h='<div class="tt-empty">'+esc(fbm.err)+' <button class="tt-link" data-fk="retry" onclick="fbmAct(this)" data-a="reload">Try again</button></div>';
+  else {
+    const all=fbm.items||[], isNew=function(i){ return i.status!=='done'; };
+    const nNew=all.filter(isNew).length, nDone=all.length-nNew;
+    const shown=all.filter(function(i){ return fbm.filter==='all'||(fbm.filter==='done'?!isNew(i):isNew(i)); });
+    const chip=function(k,l,n){ return '<button type="button" class="fb-cat'+(fbm.filter===k?' on':'')+'" aria-pressed="'+(fbm.filter===k)+'" data-a="filter" data-f="'+k+'" data-fk="chip:'+k+'" onclick="fbmAct(this)">'+l+(n!=null?' ('+n+')':'')+'</button>'; };
+    h+='<div class="fb-cats" style="align-items:center">'+chip('new','New',nNew)+chip('done','Done',nDone)+chip('all','All',all.length)
+      +'<button class="tt-link" style="margin-left:auto" data-a="reload" data-fk="refresh" onclick="fbmAct(this)">'+(fbm.loading?'Refreshing…':'Refresh')+'</button></div>';
+    if(fbm.err) h+='<div class="tt-warn">Couldn’t refresh ('+esc(fbm.err)+'). Showing what was loaded earlier.</div>';
+    h+=shown.length?shown.map(function(i){
+      const act=fbm.deleting[i.id]
+        ?'<div class="fb-item-act" role="status"><span style="font-size:12.5px;color:var(--text3)">Deleting…</span></div>'
+        :fbm.confirmDel===i.id
+        ?'<div class="fb-item-act" role="alert"><span style="font-size:12.5px;color:var(--red);margin-right:auto">Delete this for good?</span><button class="btn btn-sm btn-danger" data-a="del-yes" data-id="'+esc(i.id)+'" data-fk="yes:'+esc(i.id)+'" onclick="fbmAct(this)">Yes, delete</button><button class="btn btn-sm" data-a="del-no" data-id="'+esc(i.id)+'" data-fk="keep" onclick="fbmAct(this)">Keep</button></div>'
+        :'<div class="fb-item-act"><button class="btn btn-sm" data-a="status" data-id="'+esc(i.id)+'" data-to="'+(isNew(i)?'done':'new')+'" data-fk="st:'+esc(i.id)+'" onclick="fbmAct(this)">'+(isNew(i)?'✓ Mark done':'Reopen')+'</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" data-a="del" data-id="'+esc(i.id)+'" data-fk="del:'+esc(i.id)+'" aria-label="Delete this feedback" onclick="fbmAct(this)">Delete</button></div>';
+      return '<div class="fb-item'+(isNew(i)?'':' done')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(fbWhen(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div><div class="fb-msg">'+esc(i.message)+'</div>'+act+'</div>';
+    }).join(''):'<div class="tt-empty">'+(all.length?'Nothing here.':'No feedback yet.')+'</div>';
+  }
+  root.innerHTML='<div style="max-width:780px">'+h+'</div>';
+  if(key){ const el=root.querySelector('[data-fk="'+key+'"]'); if(el&&!el.disabled) el.focus({preventScroll:true}); }
+}
+function fbmAct(b){
+  const a=b.getAttribute('data-a'), id=b.getAttribute('data-id');
+  if(a==='filter'){ fbm.filter=b.getAttribute('data-f'); fbm.confirmDel=null; fbmPaint(); }
+  else if(a==='reload') fbmLoad(true);
+  else if(a==='del'){ fbm.confirmDel=id; fbm.confirmAt=Date.now(); fbm.focusKey='keep'; fbmPaint(); }
+  else if(a==='del-no'){ fbm.confirmDel=null; fbm.focusKey='del:'+id; fbmPaint(); }
+  else if(a==='del-yes'){
+    if(Date.now()-fbm.confirmAt<500) return; // a double-click on Delete must not skate through the confirmation
+    if(fbm.deleting[id]) return;
+    fbm.deleting[id]=true; if(fbm.confirmDel===id) fbm.confirmDel=null; fbmPaint();
+    const finish=function(removed){
+      delete fbm.deleting[id]; fbm.mut++;
+      if(removed&&fbm.items) fbm.items=fbm.items.filter(function(x){ return x.id!==id; });
+      fbm.focusKey='chip:'+fbm.filter; fbmPaint(); fbRefreshCount();
+    };
+    fbApi('DELETE','/'+encodeURIComponent(id)).then(function(){ finish(true); })
+      .catch(function(err){
+        if(err.status===404){ finish(true); return; } // already gone: drop it from the list
+        finish(false); alert('Couldn’t delete: '+String(err.message||err).slice(0,140));
+      });
+  }
+  else if(a==='status'){
+    const to=b.getAttribute('data-to'); b.disabled=true;
+    fbApi('PUT','/'+encodeURIComponent(id),{status:to}).then(function(){
+      const it=(fbm.items||[]).find(function(x){ return x.id===id; }); if(it) it.status=to; fbm.mut++;
+      fbm.focusKey='chip:'+fbm.filter; fbmPaint(); fbRefreshCount();
+    }).catch(function(err){ b.disabled=false; alert('Couldn’t update: '+String(err.message||err).slice(0,140)); });
+  }
 }
 
 function openTeamContacts(e){
@@ -7964,6 +8011,7 @@ function applyMyRole(me){
   currentUserIsFinance=!!me.isFinance;
   currentUserIsPlanner=!!me.isPlanner;
   currentUserIsTester=!!me.isTester;
+  if(currentUserIsEditor) fbStartPolling(); // red count of unfinished feedback on the Manager view tab
   // Read-only users get `is-viewer` (write controls hide); editors get
   // `is-editor`, which reveals the Manager-view tab (hidden by default).
   // Non-editors never see the Manager tab at all.

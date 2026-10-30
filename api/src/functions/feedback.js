@@ -48,7 +48,7 @@ async function notify(doc, context) {
     const html = `<p><b>${escHtml(CATEGORY_LABEL[doc.category])}</b> from ${escHtml(doc.userName || doc.user)} (${escHtml(doc.user)})` +
       `${doc.page ? ` while on <i>${escHtml(doc.page)}</i>` : ''}:</p>` +
       `<blockquote style="margin:8px 0;padding:8px 14px;border-left:3px solid #16A37F;white-space:pre-wrap">${escHtml(doc.message)}</blockquote>` +
-      `<p style="color:#666">Sent from the Team Availability site's Feedback button. Editors can see and mark these done in the same box.</p>`;
+      `<p style="color:#666">Sent from the Team Availability site's Feedback button. To read, mark done or delete submissions, open Manager view, then the Feedback tab.</p>`;
     // Don't make the sender wait on a slow mail service: the copy is already saved.
     await Promise.race([
       sendMail({ from: SENDER, to: NOTIFY_TO(), subject, html }),
@@ -62,6 +62,7 @@ async function notify(doc, context) {
 
 // POST   /api/feedback        { category, message, page? }  -> any signed-in user
 // GET    /api/feedback        -> { items } newest first (editors only)
+// GET    /api/feedback?summary=1 -> { open } how many are not done yet (editors only)
 // PUT    /api/feedback/{id}   { status: 'new'|'done' }      -> editors only
 // DELETE /api/feedback/{id}   -> editors only; removes the item for good (the emailed copy is separate)
 app.http('feedback', {
@@ -99,6 +100,17 @@ app.http('feedback', {
       }
 
       requireEditor(user); // reading or triaging everyone's feedback is editor-only
+
+      if (request.method === 'GET' && request.query.get('summary')) {
+        // Just the number of unresolved items, for the "new" badge on the Manager view (cheap, no message text).
+        const { resources } = await container.items
+          .query({
+            query: "SELECT VALUE COUNT(1) FROM c WHERE STARTSWITH(c.id, @p) AND (NOT IS_DEFINED(c.status) OR c.status != 'done')",
+            parameters: [{ name: '@p', value: ID_PREFIX }],
+          })
+          .fetchAll();
+        return { jsonBody: { open: Number(resources[0]) || 0 } };
+      }
 
       if (request.method === 'GET') {
         // Unresolved items always come back (newest LIST_LIMIT of them) plus the newest few
