@@ -531,9 +531,9 @@ body.is-editor #tab-manager{display:inline-block}
    default, revealed only when the API confirms membership (adds `is-finance`). */
 #tab-invoice{display:none}
 body.is-finance #tab-invoice{display:inline-block}
-/* Expenses tab: company-card cardholders (CARDHOLDER_UPNS) + the Financial group. */
-#tab-expenses{display:none}
-body.is-finance #tab-expenses,body.is-cardholder #tab-expenses{display:inline-block}
+/* Company-card cardholders (CARDHOLDER_UPNS) get the Financial tab too, but it
+   only shows them the Expenses view (see finPaintExpenses). */
+body.is-cardholder #tab-invoice{display:inline-block}
 .exp-row{cursor:pointer}
 .exp-row:hover td{background:var(--surface2)}
 .exp-receipt{max-width:100%;max-height:420px;border-radius:8px;border:1px solid var(--border);display:block;margin:0 auto;background:#fff}
@@ -1075,10 +1075,6 @@ if('serviceWorker' in navigator){
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Financial
     </button>
-    <button class="tab" id="tab-expenses" onclick="switchTab('expenses')">
-      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M2 10h20M6 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      Expenses
-    </button>
     <button class="tab" id="tab-jobsheet" onclick="switchTab('jobsheet')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M9 3.5h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.5 11l1.5 1.5 2.5-3M8.5 16l1.5 1.5 2.5-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Job Sheets
@@ -1110,11 +1106,6 @@ if('serviceWorker' in navigator){
        per client; rendered by renderFinancial(), data from /api/finance/*.
        (Element ids keep the old "invoice" name so the existing gating applies.) -->
   <div class="view" id="view-invoice"><div id="fin-root"></div></div>
-
-  <!-- EXPENSES VIEW (cardholders + Financial group). Company-card purchase
-       requests and receipts with approval; rendered by renderExpenses(), data
-       from /api/expenses. -->
-  <div class="view" id="view-expenses"><div id="exp-root"></div></div>
 
   <!-- PROJECT PLANNING VIEW (Project Planners group only) -->
   <div class="view" id="view-planning">
@@ -1651,10 +1642,9 @@ function switchTab(id){
   // The API is the real security boundary — every write endpoint re-checks the
   // caller server-side, so this is a UX gate, not the enforcement point.
   if(id === 'manager' && !currentUserIsEditor) return;
-  // Invoice is financial-group-only (FINANCE_UPNS); same belt-and-suspenders guard.
-  if(id === 'invoice' && !currentUserIsFinance) return;
-  // Expenses is for cardholders (CARDHOLDER_UPNS) and the Financial group; same guard.
-  if(id === 'expenses' && !currentUserIsCardholder && !currentUserIsFinance) return;
+  // Financial is for the Financial group (FINANCE_UPNS) -- and cardholders, who
+  // only get its Expenses view; same belt-and-suspenders guard.
+  if(id === 'invoice' && !currentUserIsFinance && !currentUserIsCardholder) return;
   // Project Planning is Project-Planners-group-only (PLANNER_UPNS); same guard.
   if(id === 'planning' && !currentUserIsPlanner) return;
   // Job Sheets is Testers-group-only (TESTER_UPNS); same guard.
@@ -1671,7 +1661,6 @@ function switchTab(id){
   if(id==='jobsheet')renderJobsheet();
   if(id==='floormap')renderFloormap();
   if(id==='invoice')renderFinancial();
-  if(id==='expenses')renderExpenses();
 }
 
 // ── Expenses tab (cardholders + Financial group) ───────────────────────────
@@ -1704,7 +1693,7 @@ async function expLoad(){
   catch(e){ exp.error=e.message||'Failed to load'; }
   exp.loading=false;
   if(!exp.view) exp.view= exp.me&&exp.me.isFinance&&expAwaiting().length? 'approvals' : (exp.me&&exp.me.isCardholder? 'mine' : 'all');
-  expPaint();
+  if(fin.view==='expenses'||!currentUserIsFinance) finPaint(); else expPaint(); // finPaint also refreshes the "Expenses (n)" count in the Financial menu
 }
 // Waiting on the Financial group, minus your own (unless you're the only approver).
 function expAwaiting(){ const me=exp.me||{}; return (exp.items||[]).filter(e=>EXP_WAITING.includes(e.status)&&(e.owner!==me.upn||me.canSelfApprove)); }
@@ -1713,7 +1702,7 @@ function expUpsert(item){ const i=(exp.items||[]).findIndex(x=>x.id===item.id); 
 function expPaint(){
   const root=document.getElementById('exp-root'); if(!root) return;
   const me=exp.me||{};
-  const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap"><div><h1>Expenses</h1></div>'+
+  const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap"><div><h2 style="margin:0">Expenses</h2></div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
       (me.isCardholder? '<button class="btn btn-primary btn-sm" onclick="expNew(\'purchase\')">🧾 Add a receipt</button><button class="btn btn-sm" onclick="expNew(\'request\')">🙋 Ask to buy</button>' : '')+
       '<button class="btn btn-sm" onclick="expLoad()">↻ Refresh</button></div></div>';
@@ -1974,6 +1963,7 @@ async function finApi(method,path,body){
   return res.json();
 }
 function renderFinancial(){
+  if(fin.view==='expenses'||!currentUserIsFinance){ finPaint(); return; }
   if(!fin.settings&&!fin.loading&&!fin.error){ finLoad(); return; }
   finPaint();
 }
@@ -2244,8 +2234,21 @@ function finExtraHtml(jobs){
 }
 function finSettingsReady(){ const s=fin.settings; return !!(s&&s.roleRates&&(s.roleRates.lead!=null||s.roleRates.tech!=null)&&s.prices&&Object.values(s.prices).some(v=>v!=null)); }
 
+function finNavHtml(openFlags){
+  const waiting=exp.items? expAwaiting().length : 0;
+  return [['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['trends','📈 Trends'],['forecast','🔮 Forecast'],['quote','🧮 Quote check'],
+    ['expenses','🧾 Expenses'+(waiting? ' ('+waiting+')' : '')],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="finSetView('${k}')">${l}</button>`).join('');
+}
+// Expenses lives inside the Financial tab. Cardholders who aren't in the
+// Financial group see ONLY this view (no profit numbers, no finance API calls).
+function finPaintExpenses(root){
+  root.innerHTML='<div class="section-head"><div><h1>Financial</h1></div></div>'+
+    (currentUserIsFinance? `<div class="js-mode-toggle" style="margin:0 0 14px">${finNavHtml(null)}</div>` : '')+'<div id="exp-root"></div>';
+  renderExpenses();
+}
 function finPaint(){
   const root=document.getElementById('fin-root'); if(!root) return;
+  if(fin.view==='expenses'||!currentUserIsFinance){ finPaintExpenses(root); return; }
   const rangeOpts=FIN_RANGES.map(([k,l])=>`<option value="${k}"${fin.range===k?' selected':''}>${l}</option>`).join('');
   const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
     '<div><h1>Financial</h1></div>'+
@@ -2267,7 +2270,7 @@ function finPaint(){
     ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>'],
     ['Possible extra billing',(openFlags? openFlags+' <span class="fin-sub">'+(openAmt? '≈ '+finMoney(openAmt)+' · ' : '')+'need a decision</span>' : '0 <span class="fin-sub">all decided</span>')]]
     .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
-  const nav=[['clients','By client'],['jobs','By job'],['extra','💰 Extra billing'+(openFlags? ' ('+openFlags+')' : '')],['trends','📈 Trends'],['forecast','🔮 Forecast'],['quote','🧮 Quote check'],['settings','⚙ Settings']].map(([k,l])=>`<button class="js-mode-btn${fin.view===k?' active':''}" onclick="finSetView('${k}')">${l}</button>`).join('');
+  const nav=finNavHtml(openFlags);
   let body;
   if(fin.view==='settings') body=finSettingsHtml();
   else if(fin.view==='extra') body=finExtraHtml(jobs);
@@ -2289,6 +2292,7 @@ function finSetRange(r){ fin.range=r; if(r!=='custom') finLoad(); else finPaint(
 // Trends compare months, so a single-month range is widened to year-to-date.
 function finSetView(v){
   fin.view=v;
+  if(v!=='expenses'&&!fin.settings&&!fin.loading&&!fin.error){ finLoad(); return; }
   if(v==='trends'&&(fin.range==='month'||fin.range==='last')){ fin.range='ytd'; fin.trendsWidened=true; finLoad(); return; }
   finPaint();
 }
@@ -8504,8 +8508,8 @@ function applyMyRole(me){
   document.body.classList.toggle('is-planner', currentUserIsPlanner);
   // `is-tester` reveals the Job Sheets + Floor Maps tabs for the Testers group (TESTER_UPNS) only.
   document.body.classList.toggle('is-tester', currentUserIsTester);
-  // `is-cardholder` reveals the Expenses tab for company-card holders (CARDHOLDER_UPNS);
-  // the Financial group sees it too (they approve).
+  // `is-cardholder` reveals the Financial tab for company-card holders (CARDHOLDER_UPNS),
+  // showing only its Expenses view unless they're also in the Financial group.
   document.body.classList.toggle('is-cardholder', currentUserIsCardholder);
 }
 
