@@ -423,6 +423,10 @@ async function buildMonthlySummary(container, ym) {
   return { label, subject: `Financial summary — ${label}`, html, summary: { rev: s.rev, cost: s.cost, margin: s.margin, jobs: s.jobs, confirmed: s.confirmed, flags: s.flags, prevRev: p.rev } };
 }
 const financeRecipients = () => (process.env.FINANCE_UPNS || '').toLowerCase().split(',').map((x) => x.trim()).filter((x) => /@/.test(x));
+// Email is PAUSED unless the FINANCE_EMAILS_ON app setting is "1" (Dylan is
+// still testing) -- covers the monthly summary and the "Email me" button, plus
+// the Expenses tab's notifications (expenses.js reads the same setting).
+const financeEmailsOn = () => process.env.FINANCE_EMAILS_ON === '1';
 async function sendSummary(to, built) {
   const from = process.env.FINANCE_MAIL_FROM || to;
   await sendMail({ from, to, subject: built.subject, html: built.html, saveToSentItems: false });
@@ -441,7 +445,8 @@ app.http('financeMonthlySummary', {
       const container = getContainer(CONTAINER_ID);
       const built = await buildMonthlySummary(container, ym);
       const to = financeRecipients();
-      if (q.get('dry') === '1') return { jsonBody: { dryRun: true, month: ym, wouldSendTo: to.length, jobs: built.summary.jobs } };
+      if (q.get('dry') === '1') return { jsonBody: { dryRun: true, paused: !financeEmailsOn(), month: ym, wouldSendTo: to.length, jobs: built.summary.jobs } };
+      if (!financeEmailsOn()) { audit(context, { upn: 'scheduler' }, 'finance.summary.paused', { month: ym }); return { jsonBody: { paused: true, month: ym, sent: 0 } }; }
       let sent = 0, failed = 0;
       for (const r of to) { try { await sendSummary(r, built); sent++; } catch (e) { failed++; try { context.error(e); } catch (_) { /* ignore */ } } }
       audit(context, { upn: 'scheduler' }, 'finance.summary.send', { month: ym, sent, failed });
@@ -463,6 +468,7 @@ app.http('financeSummaryEmail', {
       requireFinance(user);
       const body = await request.json().catch(() => ({}));
       const ym = /^\d{4}-\d{2}$/.test(body.month || '') ? body.month : prevMonth(pacificToday().slice(0, 7));
+      if (!financeEmailsOn()) return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { paused: true, month: ym } };
       const built = await buildMonthlySummary(getContainer(CONTAINER_ID), ym);
       try { await sendSummary(user.upn, built); } catch (e) {
         try { context.error(e); } catch (_) { /* ignore */ }

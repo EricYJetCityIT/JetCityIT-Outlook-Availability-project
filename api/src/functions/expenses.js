@@ -93,7 +93,10 @@ function historyEntry(user, action, note) {
 // Mail goes FROM each recipient's own mailbox TO themselves with no Sent Items
 // copy (same as the Financial summary), unless EXPENSE_MAIL_FROM names a shared
 // sender. A failure never fails the request -- the expense is already saved.
+// Paused unless the FINANCE_EMAILS_ON app setting is "1" (same switch as the
+// Financial summary email) -- the approval flow works the same without it.
 async function notify(context, recipients, subject, html) {
+  if (process.env.FINANCE_EMAILS_ON !== '1') return;
   const from = process.env.EXPENSE_MAIL_FROM || process.env.FINANCE_MAIL_FROM || '';
   const wrapped = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#0f1724;max-width:620px">' + html +
     `<p style="color:#6b7280;font-size:12.5px;margin-top:14px">Open the <a href="${APP_URL}">Expenses tab</a> to review.</p></div>`;

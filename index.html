@@ -2445,7 +2445,7 @@ function finPrint(){
 async function finEmailMe(){
   const btn=document.getElementById('fin-email-btn'), msg=document.getElementById('fin-head-msg'), month=(fin.to||finIso(new Date())).slice(0,7);
   if(btn) btn.disabled=true; if(msg) msg.textContent='Sending the '+finMonthLabel(month+'-01')+' summary to your inbox…';
-  try{ const r=await finApi('POST','/summary-email',{month}); if(msg) msg.textContent='✓ Sent to '+r.to+'. It also goes to the whole Financial group automatically on the 1st of each month.'; }
+  try{ const r=await finApi('POST','/summary-email',{month}); if(msg) msg.textContent= r.paused? 'Email is paused for now — nothing was sent.' : '✓ Sent to '+r.to+'. It also goes to the whole Financial group automatically on the 1st of each month.'; }
   catch(e){ if(msg) msg.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span>'; }
   if(btn) btn.disabled=false;
 }
