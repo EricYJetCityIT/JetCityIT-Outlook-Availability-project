@@ -41,7 +41,7 @@ async function getAppToken() {
 // fileAttachments. Inline attachments only need Mail.Send (no draft/mailbox
 // write), but the whole request must stay under Graph's ~4MB /sendMail cap, so
 // callers must keep the total small (the report sender compresses photos first).
-async function sendMail({ from, to, subject, html, attachments }) {
+async function sendMail({ from, to, subject, html, attachments, saveToSentItems = true }) {
   const token = await getAppToken();
   const message = {
     subject,
@@ -59,7 +59,7 @@ async function sendMail({ from, to, subject, html, attachments }) {
   const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(from)}/sendMail`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, saveToSentItems: true }),
+    body: JSON.stringify({ message, saveToSentItems: !!saveToSentItems }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

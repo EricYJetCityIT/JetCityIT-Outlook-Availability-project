@@ -86,9 +86,15 @@ function defaultSettings() {
     minCallHours: 4,
     minPerTech: false, // false = the call-out minimum is per visit; true = per tech on the crew
     clientPrices: {},
+    // Materials catalog: [{ key, name, keywords, cost, price }] -- cost (and an
+    // optional billed price) PER JOB when used; null = the tab seeds names only.
+    materials: null,
+    overtimePct: null,   // extra % on a role's hourly cost for hours over otWeeklyHours (null = off)
+    otWeeklyHours: 40,   // per person per week (Mon-Sun)
     updatedAt: null, updatedBy: null,
   };
 }
+const MAT_KEY_RE = /^[a-z0-9-]{1,30}$/;
 function sanitizeSettings(body, user) {
   const s = defaultSettings();
   const rr = (body && body.roleRates) || {};
@@ -107,13 +113,25 @@ function sanitizeSettings(body, user) {
     Object.keys(cp[client] || {}).forEach((k) => { if (ITEM_KEYS.has(k)) { const m = money(cp[client][k]); if (m != null) o[k] = m; } });
     if (Object.keys(o).length) s.clientPrices[name] = o;
   });
+  if (Array.isArray(body && body.materials)) {
+    const seen = new Set();
+    s.materials = body.materials.slice(0, 40).map((m) => {
+      const key = clean(m && m.key, 30).toLowerCase();
+      if (!MAT_KEY_RE.test(key) || seen.has(key)) return null; seen.add(key);
+      return { key, name: clean(m.name, 60) || key, keywords: clean(m.keywords, 200), cost: money(m.cost), price: money(m.price) };
+    }).filter(Boolean);
+  }
+  const otp = Number(body && body.overtimePct);
+  s.overtimePct = body && body.overtimePct !== '' && body.overtimePct != null && Number.isFinite(otp) && otp >= 0 && otp <= 300 ? otp : null;
+  const oth = Number(body && body.otWeeklyHours);
+  s.otWeeklyHours = Number.isFinite(oth) && oth >= 1 && oth <= 80 ? oth : 40;
   s.updatedAt = new Date().toISOString(); s.updatedBy = user.upn;
   return s;
 }
 
 // ── Daily Project Report rows (only the columns the money view needs) ──────
 const REPORT_COLS = ['Project Name', 'Service Date', 'Project Start', 'Project Finish', 'Duration', 'Crew Size', 'Total Hours', 'Device QTY Details',
-  'CO Impact', 'Work Details/Record Labor/Issues Resolved', 'Added Scope/Project Delays/Issues', 'Status', 'Job ID', 'Lead'];
+  'CO Impact', 'Work Details/Record Labor/Issues Resolved', 'Added Scope/Project Delays/Issues', 'Status', 'Job ID', 'Lead', 'JCIT Provided Parts/Materials Used'];
 async function fetchReportRows(fromIso, toIso) {
   const sheetId = getReportSheetId(), headers = { Authorization: `Bearer ${getToken()}` };
   const cres = await fetch(`https://api.smartsheet.com/2.0/sheets/${sheetId}/columns?includeAll=true`, { headers });
@@ -141,6 +159,7 @@ async function fetchReportRows(fromIso, toIso) {
       work: r['Work Details/Record Labor/Issues Resolved'] || '', scope: r['Added Scope/Project Delays/Issues'] || '',
       lead: r.Lead || '',
       start: r['Project Start'] || '', finish: r['Project Finish'] || '', duration: parseFloat(r.Duration) || null,
+      materials: r['JCIT Provided Parts/Materials Used'] || '',
     });
   });
   return out;
@@ -209,6 +228,31 @@ app.http('financeSettings', {
 
 // GET /api/finance/jobs?from=YYYY-MM-DD&to=YYYY-MM-DD
 //   -> { jobs: [ {calendar job, reports:[...], saved:{units,...}|null} ], clients, items }
+// Calendar jobs in [from, to] joined to their Daily Reports, confirmed units and
+// extra-billing decisions -- exactly what the tab works from (shared by the
+// jobs route and the monthly summary email).
+async function loadFinanceJobs(container, from, to) {
+  const state = (await readDoc(container, 'state')) || { jobs: [] };
+  const jobs = (state.jobs || [])
+    .filter((j) => j.date && j.date >= from && j.date <= to && !j.cancelled && j.status !== 'Cancelled')
+    .map((j) => ({ ...j }));
+  const [reports, savedRes, flagRes] = await Promise.all([
+    fetchReportRows(from, to),
+    container.items.query({ query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)', parameters: [{ name: '@p', value: JOB_PREFIX }] }).fetchAll(),
+    container.items.query({ query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)', parameters: [{ name: '@p', value: FLAG_PREFIX }] }).fetchAll(),
+  ]);
+  attachReports(jobs, reports);
+  const saved = new Map(savedRes.resources.map((d) => [d.jobId, d]));
+  const flags = new Map(flagRes.resources.map((d) => [d.jobId, d.flags || {}]));
+  return {
+    clients: state.clientOptions || [],
+    jobs: jobs.sort((a, b) => String(a.date).localeCompare(String(b.date))).map((j) => {
+      const s = saved.get(j.id);
+      return { ...jobSummary(j), flags: flags.get(j.id) || {}, saved: s ? { units: s.units || {}, hours: s.hours || {}, shift: !!s.shift, materials: s.materials || null, note: s.note || '', updatedAt: s.updatedAt, updatedBy: s.updatedBy } : null };
+    }),
+  };
+}
+
 app.http('financeJobs', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -222,35 +266,9 @@ app.http('financeJobs', {
       const today = new Date().toISOString().slice(0, 10);
       const from = iso(q.get('from'), today.slice(0, 8) + '01'), to = iso(q.get('to'), today);
       const container = getContainer(CONTAINER_ID);
-      const state = (await readDoc(container, 'state')) || { jobs: [] };
-      const jobs = (state.jobs || [])
-        .filter((j) => j.date && j.date >= from && j.date <= to && !j.cancelled && j.status !== 'Cancelled')
-        .map((j) => ({ ...j }));
-      const [reports, savedRes, flagRes] = await Promise.all([
-        fetchReportRows(from, to),
-        container.items.query({
-          query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)',
-          parameters: [{ name: '@p', value: JOB_PREFIX }],
-        }).fetchAll(),
-        container.items.query({
-          query: 'SELECT * FROM c WHERE STARTSWITH(c.id, @p)',
-          parameters: [{ name: '@p', value: FLAG_PREFIX }],
-        }).fetchAll(),
-      ]);
-      attachReports(jobs, reports);
-      const saved = new Map(savedRes.resources.map((d) => [d.jobId, d]));
-      const flags = new Map(flagRes.resources.map((d) => [d.jobId, d.flags || {}]));
-      audit(context, user, 'finance.jobs.read', { from, to, count: jobs.length });
-      return {
-        headers: { 'Cache-Control': 'no-store' },
-        jsonBody: {
-          from, to, items: ITEMS, clients: state.clientOptions || [],
-          jobs: jobs.sort((a, b) => String(a.date).localeCompare(String(b.date))).map((j) => {
-            const s = saved.get(j.id);
-            return { ...jobSummary(j), flags: flags.get(j.id) || {}, saved: s ? { units: s.units || {}, hours: s.hours || {}, shift: !!s.shift, note: s.note || '', updatedAt: s.updatedAt, updatedBy: s.updatedBy } : null };
-          }),
-        },
-      };
+      const data = await loadFinanceJobs(container, from, to);
+      audit(context, user, 'finance.jobs.read', { from, to, count: data.jobs.length });
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { from, to, items: ITEMS, clients: data.clients, jobs: data.jobs } };
     } catch (e) {
       return authErrorResponse(e, context);
     }
@@ -312,13 +330,146 @@ app.http('financeJob', {
       // Optional hour overrides (when the report's hours are missing or wrong).
       const hours = {};
       ROLES.forEach((r) => { const v = body.hours && body.hours[r]; if (v !== '' && v != null && Number.isFinite(Number(v)) && Number(v) >= 0) hours[r] = Math.round(Math.min(Number(v), 10000) * 100) / 100; });
+      // Materials used on the job: { catalogKey: qty } (qty = how many "jobs' worth").
+      let materials = null;
+      if (body.materials && typeof body.materials === 'object') {
+        materials = {};
+        Object.keys(body.materials).slice(0, 40).forEach((k) => { const key = String(k).toLowerCase(); if (MAT_KEY_RE.test(key)) { const n = qty(body.materials[k]); if (n) materials[key] = n; } });
+      }
       const doc = {
-        id, type: 'financeJob', jobId, units, hours, shift: !!body.shift, note: clean(body.note, 1000),
+        id, type: 'financeJob', jobId, units, hours, shift: !!body.shift, materials, note: clean(body.note, 1000),
         updatedAt: new Date().toISOString(), updatedBy: user.upn,
       };
       await container.items.upsert(doc);
       audit(context, user, 'finance.job.update', { jobId });
-      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { saved: { units: doc.units, hours: doc.hours, shift: doc.shift, note: doc.note, updatedAt: doc.updatedAt, updatedBy: doc.updatedBy } } };
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { saved: { units: doc.units, hours: doc.hours, shift: doc.shift, materials: doc.materials, note: doc.note, updatedAt: doc.updatedAt, updatedBy: doc.updatedBy } } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});
+
+// ── Monthly summary email ───────────────────────────────────────────────────
+// Last month's numbers, computed with the SAME math as the tab
+// (lib/financeCalc.js is a verbatim copy of the tab's calc block), sent to the
+// Financial group. Each recipient gets it FROM their own mailbox TO themselves
+// with no Sent Items copy, so the figures don't land in anyone else's mailbox;
+// set the FINANCE_MAIL_FROM app setting to send from one shared mailbox instead.
+//   POST /api/finance/monthly-summary   X-Sync-Secret; ?month=YYYY-MM (default: last month); ?dry=1
+//                                       -> everyone in FINANCE_UPNS (GitHub Actions cron, 1st of the month)
+//   POST /api/finance/summary-email     signed-in Financial user; JSON { month } -> just the caller
+const { createFinanceCalc } = require('../lib/financeCalc');
+const { sendMail } = require('../lib/graph');
+const { safeEqual } = require('../lib/secure');
+const APP_URL = 'https://crew-calendar.jetcityit.com/';
+
+function monthBounds(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` };
+}
+function prevMonth(ym) { const [y, m] = ym.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7); }
+function pacificToday() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); } // YYYY-MM-DD
+
+function summarizeMonth(calc, jobs) {
+  const t = { rev: 0, cost: 0, hours: 0, jobs: jobs.length, confirmed: 0, flags: 0, flagAmt: 0 };
+  const byClient = new Map();
+  jobs.forEach((j) => {
+    const c = calc.finCalc(j), fl = calc.finFlagsFor(j, c);
+    t.rev += c.revenue; t.cost += c.cost; t.hours += c.hours; if (c.unitsSrc === 'confirmed') t.confirmed++;
+    fl.forEach((f) => { if (!f.status) { t.flags++; t.flagAmt += f.amount || 0; } });
+    const k = j.client || '(no client)', a = byClient.get(k) || { name: k, rev: 0, cost: 0, hours: 0, jobs: 0 };
+    a.rev += c.revenue; a.cost += c.cost; a.hours += c.hours; a.jobs++; byClient.set(k, a);
+  });
+  const clients = [...byClient.values()].map((a) => ({ ...a, margin: a.rev - a.cost, pct: a.rev > 0 ? (a.rev - a.cost) / a.rev : null }));
+  return { ...t, margin: t.rev - t.cost, pct: t.rev > 0 ? (t.rev - t.cost) / t.rev : null, perHour: t.hours > 0 ? t.rev / t.hours : null, clients };
+}
+
+async function buildMonthlySummary(container, ym) {
+  const settings = (await readDoc(container, SETTINGS_ID)) || defaultSettings();
+  const calc = createFinanceCalc(settings, ITEMS);
+  const prev = prevMonth(ym), cur = monthBounds(ym), pb = monthBounds(prev);
+  // One report-sheet read covers both months, padded to whole Mon-Sun weeks so
+  // weekly overtime is counted the same way the tab counts it.
+  const pad = (iso, toEnd) => { const d = new Date(iso + 'T00:00:00Z'), dow = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() + (toEnd ? 6 - dow : -dow)); return d.toISOString().slice(0, 10); };
+  const data = await loadFinanceJobs(container, pad(pb.from, false), pad(cur.to, true));
+  calc.finApplyOvertime(data.jobs);
+  data.jobs = data.jobs.filter((j) => j.date >= pb.from && j.date <= cur.to);
+  const s = summarizeMonth(calc, data.jobs.filter((j) => j.date >= cur.from));
+  const p = summarizeMonth(calc, data.jobs.filter((j) => j.date <= pb.to));
+  const M = calc.finMoney, E = calc.jsEsc, pct = (v) => (v == null || !isFinite(v) ? '—' : Math.round(v * 100) + '%');
+  const label = new Date(Date.UTC(+ym.slice(0, 4), +ym.slice(5, 7) - 1, 1)).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const delta = (a, b) => (b ? ` <span style="color:#6b7280">(${a >= b ? '▲' : '▼'} ${M(Math.abs(a - b))} vs last month)</span>` : '');
+  const ranked = s.clients.filter((c) => c.rev > 0).sort((a, b) => b.margin - a.margin);
+  const row = (c) => `<tr><td style="padding:4px 10px 4px 0">${E(c.name)}</td><td style="padding:4px 10px">${M(c.rev)}</td><td style="padding:4px 10px">${M(c.margin)}</td><td style="padding:4px 10px">${pct(c.pct)}</td></tr>`;
+  const head = '<tr style="color:#6b7280"><td style="padding:4px 10px 4px 0">Client</td><td style="padding:4px 10px">Revenue</td><td style="padding:4px 10px">Margin</td><td style="padding:4px 10px">%</td></tr>';
+  const ready = settings.roleRates && (settings.roleRates.lead != null || settings.roleRates.tech != null);
+  const line = (l, v) => `<tr><td style="padding:3px 14px 3px 0;color:#6b7280">${l}</td><td>${v}</td></tr>`;
+  const html = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#0f1724;max-width:620px">' +
+    `<h2 style="margin:0 0 4px">Financial summary — ${E(label)}</h2>` +
+    `<div style="color:#6b7280;margin-bottom:14px">Jet City IT crew calendar · ${s.jobs} jobs · ${s.confirmed} with confirmed units</div>` +
+    (ready ? '' : '<p style="background:#FEF3C7;padding:8px 10px;border-radius:6px">Cost rates or prices are not set yet in the Financial tab, so the numbers below are incomplete.</p>') +
+    '<table style="border-collapse:collapse;margin-bottom:14px">' +
+    line('Revenue', `<b>${M(s.rev)}</b>${delta(s.rev, p.rev)}`) +
+    line('Cost (labor, overtime, materials)', `<b>${M(s.cost)}</b>`) +
+    line('Margin', `<b>${M(s.margin)}</b> · ${pct(s.pct)}${delta(s.margin, p.margin)}`) +
+    line('Revenue per labor hour', `<b>${M(s.perHour)}</b>`) +
+    line('Possible extra billing', `<b>${s.flags}</b> item${s.flags === 1 ? '' : 's'} need a decision${s.flagAmt ? ` (≈ ${M(s.flagAmt)})` : ''}`) +
+    '</table>' +
+    (ranked.length && ranked.length <= 6 ? `<div style="font-weight:600;margin:8px 0 4px">Clients by margin</div><table style="border-collapse:collapse;font-size:13px">${head}${ranked.map(row).join('')}</table>` : '') +
+    (ranked.length > 6 ? `<div style="font-weight:600;margin:8px 0 4px">Most profitable clients</div><table style="border-collapse:collapse;font-size:13px">${head}${ranked.slice(0, 3).map(row).join('')}</table>` +
+      `<div style="font-weight:600;margin:12px 0 4px">Least profitable clients</div><table style="border-collapse:collapse;font-size:13px">${head}${ranked.slice(-3).reverse().map(row).join('')}</table>` : '') +
+    `<p style="margin-top:16px;color:#6b7280;font-size:12.5px">Numbers include jobs whose units are only suggested from the Daily Reports until they are confirmed. Open the <a href="${APP_URL}">Financial tab</a> for details. Sent to the Financial group only.</p></div>`;
+  return { label, subject: `Financial summary — ${label}`, html, summary: { rev: s.rev, cost: s.cost, margin: s.margin, jobs: s.jobs, confirmed: s.confirmed, flags: s.flags, prevRev: p.rev } };
+}
+const financeRecipients = () => (process.env.FINANCE_UPNS || '').toLowerCase().split(',').map((x) => x.trim()).filter((x) => /@/.test(x));
+async function sendSummary(to, built) {
+  const from = process.env.FINANCE_MAIL_FROM || to;
+  await sendMail({ from, to, subject: built.subject, html: built.html, saveToSentItems: false });
+}
+
+app.http('financeMonthlySummary', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'finance/monthly-summary',
+  handler: async (request, context) => {
+    try {
+      const expected = process.env.SYNC_SECRET, provided = request.headers.get('x-sync-secret') || '';
+      if (!expected || !safeEqual(provided, expected)) return { status: 401, jsonBody: { error: 'Unauthorized' } };
+      const q = new URL(request.url).searchParams;
+      const ym = /^\d{4}-\d{2}$/.test(q.get('month') || '') ? q.get('month') : prevMonth(pacificToday().slice(0, 7));
+      const container = getContainer(CONTAINER_ID);
+      const built = await buildMonthlySummary(container, ym);
+      const to = financeRecipients();
+      if (q.get('dry') === '1') return { jsonBody: { dryRun: true, month: ym, wouldSendTo: to.length, jobs: built.summary.jobs } };
+      let sent = 0, failed = 0;
+      for (const r of to) { try { await sendSummary(r, built); sent++; } catch (e) { failed++; try { context.error(e); } catch (_) { /* ignore */ } } }
+      audit(context, { upn: 'scheduler' }, 'finance.summary.send', { month: ym, sent, failed });
+      return { jsonBody: { month: ym, sent, failed } };
+    } catch (e) {
+      try { context.error(e); } catch (_) { /* ignore */ }
+      return { status: 500, jsonBody: { error: 'Summary failed' } };
+    }
+  },
+});
+
+app.http('financeSummaryEmail', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'finance/summary-email',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireFinance(user);
+      const body = await request.json().catch(() => ({}));
+      const ym = /^\d{4}-\d{2}$/.test(body.month || '') ? body.month : prevMonth(pacificToday().slice(0, 7));
+      const built = await buildMonthlySummary(getContainer(CONTAINER_ID), ym);
+      try { await sendSummary(user.upn, built); } catch (e) {
+        try { context.error(e); } catch (_) { /* ignore */ }
+        return { status: 502, jsonBody: { error: 'The email could not be sent from your mailbox. A shared sender can be set with the FINANCE_MAIL_FROM app setting.' } };
+      }
+      audit(context, user, 'finance.summary.self', { month: ym });
+      return { headers: { 'Cache-Control': 'no-store' }, jsonBody: { ok: true, month: ym, to: user.upn } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

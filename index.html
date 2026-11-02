@@ -835,9 +835,25 @@ body.is-tester #tab-floormap{display:inline-block}
 .fin-hero-l{font-size:14px;color:var(--text2)}
 .fin-callout{font-size:13px;color:#92400E;background:#FEF3C7;border-radius:8px;padding:8px 10px;margin-bottom:10px}
 .fin-callout-ok{color:var(--green-dark);background:var(--green-light)}
+#fin-print{display:none}
+@media print{
+  html:has(body.fin-printing),body.fin-printing{height:auto!important;min-height:0!important;overflow:visible!important}
+  body.fin-printing > *:not(#fin-print){display:none!important}
+  body.fin-printing #fin-print{display:block!important;color:#000;background:#fff;font:11.5px/1.35 system-ui,sans-serif}
+  body.fin-printing #fin-print .fin-print-h{font-size:14px;margin:16px 0 6px;page-break-after:avoid}
+  body.fin-printing #fin-print .fm-rep-table{font-size:10px;margin-bottom:6px}
+  body.fin-printing #fin-print .fm-rep-table th,body.fin-printing #fin-print .fm-rep-table td{border:1px solid #bbb;color:#000;background:#fff}
+  body.fin-printing #fin-print .fm-rep-table tr{page-break-inside:avoid}
+  body.fin-printing #fin-print .fm-rep-table thead{display:table-header-group}
+  body.fin-printing #fin-print .fin-viz{--fin-s1:#2a78d6;--fin-s2:#eb6834;--fin-grid:#ddd;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body.fin-printing #fin-print .fin-viz-svg{min-width:0;max-width:640px}
+  body.fin-printing #fin-print .fin-axis{fill:#444}
+}
 .fin-flag{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:grid;gap:6px;background:var(--surface)}
 .fin-flag-text{font-size:13px;color:var(--text2);margin-top:3px;line-height:1.45}
 .fin-flag-btns{display:inline-flex;gap:6px;flex-wrap:wrap}
+.fin-mat-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(160px,2fr) 100px 100px auto;gap:6px;align-items:center}
+@media(max-width:640px){.fin-mat-row{grid-template-columns:1fr 1fr}}
 .fin-client-over{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;display:grid;gap:8px}
 .pp-tl{width:100%;border-collapse:collapse;font-size:13px}
 .pp-tl th{font-weight:400;color:var(--text3);text-align:left;padding:5px 8px}
@@ -1675,7 +1691,7 @@ async function finLoad(){
   fin.loading=true; fin.error=''; finPaint();
   const [from,to]=finRangeDates(fin.range); fin.from=from; fin.to=to;
   try{
-    const [s,j]=await Promise.all([finApi('GET','/settings'), finApi('GET','/jobs?from='+from+'&to='+to)]);
+    const [s,j]=await Promise.all([finApi('GET','/settings'), finApi('GET','/jobs?from='+finWeekKey(from)+'&to='+finWeekEnd(to))]); // whole Mon–Sun weeks, so weekly overtime is counted right (views show only from..to)
     fin.settings=s.settings; fin.items=s.items||j.items||[]; fin.data=j;
   }catch(e){ fin.error=e.message||'Failed to load'; }
   fin.loading=false; finPaint();
@@ -1739,7 +1755,16 @@ function finCalc(j){
   if(ho.lead!=null) leadH=ho.lead; if(ho.tech!=null) techH=ho.tech; if(ho.pm!=null) pmH=ho.pm;
   if(ho.lead!=null||ho.tech!=null||ho.pm!=null){ hours=leadH+techH+pmH; hoursSrc='override'; }
   const rateMissing=[leadH>0&&rr.lead==null, techH>0&&rr.tech==null, pmH>0&&rr.pm==null].some(Boolean);
-  const cost=leadH*(rr.lead||0)+techH*(rr.tech||0)+pmH*(rr.pm||0);
+  // Overtime: hours a person worked past the weekly limit on THIS job (set by
+  // finApplyOvertime across the whole loaded range) cost extra on their role rate.
+  const ot=j.ot||{lead:0,tech:0}, otPct=(s.overtimePct||0)/100;
+  const otCost=otPct? (ot.lead*(rr.lead||0)+ot.tech*(rr.tech||0))*otPct : 0;
+  // Materials: confirmed list, else what the report mentions; cost (and billed price) per job.
+  const cat=finMaterials(), matUsed= sv&&sv.materials? sv.materials : finSuggestMaterials(reps.map(r=>r.materials).join(', '));
+  let matCost=0, matRevenue=0, matMissing=false;
+  Object.keys(matUsed).forEach(k=>{ const m=cat.find(x=>x.key===k); if(!m) return; const q=matUsed[k]||0;
+    if(m.cost==null) matMissing=true; matCost+=q*(m.cost||0); if(m.price!=null) matRevenue+=q*m.price; });
+  const cost=leadH*(rr.lead||0)+techH*(rr.tech||0)+pmH*(rr.pm||0)+otCost+matCost;
   let units, unitsSrc;
   if(sv){ units=sv.units||{}; unitsSrc='confirmed'; }
   else { const sg=finSuggest(reps.map(r=>r.deviceQty).join(' ; ')); units=sg.units; unitsSrc=Object.keys(units).length? (sg.sure?'suggested':'guess') : 'none'; }
@@ -1752,7 +1777,8 @@ function finCalc(j){
   });
   // Shift premium on the share of the work done 11 PM–6 AM. Unconfirmed jobs get it
   // automatically when the times say so; a confirmed job uses the box Finance ticked.
-  const night=finNightInfo(j), pct=(s.shiftPremiumPct||0)/100, base=revenue;
+  revenue+=matRevenue; // billed materials aren't shift-premium work
+  const night=finNightInfo(j), pct=(s.shiftPremiumPct||0)/100, base=revenue-matRevenue;
   const shiftFrac= sv? (sv.shift? (night.fraction>0? night.fraction : 1) : 0) : night.fraction;
   const shiftAmount=base*pct*shiftFrac;
   revenue+=shiftAmount;
@@ -1764,7 +1790,62 @@ function finCalc(j){
   const margin=revenue-cost;
   return {hours, hoursSrc, crew, leadH, techH, pmH, cost, rateMissing, units, unitsSrc, revenue, priceMissing, margin,
     marginPct: revenue>0? margin/revenue : null, perHour: hours>0? revenue/hours : null,
-    night, shiftFrac, shiftAmount, shiftMissed, minimum, belowMin};
+    night, shiftFrac, shiftAmount, shiftMissed, minimum, belowMin,
+    ot, otCost, matUsed, matCost, matRevenue, matMissing, matSrc: sv&&sv.materials? 'confirmed' : (Object.keys(matUsed).length? 'suggested' : 'none')};
+}
+
+// ── Materials catalog ──
+// Techs list what they brought in "JCIT Provided Parts/Materials Used" with no
+// quantities, and it's mostly TOOLS (drills, wire cutters, laptops) -- so the
+// catalog prices consumables PER JOB when used, and tools are ignored. Names +
+// keywords below come from what techs actually write; costs/prices are set in
+// Settings (stored in Azure, never here).
+const FIN_DEFAULT_MATERIALS=[
+  {key:'velcro',name:'Velcro / cable ties',keywords:'velcro, velco, cable ties, zip ties'},
+  {key:'bags-bands',name:'Bags & bands',keywords:'bags, bands, bag, rubber bands'},
+  {key:'move-sheets',name:'Move sheets & labels',keywords:'move sheets, movesheets, sheets, labels, sticky notes'},
+  {key:'screws',name:'Screws / hardware',keywords:'screws, bolts, hardware'},
+  {key:'packing',name:'Bubble wrap / packing',keywords:'bubble wrap, packing, boxes, tape'},
+  {key:'trash-bags',name:'Trash bags',keywords:'trash bags, big trash bags, garbage bags'},
+];
+const FIN_TOOL_RE=/\b(tape ?measures?|measuring tapes?|drills?|wire ?cutters?|wire clippers|snips|laptops?|tablets?|allen keys?|hex wrench|hand ?tools?|tools?|carts?|wagons?|flashlights?|phones?|smart ?phones?|lexicruiser|smartsheet)\b/gi;
+function finMaterials(){
+  const s=fin.settings||{}; const list=Array.isArray(s.materials)? s.materials : FIN_DEFAULT_MATERIALS; // [] = none (null = never set up -> defaults)
+  return list.map(m=>Object.assign({cost:null,price:null},m));
+}
+function finSuggestMaterials(text){
+  const t=' '+String(text||'').toLowerCase().replace(FIN_TOOL_RE,' ')+' ', out={};
+  if(!finMeaningful(text)) return out;
+  // Longest keywords first so "trash bags" beats "bags".
+  const kws=[]; finMaterials().forEach(m=>String(m.keywords||m.name).split(',').map(k=>k.trim().toLowerCase()).filter(Boolean).forEach(k=>kws.push({k,key:m.key})));
+  kws.sort((a,b)=>b.k.length-a.k.length);
+  let rest=t; kws.forEach(({k,key})=>{ const re=new RegExp('(^|[^a-z])'+k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?=[^a-z]|$)','g');
+    if(re.test(rest)){ out[key]=1; rest=rest.replace(re,'$1'+' '.repeat(k.length)); } });
+  return out;
+}
+
+// ── Weekly overtime ──
+// Per person per Mon–Sun week, hours past the limit (default 40) are overtime.
+// A person's hours on a job = the report's Total Hours ÷ crew size, else the
+// calendar duration. Jobs are walked in date/start order, so the overtime lands
+// on the job(s) that pushed someone over. Needs whole weeks loaded (the tab and
+// the email both pad their date range to Mon–Sun).
+function finWeekKey(iso){ const d=new Date(+iso.slice(0,4),+iso.slice(5,7)-1,+iso.slice(8,10)); d.setDate(d.getDate()-((d.getDay()+6)%7)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function finApplyOvertime(jobs){
+  const s=fin.settings||{}, limit=s.otWeeklyHours||40, acc={};
+  const order=jobs.slice().sort((a,b)=> String(a.date).localeCompare(String(b.date)) || ((finParseTime(a.startTime)||0)-(finParseTime(b.startTime)||0)));
+  order.forEach(j=>{
+    j.ot={lead:0,tech:0};
+    const leads=(j.lead||[]).filter(Boolean), techs=(j.technicians||[]).filter(n=>n&&!leads.includes(n)), people=leads.concat(techs);
+    if(!people.length) return;
+    const reps=j.reports||[], repH=reps.reduce((a,r)=>a+(r.totalHours||0),0), repCrew=reps.reduce((a,r)=>Math.max(a,r.crewSize||0),0);
+    const per= repH>0? repH/Math.max(1,repCrew||people.length) : (parseFloat(j.duration)||0);
+    if(!(per>0)) return;
+    const wk=finWeekKey(j.date);
+    people.forEach(p=>{ const key=String(p).toLowerCase()+'|'+wk, before=acc[key]||0, after=before+per; acc[key]=after;
+      const over=Math.max(0,after-Math.max(limit,before)); if(over>0) j.ot[leads.includes(p)?'lead':'tech']+=over; });
+  });
+  return jobs;
 }
 
 // ── Possible extra billing ──
@@ -1836,7 +1917,8 @@ function finFlagsFor(j,c){
   if(!(j.reports||[]).length && j.date<today) out.push({kind:'report', amount:null, text:'No Daily Project Report found — hours are estimated and there\'s no record of delays or extra work.'});
   return out.map(f=>Object.assign(f,{status:(j.flags&&j.flags[f.kind]&&j.flags[f.kind].status)||'', decision:(j.flags||{})[f.kind]||null}));
 }
-function finJobs(){ return ((fin.data&&fin.data.jobs)||[]).map(j=>{ const c=finCalc(j); return Object.assign({},j,{c, fl:finFlagsFor(j,c)}); }); }
+function finWeekEnd(iso){ const k=finWeekKey(iso), d=new Date(+k.slice(0,4),+k.slice(5,7)-1,+k.slice(8,10)+6); return finIso(d); }
+function finJobs(){ const all=(fin.data&&fin.data.jobs)||[]; finApplyOvertime(all); return all.filter(j=>(!fin.from||j.date>=fin.from)&&(!fin.to||j.date<=fin.to)).map(j=>{ const c=finCalc(j); return Object.assign({},j,{c, fl:finFlagsFor(j,c)}); }); }
 const FIN_STATUS=[['tobill','To bill'],['billed','Billed'],['ignore','Not billable']];
 function finFlagButtons(jobId,f){
   return '<span class="fin-flag-btns">'+FIN_STATUS.map(([k,l])=>`<button class="fm-chip${f.status===k?' on':''}" onclick="event.stopPropagation();finSetFlag('${jsEsc(jobId)}','${f.kind}','${f.status===k?'':k}')">${l}</button>`).join('')+'</span>';
@@ -1880,14 +1962,18 @@ function finPaint(){
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
       `<select class="js-select" onchange="finSetRange(this.value)">${rangeOpts}</select>`+
       (fin.range==='custom'? `<input type="date" class="fm-input" style="width:auto" value="${fin.from}" onchange="fin.from=this.value"><input type="date" class="fm-input" style="width:auto" value="${fin.to}" onchange="fin.to=this.value"><button class="btn btn-sm" onclick="finLoad()">Apply</button>` : '')+
-      '<button class="btn btn-sm" onclick="finLoad()">↻ Refresh</button></div></div>';
+      '<button class="btn btn-sm" onclick="finLoad()">↻ Refresh</button>'+
+      '<button class="btn btn-sm" onclick="finExportCsv()" title="Download the table you\'re looking at">⬇ CSV</button>'+
+      '<button class="btn btn-sm" onclick="finPrint()">🖨 Print / PDF</button>'+
+      `<button class="btn btn-sm" id="fin-email-btn" onclick="finEmailMe()" title="Send the monthly summary to your own inbox">✉ Email me ${jsEsc(finMonthLabel(fin.to||finIso(new Date())))}</button></div></div>`+
+      '<div class="fm-muted" id="fin-head-msg" style="text-align:right;margin:-14px 0 10px"></div>';
   if(fin.loading){ root.innerHTML=head+'<div class="empty"><p>Loading jobs and reports…</p></div>'; return; }
   if(fin.error){ root.innerHTML=head+`<div class="empty"><p>${jsEsc(fin.error)}</p></div>`; return; }
   const jobs=finJobs();
   const tot=jobs.reduce((a,j)=>{ a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; if(j.c.unitsSrc==='confirmed') a.conf++; else a.todo++; return a; },{rev:0,cost:0,hours:0,conf:0,todo:0});
   const undecided=[]; jobs.forEach(j=>j.fl.forEach(f=>{ if(!f.status) undecided.push(f); }));
   const openFlags=undecided.length, openAmt=undecided.reduce((a,f)=>a+(f.amount||0),0);
-  const tiles=[['Revenue',finMoney(tot.rev)],['Labor cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
+  const tiles=[['Revenue',finMoney(tot.rev)],['Cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
     ['Revenue / labor hr',finMoney(tot.hours>0?tot.rev/tot.hours:null)],['Jobs',jobs.length+' <span class="fin-sub">'+tot.conf+' confirmed · '+tot.todo+' to check</span>'],
     ['Possible extra billing',(openFlags? openFlags+' <span class="fin-sub">'+(openAmt? '≈ '+finMoney(openAmt)+' · ' : '')+'need a decision</span>' : '0 <span class="fin-sub">all decided</span>')]]
     .map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
@@ -1949,17 +2035,17 @@ function finTrendsHtml(jobs){
   for(let i=0;i<=4;i++){ const v=max*i/4, yy=y(v); svg+=`<line class="fin-grid" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text class="fin-axis" x="${L-8}" y="${yy+4}" text-anchor="end">${finK(v)}</text>`; }
   ms.forEach((m,i)=>{
     const cx=L+band*i+band/2, x1=cx-bw-1, x2=cx+1;
-    const tip=`<b>${jsEsc(mName(m.k))}</b><br>Revenue ${finMoney(m.rev)}<br>Labor cost ${finMoney(m.cost)}<br>Margin ${finMoney(m.rev-m.cost)} · ${finPct(m.rev>0?(m.rev-m.cost)/m.rev:null)}<br>${m.jobs} jobs · ${m.conf} confirmed`;
+    const tip=`<b>${jsEsc(mName(m.k))}</b><br>Revenue ${finMoney(m.rev)}<br>Cost ${finMoney(m.cost)}<br>Margin ${finMoney(m.rev-m.cost)} · ${finPct(m.rev>0?(m.rev-m.cost)/m.rev:null)}<br>${m.jobs} jobs · ${m.conf} confirmed`;
     if(m.rev>0) svg+=`<path class="fin-s1" d="${finColPath(x1,y(m.rev),bw,T+ph-y(m.rev))}"/>`;
     if(m.cost>0) svg+=`<path class="fin-s2" d="${finColPath(x2,y(m.cost),bw,T+ph-y(m.cost))}"/>`;
     svg+=`<text class="fin-axis" x="${cx}" y="${H-10}" text-anchor="middle">${jsEsc(mName(m.k))}</text>`;
     svg+=`<rect class="fin-hit" x="${L+band*i}" y="${T}" width="${band}" height="${ph}" data-tip="${jsEsc(tip)}"/>`;
   });
   svg+=`<line class="fin-axis-line" x1="${L}" x2="${W-R}" y1="${T+ph}" y2="${T+ph}"/></svg>`;
-  const monthTable='<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Month</th><th>Revenue</th><th>Labor cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th>Jobs</th></tr></thead><tbody>'+
+  const monthTable='<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Month</th><th>Revenue</th><th>Cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th>Jobs</th></tr></thead><tbody>'+
     ms.map(m=>`<tr><td>${jsEsc(mName(m.k))}</td><td>${finMoney(m.rev)}</td><td>${finMoney(m.cost)}</td><td class="${m.rev-m.cost<0?'fin-neg':''}">${finMoney(m.rev-m.cost)}</td><td>${finPct(m.rev>0?(m.rev-m.cost)/m.rev:null)}</td><td>${finMoney(m.hours>0?m.rev/m.hours:null)}</td><td>${m.jobs} <span class="fm-muted">(${m.conf} confirmed)</span></td></tr>`).join('')+'</tbody></table></div>';
   const sec1=`<div class="fm-sec fin-viz"><div class="fm-sec-h">Revenue and labor cost by month</div>`+
-    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Revenue</span><span><i class="fin-key fin-key-2"></i>Labor cost</span></div><div class="fin-chart">${svg}</div>${monthTable}</div>`;
+    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Revenue</span><span><i class="fin-key fin-key-2"></i>Cost</span></div><div class="fin-chart">${svg}</div>${monthTable}</div>`;
   // 2) client concentration
   const byClient=new Map(); jobs.forEach(j=>{ const k=j.client||'(no client)'; byClient.set(k,(byClient.get(k)||0)+j.c.revenue); });
   const total=[...byClient.values()].reduce((a,v)=>a+v,0);
@@ -1994,15 +2080,86 @@ function finTrendsHtml(jobs){
       s3+=`<text class="fin-axis fin-axis-strong" x="${lab-10}" y="${yy+15}" text-anchor="end">${jsEsc(a.t)}</text>`+
         `<path class="fin-s1" d="${finBarPath(lab,yy+2,w,18)}"/><text class="fin-axis" x="${lab+w+8}" y="${yy+15}">${finMoney(a.ph)}/hr</text>`+
         `<rect class="fin-hit" x="0" y="${yy}" width="${cw}" height="${rowH}" data-tip="${jsEsc('<b>'+jsEsc(a.t)+'</b><br>'+finMoney(a.ph)+' revenue per labor hour<br>'+a.jobs+' jobs · '+finNum(a.hours)+' labor hrs<br>Margin '+finPct(a.rev>0?(a.rev-a.cost)/a.rev:null))}"/>`; });
-    if(costPh>0){ const cx=xs(costPh); s3+=`<line class="fin-ref" x1="${cx}" x2="${cx}" y1="2" y2="${ch-20}"/><text class="fin-axis" x="${cx}" y="${ch-6}" text-anchor="middle">labor cost ${finMoney(costPh)}/hr</text>`; }
+    if(costPh>0){ const cx=xs(costPh); s3+=`<line class="fin-ref" x1="${cx}" x2="${cx}" y1="2" y2="${ch-20}"/><text class="fin-axis" x="${cx}" y="${ch-6}" text-anchor="middle">cost ${finMoney(costPh)} per labor hr</text>`; }
     s3+='</svg>';
     sec3=`<div class="fm-sec fin-viz"><div class="fm-sec-h">Revenue per labor hour by job type</div>`+
-      `<div class="fm-muted" style="margin-bottom:6px">Each job is typed by its biggest billed item. The line is your average labor cost per hour — bars to its right earn more than the labor costs.</div><div class="fin-chart">${s3}</div>`+
+      `<div class="fm-muted" style="margin-bottom:6px">Each job is typed by its biggest billed item. The line is your average cost per labor hour (labor, overtime and materials) — bars to its right earn more than they cost.</div><div class="fin-chart">${s3}</div>`+
       '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Job type</th><th>Jobs</th><th>Labor hrs</th><th>Revenue</th><th>Rev / labor hr</th><th>Margin %</th></tr></thead><tbody>'+
       types.map(a=>`<tr><td>${jsEsc(a.t)}</td><td>${a.jobs}</td><td>${finNum(a.hours)}</td><td>${finMoney(a.rev)}</td><td>${finMoney(a.ph)}</td><td>${finPct(a.rev>0?(a.rev-a.cost)/a.rev:null)}</td></tr>`).join('')+'</tbody></table></div></div>';
   }
   return note+sec1+sec2+sec3+'<div class="fin-tip" id="fin-tip" role="tooltip"></div>';
 }
+// ── Export: CSV of the current view, printable report, summary email ──
+function finMonthLabel(iso){ return new Date(+iso.slice(0,4),+iso.slice(5,7)-1,1).toLocaleDateString(undefined,{month:'short',year:'numeric'}); }
+// Numbers go out as real numbers (so spreadsheets can add them up); text is
+// quoted and guarded against formula injection (=, +, -, @ at the start).
+function finCsvCell(v){
+  if(typeof v==='number') return isFinite(v)? String(Math.round(v*100)/100) : '';
+  let s=String(v==null?'':v).replace(/<[^>]+>/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim();
+  if(/^[=+\-@\t\r]/.test(s)) s="'"+s;
+  return '"'+s.replace(/"/g,'""')+'"';
+}
+function finClientRows(jobs){
+  const by=new Map(); jobs.forEach(j=>{ const k=j.client||'(no client)'; const a=by.get(k)||{client:k,jobs:0,hours:0,rev:0,cost:0,todo:0}; a.jobs++; a.hours+=j.c.hours; a.rev+=j.c.revenue; a.cost+=j.c.cost; if(j.c.unitsSrc!=='confirmed') a.todo++; by.set(k,a); });
+  return [...by.values()].map(a=>Object.assign(a,{margin:a.rev-a.cost,pct:a.rev>0?(a.rev-a.cost)/a.rev:null,perHour:a.hours>0?a.rev/a.hours:null})).sort((a,b)=>b.margin-a.margin);
+}
+function finMonthRows(jobs){
+  const m=new Map(); jobs.forEach(j=>{ const k=j.date.slice(0,7); const a=m.get(k)||{k,rev:0,cost:0,hours:0,jobs:0,conf:0}; a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; a.jobs++; if(j.c.unitsSrc==='confirmed') a.conf++; m.set(k,a); });
+  return [...m.values()].sort((a,b)=>a.k.localeCompare(b.k));
+}
+const finUnitsText=u=>Object.keys(u||{}).map(k=>u[k]+' '+(((fin.items||[]).find(i=>i.key===k)||{}).label||k)).join('; ');
+function finExportCsv(){
+  const jobs=finJobs(), v=fin.view; let head, rows, name=v;
+  const pctN=p=> p==null? '' : Math.round(p*1000)/10;
+  if(v==='clients'){ head=['Client','Jobs','Labor hours','Revenue','Cost','Margin','Margin %','Revenue per labor hour','Jobs to check'];
+    rows=finClientRows(jobs).map(a=>[a.client,a.jobs,a.hours,a.rev,a.cost,a.margin,pctN(a.pct),a.perHour,a.todo]); }
+  else if(v==='extra'){ head=['Date','Job','Client','Lead','Flag','What we found','Possible $','Decision','Decided by'];
+    rows=[]; jobs.forEach(j=>j.fl.forEach(f=>rows.push([j.date,j.project,j.client,(j.lead||[]).join('; '),FIN_FLAG_LABEL[f.kind],f.text,f.amount||'',(FIN_STATUS.find(s=>s[0]===f.status)||['','Needs a decision'])[1],f.decision&&f.decision.by||'']))); }
+  else if(v==='trends'){ head=['Month','Revenue','Cost','Margin','Margin %','Revenue per labor hour','Jobs','Confirmed'];
+    rows=finMonthRows(jobs).map(m=>[m.k,m.rev,m.cost,m.rev-m.cost,pctN(m.rev>0?(m.rev-m.cost)/m.rev:null),m.hours>0?m.rev/m.hours:'',m.jobs,m.conf]); }
+  else if(v==='forecast'){ if(!fin.fc.data){ alert('The forecast is still loading.'); return; }
+    head=['Date','Start','Job','Client','Crew','Duration (h)','Labor hours','Expected revenue','Cost','Margin','Based on'];
+    rows=finForecastJobs().map(r=>[r.j.date,r.j.startTime||'',r.j.project,r.j.client,r.c.crew,r.j.duration||'',r.c.hours,r.rev,r.cost,r.rev-r.cost,r.basis]); }
+  else { name='jobs'; head=['Date','Job','Client','Lead','Crew','Labor hours','Hours from','Units','Units status','Revenue','Cost','Margin','Margin %','Revenue per labor hour'];
+    rows=jobs.map(j=>[j.date,j.project,j.client,(j.lead||[]).join('; '),j.c.crew,j.c.hours,j.c.hoursSrc,finUnitsText(j.c.units),j.c.unitsSrc,j.c.revenue,j.c.cost,j.c.margin,pctN(j.c.marginPct),j.c.perHour]); }
+  const csv='﻿'+[head].concat(rows).map(r=>r.map(finCsvCell).join(',')).join('\r\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`jcit-financial-${name}-${fin.from}_to_${fin.to}.csv`; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
+}
+// Printable report (browser print → "Save as PDF"): summary, clients, monthly
+// chart, open extra billing and every job, on a white page.
+function finPrint(){
+  const jobs=finJobs(); if(!jobs.length){ alert('No jobs in this date range.'); return; }
+  const tot=jobs.reduce((a,j)=>{ a.rev+=j.c.revenue; a.cost+=j.c.cost; a.hours+=j.c.hours; if(j.c.unitsSrc==='confirmed') a.conf++; return a; },{rev:0,cost:0,hours:0,conf:0});
+  const months=finMonthRows(jobs), open=[]; jobs.forEach(j=>j.fl.forEach(f=>{ if(!f.status||f.status==='tobill') open.push({j,f}); }));
+  const t=(head,rows)=>`<table class="fm-rep-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+  const range=`${fin.from} to ${fin.to}`;
+  let html=`<h1 style="font-size:20px;margin:0 0 2px">Jet City IT — Financial report</h1><div style="color:#555;margin-bottom:12px">${jsEsc(range)} · printed ${jsEsc(new Date().toLocaleString())}${fin.settings.updatedBy?'':' · cost rates/prices not set'}</div>`+
+    t(['Revenue','Cost','Margin','Margin %','Rev / labor hr','Jobs (confirmed)'],[`<tr><td>${finMoney(tot.rev)}</td><td>${finMoney(tot.cost)}</td><td>${finMoney(tot.rev-tot.cost)}</td><td>${finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)}</td><td>${finMoney(tot.hours>0?tot.rev/tot.hours:null)}</td><td>${jobs.length} (${tot.conf})</td></tr>`]);
+  if(months.length>1) html+='<h2 class="fin-print-h">Revenue and labor cost by month</h2><div class="fin-viz"><div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Revenue</span><span><i class="fin-key fin-key-2"></i>Cost</span></div>'+
+    finColumnsSvg(months.map(m=>({label:finMonthLabel(m.k+'-01'),a:m.rev,b:m.cost,tip:''})),'Revenue and labor cost by month')+'</div>';
+  html+='<h2 class="fin-print-h">By client</h2>'+t(['Client','Jobs','Labor hrs','Revenue','Cost','Margin','Margin %','Rev / labor hr'],
+    finClientRows(jobs).map(a=>`<tr><td>${jsEsc(a.client)}</td><td>${a.jobs}</td><td>${finNum(a.hours)}</td><td>${finMoney(a.rev)}</td><td>${finMoney(a.cost)}</td><td>${finMoney(a.margin)}</td><td>${finPct(a.pct)}</td><td>${finMoney(a.perHour)}</td></tr>`));
+  if(open.length) html+=`<h2 class="fin-print-h">Possible extra billing (${open.length} open)</h2>`+t(['Date','Job','Flag','What we found','Possible $','Decision'],
+    open.map(({j,f})=>`<tr><td>${jsEsc(j.date)}</td><td>${jsEsc(j.project)}<br><span style="color:#555">${jsEsc(j.client||'')}</span></td><td>${FIN_FLAG_LABEL[f.kind]}</td><td>${f.html? f.text : jsEsc(f.text)}</td><td>${f.amount? finMoney(f.amount) : '—'}</td><td>${f.status==='tobill'?'To bill':'Needs a decision'}</td></tr>`));
+  html+='<h2 class="fin-print-h">Jobs</h2>'+t(['Date','Job','Client','Labor hrs','Units','Revenue','Cost','Margin','%'],
+    jobs.map(j=>`<tr><td>${jsEsc(j.date)}</td><td>${jsEsc(j.project)}</td><td>${jsEsc(j.client||'')}</td><td>${finNum(j.c.hours)}${j.c.hoursSrc==='estimate'?' (est.)':''}</td><td>${jsEsc(finUnitsText(j.c.units))||'—'}${j.c.unitsSrc!=='confirmed'&&Object.keys(j.c.units).length?' (suggested)':''}</td><td>${finMoney(j.c.revenue)}</td><td>${finMoney(j.c.cost)}</td><td>${finMoney(j.c.margin)}</td><td>${finPct(j.c.marginPct)}</td></tr>`));
+  let el=document.getElementById('fin-print'); if(el) el.remove();
+  el=document.createElement('div'); el.id='fin-print'; el.innerHTML=html; document.body.appendChild(el);
+  document.body.classList.add('fin-printing');
+  let cleaned=false; const done=()=>{ if(cleaned) return; cleaned=true; document.body.classList.remove('fin-printing'); const p=document.getElementById('fin-print'); if(p) p.remove(); window.removeEventListener('afterprint',done); };
+  window.addEventListener('afterprint',done); setTimeout(done,120000);
+  try{ window.print(); }catch(e){ done(); }
+}
+async function finEmailMe(){
+  const btn=document.getElementById('fin-email-btn'), msg=document.getElementById('fin-head-msg'), month=(fin.to||finIso(new Date())).slice(0,7);
+  if(btn) btn.disabled=true; if(msg) msg.textContent='Sending the '+finMonthLabel(month+'-01')+' summary to your inbox…';
+  try{ const r=await finApi('POST','/summary-email',{month}); if(msg) msg.textContent='✓ Sent to '+r.to+'. It also goes to the whole Financial group automatically on the 1st of each month.'; }
+  catch(e){ if(msg) msg.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span>'; }
+  if(btn) btn.disabled=false;
+}
+
 // ── Forecast + quote check ──
 // Both need recent history (last 90 days: each client's revenue per labor
 // hour, the crew's real pace per unit) and the forecast also needs scheduled
@@ -2022,6 +2179,7 @@ function finSetWeeks(w){ fin.fc.weeks=+w; fin.fc.data=null; finLoadForecast(); }
 // per unit by job type from CONFIRMED jobs only (suggested units are too rough).
 function finHistory(){
   const d=fin.fc.data; if(!d) return null;
+  finApplyOvertime(d.jobs);
   const today=fin.fc.today, past=d.jobs.filter(j=>j.date<today).map(j=>Object.assign({},j,{c:finCalc(j)}));
   const per={}, all={rev:0,hours:0}, pace={};
   past.forEach(j=>{ if(j.c.revenue>0&&j.c.hours>0){ const k=j.client||'(no client)'; per[k]=per[k]||{rev:0,hours:0,jobs:0}; per[k].rev+=j.c.revenue; per[k].hours+=j.c.hours; per[k].jobs++; all.rev+=j.c.revenue; all.hours+=j.c.hours; }
@@ -2065,15 +2223,15 @@ function finForecastHtml(){
   const weeks=new Map(); rows.forEach(r=>{ const k=finWeekStart(r.j.date); const w=weeks.get(k)||{k,rev:0,cost:0,jobs:0}; w.rev+=r.rev; w.cost+=r.cost; w.jobs++; weeks.set(k,w); });
   const wl=k=>'Wk of '+new Date(+k.slice(0,4),+k.slice(5,7)-1,+k.slice(8,10)).toLocaleDateString(undefined,{month:'short',day:'numeric'});
   const groups=[...weeks.values()].sort((a,b)=>a.k.localeCompare(b.k)).map(w=>({label:wl(w.k),a:w.rev,b:w.cost,
-    tip:`<b>${wl(w.k)}</b><br>Expected revenue ${finMoney(w.rev)}<br>Labor cost ${finMoney(w.cost)}<br>Margin ${finMoney(w.rev-w.cost)} · ${finPct(w.rev>0?(w.rev-w.cost)/w.rev:null)}<br>${w.jobs} jobs`}));
-  const tiles=[['Expected revenue',finMoney(tot.rev)],['Labor cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
+    tip:`<b>${wl(w.k)}</b><br>Expected revenue ${finMoney(w.rev)}<br>Cost ${finMoney(w.cost)}<br>Margin ${finMoney(w.rev-w.cost)} · ${finPct(w.rev>0?(w.rev-w.cost)/w.rev:null)}<br>${w.jobs} jobs`}));
+  const tiles=[['Expected revenue',finMoney(tot.rev)],['Cost',finMoney(tot.cost)],['Margin',finMoney(tot.rev-tot.cost)+' <span class="fin-sub">'+finPct(tot.rev>0?(tot.rev-tot.cost)/tot.rev:null)+'</span>'],
     ['Scheduled',rows.length+' jobs <span class="fin-sub">'+finNum(tot.hours)+' labor hrs</span>']].map(([l,v])=>`<div class="fin-tile"><div class="fin-tile-l">${l}</div><div class="fin-tile-v">${v}</div></div>`).join('');
   return `<div class="fm-sec fin-viz"><div class="fm-sec-h" style="justify-content:space-between;flex-wrap:wrap;gap:8px">Next ${fc.weeks} weeks ${weeksSel}</div>`+
     '<div class="fm-muted" style="margin-bottom:10px">Jobs already on the crew calendar. Labor = calendar duration × crew at your role rates; revenue = that labor × each client\'s actual revenue per labor hour over the last 90 days.</div>'+
     `<div class="fin-tiles" style="margin-bottom:12px">${tiles}</div>`+
     (noHours? `<div class="fin-callout">⚠ ${noHours} scheduled job${noHours>1?'s have':' has'} no duration on the calendar, so ${noHours>1?'they count':'it counts'} as $0 here.</div>` : '')+
-    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Expected revenue</span><span><i class="fin-key fin-key-2"></i>Labor cost</span></div><div class="fin-chart">${finColumnsSvg(groups,'Expected revenue and labor cost by week')}</div>`+
-    '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Date</th><th>Job</th><th>Crew × hrs</th><th>Exp. revenue</th><th>Labor cost</th><th>Margin</th><th>Based on</th></tr></thead><tbody>'+
+    `<div class="fin-legend"><span><i class="fin-key fin-key-1"></i>Expected revenue</span><span><i class="fin-key fin-key-2"></i>Cost</span></div><div class="fin-chart">${finColumnsSvg(groups,'Expected revenue and labor cost by week')}</div>`+
+    '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><thead><tr><th>Date</th><th>Job</th><th>Crew × hrs</th><th>Exp. revenue</th><th>Cost</th><th>Margin</th><th>Based on</th></tr></thead><tbody>'+
     rows.sort((a,b)=>a.j.date.localeCompare(b.j.date)).map(r=>`<tr><td style="white-space:nowrap">${jsEsc(r.j.date)}${r.j.startTime?'<div class="fm-muted">'+jsEsc(r.j.startTime)+'</div>':''}</td><td><b>${jsEsc(r.j.project)}</b><div class="fm-muted">${jsEsc(r.j.client||'')}</div></td>`+
       `<td>${r.c.crew} × ${jsEsc(r.j.duration||'?')}${r.noHours?' <span class="fin-chip fin-chip-bad">no duration</span>':''}</td><td>${finMoney(r.rev)}</td><td>${finMoney(r.cost)}</td><td class="${r.rev-r.cost<0?'fin-neg':''}">${finMoney(r.rev-r.cost)}</td><td class="fm-muted" style="font-size:12px">${r.basis}${r.c.night.fraction>0?' · overnight':''}</td></tr>`).join('')+
     '</tbody></table></div></div>'+'<div class="fin-tip" id="fin-tip" role="tooltip"></div>';
@@ -2138,7 +2296,7 @@ function finQuoteCalc(){
   const onSite=hrs=> hrs!=null? finNum(hrs/q.crew)+' h on site for '+q.crew : '—';
   el.innerHTML=(rev<=0? '<div class="fm-muted">Enter some units to see the numbers.</div>' :
     `<div class="fin-tiles"><div class="fin-tile"><div class="fin-tile-l">Quote value</div><div class="fin-tile-v">${finMoney(rev)}</div></div>`+
-    `<div class="fin-tile"><div class="fin-tile-l">Labor cost</div><div class="fin-tile-v">${cost!=null?finMoney(cost):'—'}</div></div>`+
+    `<div class="fin-tile"><div class="fin-tile-l">Cost</div><div class="fin-tile-v">${cost!=null?finMoney(cost):'—'}</div></div>`+
     `<div class="fin-tile"><div class="fin-tile-l">Margin</div><div class="fin-tile-v ${margin!=null&&margin<0?'fin-neg':''}">${margin!=null?finMoney(margin)+' <span class="fin-sub">'+finPct(rev>0?margin/rev:null)+'</span>':'—'}</div></div></div>`+
     '<div class="fin-table-wrap" style="margin-top:10px"><table class="fin-table"><tbody>'+
       `<tr><td>Hours used</td><td>${laborH!=null? finNum(laborH)+' labor hrs — '+hoursNote : 'Enter hours on site (no confirmed jobs of this type to learn a pace from yet)'}</td></tr>`+
@@ -2169,7 +2327,7 @@ function finClientsHtml(jobs){
   const rows=[...by.values()].map(a=>Object.assign(a,{margin:a.rev-a.cost, pct:a.rev>0?(a.rev-a.cost)/a.rev:null, perHour:a.hours>0?a.rev/a.hours:null}))
     .sort((a,b)=>b.margin-a.margin);
   if(!rows.length) return '<div class="empty"><p>No jobs in this date range.</p></div>';
-  return '<div class="fin-table-wrap"><table class="fin-table"><thead><tr><th>Client</th><th>Jobs</th><th>Labor hrs</th><th>Revenue</th><th>Labor cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th></th></tr></thead><tbody>'+
+  return '<div class="fin-table-wrap"><table class="fin-table"><thead><tr><th>Client</th><th>Jobs</th><th>Labor hrs</th><th>Revenue</th><th>Cost</th><th>Margin</th><th>Margin %</th><th>Rev / labor hr</th><th></th></tr></thead><tbody>'+
     rows.map(a=>`<tr class="fin-row" data-c="${jsEsc(a.client)}" onclick="fin.clientFilter=this.dataset.c;fin.view='jobs';finPaint()">`+
       `<td><b>${jsEsc(a.client)}</b></td><td>${a.jobs}</td><td>${finNum(a.hours)}</td><td>${finMoney(a.rev)}</td><td>${finMoney(a.cost)}</td>`+
       `<td class="${a.margin<0?'fin-neg':''}">${finMoney(a.margin)}</td><td>${finPct(a.pct)}</td><td>${finMoney(a.perHour)}</td>`+
@@ -2198,7 +2356,7 @@ function finJobsHtml(jobs){
           `<td><b>${jsEsc(j.project)}</b><div class="fm-muted">${jsEsc(j.client||'')}</div></td>`+
           `<td>${finNum(c.hours)}${c.hoursSrc==='estimate'?' <span class="fin-chip fin-chip-sug" title="No Daily Report found — estimated from the calendar">est.</span>':(c.hoursSrc==='none'?' <span class="fin-chip fin-chip-bad">no hours</span>':'')}</td>`+
           `<td class="fin-units">${jsEsc(unitsTxt(c.units))||'—'}</td><td>${finMoney(c.revenue)}${c.priceMissing?' <span class="fin-chip fin-chip-bad" title="An item has no price set">price?</span>':''}</td>`+
-          `<td>${finMoney(c.cost)}${c.rateMissing?' <span class="fin-chip fin-chip-bad" title="A role has no cost rate set">rate?</span>':''}</td>`+
+          `<td>${finMoney(c.cost)}${c.rateMissing?' <span class="fin-chip fin-chip-bad" title="A role has no cost rate set">rate?</span>':''}${(c.ot.lead+c.ot.tech)>0?` <span class="fin-chip fin-chip-warn" title="${finNum(c.ot.lead+c.ot.tech)} overtime hours on this job">OT</span>`:''}${j.saved&&c.matSrc==='suggested'?` <span class="fin-chip fin-chip-sug" title="Confirmed before materials were tracked — materials are ticked from the report. Open the job and confirm to lock them in.">materials?</span>`:''}</td>`+
           `<td class="${c.margin<0?'fin-neg':''}">${finMoney(c.margin)}</td><td>${finPct(c.marginPct)}</td><td>${finMoney(c.perHour)}</td>`+
           `<td><span class="fin-chip ${src[0]}">${src[1]}</span></td></tr>`; }).join('')+'</tbody></table></div>'
       : '<div class="empty"><p>No jobs match.</p></div>');
@@ -2228,7 +2386,11 @@ function finOpenJob(id){
       `<div><div class="js-field-label">Units billed ${c.unitsSrc==='confirmed'?'(confirmed)':c.unitsSrc==='none'?'':'(suggested from the report — check before confirming)'}</div><div class="fin-units-grid">${items}</div>`+
         `<label class="js-check" style="margin-top:8px"><input type="checkbox" id="fin-shift" ${(j.saved? sv.shift : c.night.fraction>0)?'checked':''} onchange="finLive()"> Shift premium (${fin.settings.shiftPremiumPct!=null?fin.settings.shiftPremiumPct+'%':'not set'}) — work between 11 PM and 6 AM`+
           (c.night.fraction>0? ` <span class="fin-chip fin-chip-sug">${finNum(c.night.hours)} h overnight · ${jsEsc(c.night.span)}</span>` : '')+`</label></div>`+
-      `<div><div class="js-field-label">Labor hours <span class="fm-muted">(blank = from the report${c.hoursSrc==='estimate'?' / calendar estimate':''})</span></div><div class="fin-units-grid">${hrs}</div></div>`+
+      `<div><div class="js-field-label">Labor hours <span class="fm-muted">(blank = from the report${c.hoursSrc==='estimate'?' / calendar estimate':''})</span></div><div class="fin-units-grid">${hrs}</div>`+
+        ((c.ot.lead+c.ot.tech)>0? `<div class="fin-callout" style="margin-top:8px">⏱ ${finNum(c.ot.lead+c.ot.tech)} h of this job were overtime (someone on the crew went past ${fin.settings.otWeeklyHours||40} h that week)${fin.settings.overtimePct!=null? ` — adds ${finMoney(c.otCost)} at +${fin.settings.overtimePct}%` : ' — set the overtime % in ⚙ Settings to cost it'}.</div>` : '')+`</div>`+
+      `<div><div class="js-field-label">Materials used ${c.matSrc==='confirmed'?'(confirmed)':c.matSrc==='suggested'?'(ticked from the report — check)':''}</div>`+
+        ((j.reports||[]).some(r=>finMeaningful(r.materials))? `<div class="fm-muted" style="margin-bottom:6px">Report says: ${jsEsc((j.reports||[]).map(r=>r.materials).filter(finMeaningful).join(' · '))}</div>` : '')+
+        `<div class="fin-units-grid">${finMaterials().map(m=>`<label class="fin-unit"><span>${jsEsc(m.name)} <span class="fm-muted">${m.cost!=null?finMoney(m.cost)+'/job':'no cost set'}${m.price!=null?' · bills '+finMoney(m.price):''}</span></span><input type="number" min="0" step="1" data-m="${jsEsc(m.key)}" value="${c.matUsed[m.key]||''}" oninput="finLive()" title="How many jobs' worth (usually 1)"></label>`).join('')}</div></div>`+
       `<div><div class="js-field-label">Note</div><textarea class="js-edit" id="fin-note" rows="2" maxlength="1000">${jsEsc(sv.note||'')}</textarea></div>`+
       '<div class="fin-live" id="fin-live"></div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="finSaveJob()">✓ Confirm units</button>'+
@@ -2243,12 +2405,13 @@ function finFormValues(){
   const units={}, hours={};
   document.querySelectorAll('#fin-modal input[data-k]').forEach(i=>{ const v=parseFloat(i.value); if(v>0) units[i.dataset.k]=v; });
   document.querySelectorAll('#fin-modal input[data-h]').forEach(i=>{ if(i.value!=='') hours[i.dataset.h]=parseFloat(i.value)||0; });
-  return {units, hours, shift:!!(document.getElementById('fin-shift')||{}).checked, note:(document.getElementById('fin-note')||{}).value||''};
+  const materials={}; document.querySelectorAll('#fin-modal input[data-m]').forEach(i=>{ const v=parseFloat(i.value); if(v>0) materials[i.dataset.m]=v; });
+  return {units, hours, materials, shift:!!(document.getElementById('fin-shift')||{}).checked, note:(document.getElementById('fin-note')||{}).value||''};
 }
 function finLive(){
   const j=((fin.data&&fin.data.jobs)||[]).find(x=>x.id===fin.openId), el=document.getElementById('fin-live'); if(!j||!el) return;
   const c=finCalc(Object.assign({},j,{saved:Object.assign({updatedAt:null},finFormValues())}));
-  el.innerHTML=`<div>Revenue <b>${finMoney(c.revenue)}</b></div><div>Labor cost <b>${finMoney(c.cost)}</b> <span class="fm-muted">${finNum(c.hours)} hrs</span></div>`+
+  el.innerHTML=`<div>Revenue <b>${finMoney(c.revenue)}</b></div><div>Cost <b>${finMoney(c.cost)}</b> <span class="fm-muted">${finNum(c.hours)} labor hrs${c.otCost?' · OT '+finMoney(c.otCost):''}${c.matCost?' · materials '+finMoney(c.matCost):''}</span></div>`+
     `<div>Margin <b class="${c.margin<0?'fin-neg':''}">${finMoney(c.margin)}</b> <span class="fm-muted">${finPct(c.marginPct)}</span></div><div>Rev / labor hr <b>${finMoney(c.perHour)}</b></div>`+
     (c.priceMissing? '<div class="fm-warn">Some items have no price set (⚙ Settings).</div>' : '')+(c.rateMissing? '<div class="fm-warn">A role has no cost rate set (⚙ Settings).</div>' : '');
 }
@@ -2283,11 +2446,34 @@ function finSettingsHtml(){
         `<label class="fin-unit"><span>Minimum hours for a support call-out</span><input type="number" min="0" max="24" step="0.5" id="fin-minh" value="${s.minCallHours!=null?s.minCallHours:4}"></label>`+
         `<label class="fin-unit"><span>Minimum applies</span><select class="js-select" id="fin-minper" style="padding:5px 8px"><option value="visit"${s.minPerTech?'':' selected'}>per visit</option><option value="tech"${s.minPerTech?' selected':''}>per tech on the crew</option></select></label>`+
       '</div><div class="fm-status" id="fin-import-msg"></div></div>'+
+    '<div class="fm-sec"><div class="fm-sec-h">Overtime</div>'+
+      '<div class="fm-muted" style="margin-bottom:8px">Hours a person works past the weekly limit (Mon–Sun, from the jobs they\'re crewed on) cost extra. Enter how much extra as a % of that role\'s hourly cost — e.g. if wages are about 60% of the loaded cost, time-and-a-half adds about 30%.</div>'+
+      '<div class="fin-units-grid">'+
+        `<label class="fin-unit"><span>Overtime adds</span><input type="number" min="0" max="300" step="1" id="fin-otpct" value="${s.overtimePct!=null?s.overtimePct:''}" placeholder="off"> %</label>`+
+        `<label class="fin-unit"><span>Overtime after (hours / week)</span><input type="number" min="1" max="80" step="1" id="fin-oth" value="${s.otWeeklyHours||40}"></label>`+
+      '</div></div>'+
+    '<div class="fm-sec"><div class="fm-sec-h">Materials (cost per job when used)</div>'+
+      '<div class="fm-muted" style="margin-bottom:8px">Daily Reports list what was used without quantities, so each material is costed per job it\'s used on. Keywords are what techs write (comma-separated). Tools (drills, cutters, laptops…) aren\'t counted. Add a billed price only if you charge the client for it.</div>'+
+      '<div id="fin-mat-rows" style="display:grid;gap:6px">'+finMaterials().map(m=>finMatRowHtml(m)).join('')+'</div>'+
+      '<button class="btn btn-sm" style="margin-top:8px" onclick="finAddMaterial()">+ Add material</button></div>'+
     '<div class="fm-sec"><div class="fm-sec-h">Client prices (override the standard price)</div>'+
       over.map(cn=>`<div class="fin-client-over" data-client="${jsEsc(cn)}"><div style="display:flex;justify-content:space-between;align-items:center"><b>${jsEsc(cn)}</b><button class="btn btn-sm btn-ghost" data-c="${jsEsc(cn)}" onclick="finRemoveClient(this.dataset.c)">Remove</button></div><div class="fin-units-grid">`+
         items.map(it=>`<label class="fin-unit"><span>${jsEsc(it.label)}</span><input type="number" min="0" step="0.01" data-ck="${it.key}" value="${s.clientPrices[cn][it.key]!=null?s.clientPrices[cn][it.key]:''}" placeholder="${s.prices&&s.prices[it.key]!=null?'std '+s.prices[it.key]:'$'}"></label>`).join('')+'</div></div>').join('')+
       `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><input class="fm-input" style="max-width:320px" id="fin-new-client" list="fin-client-list" placeholder="Client name (as on the calendar)"><datalist id="fin-client-list">${clients.map(c=>`<option value="${jsEsc(c)}">`).join('')}</datalist><button class="btn btn-sm" onclick="finAddClient()">+ Add client prices</button></div></div>`+
     '<div style="display:flex;gap:8px;align-items:center"><button class="btn btn-primary" onclick="finSaveSettings()">Save settings</button><span class="fm-muted" id="fin-set-msg">'+(s.updatedAt? 'Last saved by '+jsEsc(s.updatedBy||'')+' · '+jsEsc(new Date(s.updatedAt).toLocaleString()) : 'Not saved yet')+'</span></div>';
+}
+function finMatRowHtml(m){
+  return `<div class="fin-mat-row" data-key="${jsEsc(m.key)}">`+
+    `<input class="fm-input" data-f="name" value="${jsEsc(m.name||'')}" placeholder="Material" maxlength="60">`+
+    `<input class="fm-input" data-f="keywords" value="${jsEsc(m.keywords||'')}" placeholder="Words techs write, comma-separated" maxlength="200">`+
+    `<input class="fm-input" data-f="cost" type="number" min="0" step="0.01" value="${m.cost!=null?m.cost:''}" placeholder="Cost / job">`+
+    `<input class="fm-input" data-f="price" type="number" min="0" step="0.01" value="${m.price!=null?m.price:''}" placeholder="Bill (opt.)">`+
+    `<button class="btn btn-sm btn-ghost" title="Remove" onclick="this.parentElement.remove()">×</button></div>`;
+}
+function finAddMaterial(){
+  const box=document.getElementById('fin-mat-rows'); if(!box) return;
+  const key='m-'+Math.random().toString(36).slice(2,8);
+  box.insertAdjacentHTML('beforeend',finMatRowHtml({key,name:'',keywords:''})); box.lastElementChild.querySelector('input').focus();
 }
 function finReadSettingsForm(){
   const s=JSON.parse(JSON.stringify(fin.settings)), v=id=>{ const e=document.getElementById(id); return e? e.value : ''; };
@@ -2295,6 +2481,9 @@ function finReadSettingsForm(){
   (fin.items||[]).forEach(it=>{ s.prices[it.key]=v('fin-p-'+it.key)===''? null : +v('fin-p-'+it.key); });
   s.shiftPremiumPct=v('fin-shiftpct')===''? null : +v('fin-shiftpct'); s.minCallHours=v('fin-minh')===''? 4 : +v('fin-minh');
   s.minPerTech=v('fin-minper')==='tech';
+  s.overtimePct=v('fin-otpct')===''? null : +v('fin-otpct'); s.otWeeklyHours=v('fin-oth')===''? 40 : +v('fin-oth');
+  s.materials=[...document.querySelectorAll('#fin-mat-rows .fin-mat-row')].map(r=>{ const g=c=>(r.querySelector('[data-f="'+c+'"]')||{}).value||'';
+    return {key:r.dataset.key, name:g('name').trim(), keywords:g('keywords').trim(), cost:g('cost')===''?null:+g('cost'), price:g('price')===''?null:+g('price')}; }).filter(m=>m.name);
   document.querySelectorAll('.fin-client-over').forEach(box=>{ const cn=box.dataset.client, o={};
     box.querySelectorAll('input[data-ck]').forEach(i=>{ if(i.value!=='') o[i.dataset.ck]=+i.value; }); s.clientPrices[cn]=o; });
   return s;

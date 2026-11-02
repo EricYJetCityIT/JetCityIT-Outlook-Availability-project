@@ -1,0 +1,40 @@
+name: Monthly financial summary
+
+# Emails last month's Financial-tab summary to the Financial group
+# (FINANCE_UPNS). The work is done by the HTTP endpoint
+# api/src/functions/finance.js (/api/finance/monthly-summary) because Azure
+# Static Web Apps' managed Functions only support HTTP triggers; this workflow
+# is the scheduler, gated by the same shared SYNC_SECRET as the other jobs.
+# 15:00 UTC on the 1st = 7-8am Pacific depending on DST.
+on:
+  schedule:
+    - cron: '0 15 1 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: 'Month to summarize (YYYY-MM). Blank = last month.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run — work out the numbers and recipient count, send nothing'
+        type: boolean
+        default: true
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call monthly-summary endpoint
+        env:
+          MONTH: ${{ inputs.month }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          URL="https://crew-calendar.jetcityit.com/api/finance/monthly-summary?x=1"
+          if echo "$MONTH" | grep -Eq '^[0-9]{4}-[0-9]{2}$'; then URL="$URL&month=$MONTH"; fi
+          # inputs.dry_run is only set on a manual run (default true there); the
+          # scheduled run leaves it empty, so it always sends for real.
+          if [ "$DRY" = "true" ]; then URL="$URL&dry=1"; echo "DRY RUN — nothing will be sent"; fi
+          curl -sf --retry 3 --retry-delay 10 --retry-all-errors \
+            -X POST "$URL" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}" \
+            -o /dev/null -w "HTTP %{http_code}\n"
