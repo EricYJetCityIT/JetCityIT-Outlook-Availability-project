@@ -56,6 +56,16 @@ const TESTER_UPNS = (process.env.TESTER_UPNS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+// The "Cardholders" group -- people who carry a company card and submit
+// purchase requests + receipts on the Expenses tab (the Financial group
+// approves them). Comma-separated @jetcityit.com emails in the CARDHOLDER_UPNS
+// app setting. Empty/unset => nobody.
+const CARDHOLDER_UPNS = (process.env.CARDHOLDER_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const client = jwksClient({
   jwksUri: `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
   cache: true,
@@ -130,8 +140,9 @@ async function requireUser(request) {
   const isFinance = FINANCE_UPNS.includes(upn);
   const isPlanner = PLANNER_UPNS.includes(upn);
   const isTester = TESTER_UPNS.includes(upn);
+  const isCardholder = CARDHOLDER_UPNS.includes(upn);
 
-  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner, isTester };
+  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner, isTester, isCardholder };
 }
 
 // Gate for write/change operations. Reads never call this; writes do.
@@ -171,6 +182,13 @@ function requireEditorOrPlanner(user) {
   }
 }
 
+// Gate for the Expenses tab: cardholders submit, the Financial group approves.
+function requireCardholderOrFinance(user) {
+  if (!user || (!user.isCardholder && !user.isFinance)) {
+    throw new AuthError(403, 'You do not have permission to view this.');
+  }
+}
+
 function authErrorResponse(e, context) {
   if (e instanceof AuthError) {
     if (e.status === 429) {
@@ -191,4 +209,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, requireCardholderOrFinance, AuthError, authErrorResponse };

@@ -531,6 +531,16 @@ body.is-editor #tab-manager{display:inline-block}
    default, revealed only when the API confirms membership (adds `is-finance`). */
 #tab-invoice{display:none}
 body.is-finance #tab-invoice{display:inline-block}
+/* Expenses tab: company-card cardholders (CARDHOLDER_UPNS) + the Financial group. */
+#tab-expenses{display:none}
+body.is-finance #tab-expenses,body.is-cardholder #tab-expenses{display:inline-block}
+.exp-row{cursor:pointer}
+.exp-row:hover td{background:var(--surface2)}
+.exp-receipt{max-width:100%;max-height:420px;border-radius:8px;border:1px solid var(--border);display:block;margin:0 auto;background:#fff}
+.exp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.exp-grid label{display:grid;gap:4px;font-size:12.5px;color:var(--text2);min-width:0}
+.exp-grid select,.exp-grid input{width:100%;box-sizing:border-box;min-width:0}
+.exp-hist{font-size:12.5px;color:var(--text2);display:grid;gap:4px;border-left:2px solid var(--border);padding-left:10px}
 /* Project Planning tab is Project-Planners-group only (PLANNER_UPNS). Same
    pattern: hidden by default, revealed only when the API confirms membership
    (adds `is-planner`). */
@@ -1065,6 +1075,10 @@ if('serviceWorker' in navigator){
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Financial
     </button>
+    <button class="tab" id="tab-expenses" onclick="switchTab('expenses')">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M2 10h20M6 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Expenses
+    </button>
     <button class="tab" id="tab-jobsheet" onclick="switchTab('jobsheet')">
       <svg width="14" height="14" fill="none" viewBox="0 0 24 24" style="vertical-align:-2px;margin-right:5px"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M9 3.5h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8.5 11l1.5 1.5 2.5-3M8.5 16l1.5 1.5 2.5-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       Job Sheets
@@ -1096,6 +1110,11 @@ if('serviceWorker' in navigator){
        per client; rendered by renderFinancial(), data from /api/finance/*.
        (Element ids keep the old "invoice" name so the existing gating applies.) -->
   <div class="view" id="view-invoice"><div id="fin-root"></div></div>
+
+  <!-- EXPENSES VIEW (cardholders + Financial group). Company-card purchase
+       requests and receipts with approval; rendered by renderExpenses(), data
+       from /api/expenses. -->
+  <div class="view" id="view-expenses"><div id="exp-root"></div></div>
 
   <!-- PROJECT PLANNING VIEW (Project Planners group only) -->
   <div class="view" id="view-planning">
@@ -1634,6 +1653,8 @@ function switchTab(id){
   if(id === 'manager' && !currentUserIsEditor) return;
   // Invoice is financial-group-only (FINANCE_UPNS); same belt-and-suspenders guard.
   if(id === 'invoice' && !currentUserIsFinance) return;
+  // Expenses is for cardholders (CARDHOLDER_UPNS) and the Financial group; same guard.
+  if(id === 'expenses' && !currentUserIsCardholder && !currentUserIsFinance) return;
   // Project Planning is Project-Planners-group-only (PLANNER_UPNS); same guard.
   if(id === 'planning' && !currentUserIsPlanner) return;
   // Job Sheets is Testers-group-only (TESTER_UPNS); same guard.
@@ -1650,6 +1671,275 @@ function switchTab(id){
   if(id==='jobsheet')renderJobsheet();
   if(id==='floormap')renderFloormap();
   if(id==='invoice')renderFinancial();
+  if(id==='expenses')renderExpenses();
+}
+
+// ── Expenses tab (cardholders + Financial group) ───────────────────────────
+// Company-card spending. Cardholders ask before buying ("request") or add a
+// receipt after ("purchase"); the Financial group approves. The receipt photo
+// is shrunk to a JPEG here, read by Azure's receipt reader when it's set up
+// (vendor / date / total / tax pre-filled), and stored in Azure with the
+// expense. No card numbers anywhere. Server: api/src/functions/expenses.js.
+let exp={items:null, me:null, view:'', loading:false, error:'', month:'', status:'all', openId:null, form:null, jobs:null};
+const EXP_CATS=[['materials','Materials'],['parking','Parking'],['fuel','Fuel'],['meals','Meals'],['tools','Tools'],['travel','Travel'],['office','Office'],['other','Other']];
+const EXP_STATUS={requested:['Asked to buy','fin-chip-warn'],'req-approved':['OK to buy','fin-chip-ok'],'req-denied':['Not approved','fin-chip-bad'],
+  submitted:['Waiting for approval','fin-chip-warn'],'needs-info':['Question','fin-chip-bad'],approved:['Approved','fin-chip-ok'],rejected:['Rejected','fin-chip-bad'],reconciled:['Reconciled','fin-chip-sug']};
+const EXP_WAITING=['requested','submitted'];
+const expMoney=v=> v==null||!isFinite(v)? '—' : '$'+Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const expCat=k=>((EXP_CATS.find(c=>c[0]===k)||[])[1])||'Other';
+const expDate=e=> e.date || String(e.createdAt||'').slice(0,10);
+const expAmt=e=> e.amount!=null? expMoney(e.amount) : (e.estimate!=null? '≈ '+expMoney(e.estimate) : '—');
+async function expApi(method,path,body){
+  const token=await getApiToken();
+  const opts={method,headers:{'X-Jetcity-Authorization':'Bearer '+token}};
+  if(body!==undefined){ opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
+  const res=await fetch('/api'+path,opts);
+  if(!res.ok){ let m='Request failed ('+res.status+')'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
+  return res.status===204? null : res.json();
+}
+function renderExpenses(){ if(!exp.items&&!exp.loading&&!exp.error){ expLoad(); return; } expPaint(); }
+async function expLoad(){
+  exp.loading=true; exp.error=''; expPaint();
+  try{ const r=await expApi('GET','/expenses'); exp.items=r.items||[]; exp.me=r.me||{}; }
+  catch(e){ exp.error=e.message||'Failed to load'; }
+  exp.loading=false;
+  if(!exp.view) exp.view= exp.me&&exp.me.isFinance&&expAwaiting().length? 'approvals' : (exp.me&&exp.me.isCardholder? 'mine' : 'all');
+  expPaint();
+}
+// Waiting on the Financial group, minus your own (unless you're the only approver).
+function expAwaiting(){ const me=exp.me||{}; return (exp.items||[]).filter(e=>EXP_WAITING.includes(e.status)&&(e.owner!==me.upn||me.canSelfApprove)); }
+function expUpsert(item){ const i=(exp.items||[]).findIndex(x=>x.id===item.id); if(i>=0) exp.items[i]=item; else exp.items.unshift(item); }
+
+function expPaint(){
+  const root=document.getElementById('exp-root'); if(!root) return;
+  const me=exp.me||{};
+  const head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap"><div><h1>Expenses</h1></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      (me.isCardholder? '<button class="btn btn-primary btn-sm" onclick="expNew(\'purchase\')">🧾 Add a receipt</button><button class="btn btn-sm" onclick="expNew(\'request\')">🙋 Ask to buy</button>' : '')+
+      '<button class="btn btn-sm" onclick="expLoad()">↻ Refresh</button></div></div>';
+  if(exp.loading&&!exp.items){ root.innerHTML=head+'<div class="empty"><p>Loading…</p></div>'; return; }
+  if(exp.error){ root.innerHTML=head+`<div class="empty"><p>${jsEsc(exp.error)}</p></div>`; return; }
+  const all=exp.items||[], waiting=expAwaiting();
+  const views=[];
+  if(me.isCardholder) views.push(['mine','My expenses']);
+  if(me.isFinance){ views.push(['approvals','Needs approval'+(waiting.length? ' ('+waiting.length+')' : '')]); views.push(['all','All']); }
+  const nav=views.length>1? `<div class="js-mode-toggle" style="margin:4px 0 14px">${views.map(([k,l])=>`<button class="js-mode-btn${exp.view===k?' active':''}" onclick="exp.view='${k}';expPaint()">${l}</button>`).join('')}</div>` : '';
+  let body='';
+  if(exp.view==='approvals'){
+    body= waiting.length? expTable(waiting,true) : '<div class="empty"><p>Nothing waiting for approval. 🎉</p></div>';
+  } else if(exp.view==='all'){
+    const months=[...new Set(all.map(e=>expDate(e).slice(0,7)))].sort().reverse();
+    const list=all.filter(e=>(!exp.month||expDate(e).startsWith(exp.month))&&(exp.status==='all'||(exp.status==='open'? !['approved','reconciled','rejected','req-denied'].includes(e.status) : e.status===exp.status)));
+    const spent=list.filter(e=>e.status==='approved'||e.status==='reconciled').reduce((a,e)=>a+(e.amount||0),0);
+    const unrec=list.filter(e=>e.status==='approved').length;
+    body='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'+
+      `<select class="js-select" onchange="exp.month=this.value;expPaint()"><option value="">All months</option>${months.map(m=>`<option value="${m}"${exp.month===m?' selected':''}>${jsEsc(finMonthLabel(m+'-01'))}</option>`).join('')}</select>`+
+      `<select class="js-select" onchange="exp.status=this.value;expPaint()">${[['all','Any status'],['open','Not finished'],['approved','Approved, not reconciled'],['reconciled','Reconciled'],['rejected','Rejected']].map(([k,l])=>`<option value="${k}"${exp.status===k?' selected':''}>${l}</option>`).join('')}</select>`+
+      '<button class="btn btn-sm" onclick="expExportCsv()">⬇ CSV</button></div>'+
+      `<div class="fin-tiles" style="margin-bottom:12px"><div class="fin-tile"><div class="fin-tile-l">Approved spend</div><div class="fin-tile-v">${expMoney(spent)}</div></div>`+
+      `<div class="fin-tile"><div class="fin-tile-l">Approved, not reconciled</div><div class="fin-tile-v">${unrec}</div></div>`+
+      `<div class="fin-tile"><div class="fin-tile-l">Waiting for approval</div><div class="fin-tile-v">${list.filter(e=>EXP_WAITING.includes(e.status)).length}</div></div></div>`+
+      (list.length? expTable(list,true) : '<div class="empty"><p>No expenses match.</p></div>');
+  } else {
+    const mine=all.filter(e=>e.owner===me.upn);
+    const todo=mine.filter(e=>e.status==='req-approved'||e.status==='needs-info');
+    body=(todo.length? `<div class="fin-callout">${todo.length} of yours need${todo.length===1?'s':''} you: ${todo.map(e=>`<a href="#" onclick="expOpen('${e.id}');return false">${jsEsc(e.description||e.vendor||'expense')}</a>`).join(', ')}</div>` : '')+
+      (mine.length? expTable(mine,false) : '<div class="empty"><p>No expenses yet. Use <b>🧾 Add a receipt</b> after buying, or <b>🙋 Ask to buy</b> first.</p></div>');
+  }
+  root.innerHTML=head+(me.receiptReader||!me.isCardholder? '' : '<div class="fm-muted" style="margin-bottom:10px">Receipt reading isn’t switched on yet — type the amounts in for now.</div>')+nav+body+
+    '<div class="js-modal-backdrop" id="exp-modal-backdrop" onclick="if(event.target===this)expClose()"><div class="js-modal" id="exp-modal" style="max-width:640px"></div></div>';
+}
+function expTable(list,showWho){
+  return '<div class="fin-table-wrap"><table class="fin-table"><thead><tr><th>Date</th>'+(showWho?'<th>Who</th>':'')+'<th>What</th><th>Amount</th><th>Category</th><th>Job</th><th>Status</th></tr></thead><tbody>'+
+    list.slice().sort((a,b)=>expDate(b).localeCompare(expDate(a))).map(e=>{ const st=EXP_STATUS[e.status]||[e.status,''];
+      const off=e.receiptRead&&e.receiptRead.total!=null&&e.amount!=null&&Math.abs(e.receiptRead.total-e.amount)>0.01;
+      return `<tr class="exp-row" onclick="expOpen('${e.id}')"><td style="white-space:nowrap">${jsEsc(expDate(e))}</td>`+(showWho?`<td>${jsEsc(e.ownerName)}</td>`:'')+
+        `<td><b>${jsEsc(e.vendor||e.description||'—')}</b>${e.vendor&&e.description?`<div class="fm-muted">${jsEsc(e.description)}</div>`:''}</td>`+
+        `<td style="white-space:nowrap">${expAmt(e)}${off?' <span class="fin-chip fin-chip-warn" title="The receipt reader saw a different total">check</span>':''}${e.kind==='purchase'&&!e.hasReceipt?' <span class="fin-chip fin-chip-bad">no receipt</span>':''}</td>`+
+        `<td>${expCat(e.category)}</td><td>${jsEsc(e.jobName||'')}</td><td><span class="fin-chip ${st[1]}">${st[0]}</span></td></tr>`; }).join('')+'</tbody></table></div>';
+}
+
+// ── Detail: receipt, history, approve / reject / ask ──
+function expOpen(id){
+  const e=(exp.items||[]).find(x=>x.id===id), modal=document.getElementById('exp-modal'); if(!e||!modal) return;
+  exp.openId=id; exp.form=null;
+  const me=exp.me||{}, mine=e.owner===me.upn, st=EXP_STATUS[e.status]||[e.status,''];
+  const canDecide=me.isFinance&&(!mine||me.canSelfApprove);
+  const acts=[];
+  if(me.isFinance){
+    if(e.status==='requested'&&canDecide) acts.push(['approve','✓ OK to buy','btn-primary'],['deny','Not approved','']);
+    if(e.status==='submitted'&&canDecide) acts.push(['approve','✓ Approve','btn-primary'],['needs-info','Ask a question',''],['reject','Reject','']);
+    if(e.status==='approved') acts.push(['reconcile','Mark reconciled','']);
+    if(e.status==='reconciled') acts.push(['unreconcile','Undo reconciled','btn-ghost']);
+  }
+  const rr=e.receiptRead, row=(l,v)=>`<tr><td class="fm-muted" style="padding:3px 14px 3px 0;white-space:nowrap">${l}</td><td>${v}</td></tr>`;
+  modal.innerHTML=
+    `<div class="js-modal-head"><div><div class="js-modal-title">${jsEsc(e.vendor||e.description||'Expense')}</div><div class="fm-muted">${jsEsc(e.ownerName)} · <span class="fin-chip ${st[1]}">${st[0]}</span></div></div><button class="js-modal-close" onclick="expClose()" aria-label="Close">&times;</button></div>`+
+    '<div class="js-modal-body">'+
+      (e.hasReceipt? '<div id="exp-receipt-box" class="fm-muted">Loading receipt…</div>' : (e.kind==='purchase'? '<div class="fin-callout">No receipt photo was added.</div>' : ''))+
+      '<table style="border-collapse:collapse;font-size:14px">'+
+        (e.description? row('What',jsEsc(e.description)) : '')+(e.vendor? row('Where',jsEsc(e.vendor)) : '')+
+        (e.estimate!=null? row(e.kind==='request'&&e.amount==null?'About':'Asked for','≈ '+expMoney(e.estimate)) : '')+
+        (e.amount!=null? row('Total','<b>'+expMoney(e.amount)+'</b>'+(e.tax!=null?' <span class="fm-muted">incl. tax '+expMoney(e.tax)+'</span>':'')+(e.estimate!=null&&e.amount>e.estimate*1.1+1?' <span class="fin-chip fin-chip-warn">over the OK’d amount</span>':'')) : '')+
+        (rr&&(rr.total!=null||rr.vendor)? row('Receipt reader saw',jsEsc([rr.vendor,rr.date,rr.total!=null?expMoney(rr.total):''].filter(Boolean).join(' · '))) : '')+
+        (e.date? row('Bought',jsEsc(e.date)) : '')+row('Category',expCat(e.category))+
+        (e.jobName? row('Job',jsEsc(e.jobName)+(e.client?' <span class="fm-muted">'+jsEsc(e.client)+'</span>':'')) : '')+
+        (e.note? row('Note',`<span style="white-space:pre-wrap">${jsEsc(e.note)}</span>`) : '')+
+      '</table>'+
+      `<div><div class="js-field-label">History</div><div class="exp-hist">${(e.history||[]).map(h=>`<div><b>${jsEsc(h.byName||h.by)}</b> ${jsEsc(h.action)} · <span class="fm-muted">${jsEsc(new Date(h.at).toLocaleString())}</span>${h.note?`<div style="white-space:pre-wrap">${jsEsc(h.note)}</div>`:''}</div>`).join('')}</div></div>`+
+      (acts.length? `<div><div class="js-field-label">Note to ${jsEsc(e.ownerName)} <span class="fm-muted">(needed to say no or ask a question)</span></div><textarea class="js-edit" id="exp-note" rows="2" maxlength="500"></textarea></div>` : '')+
+      (me.isFinance&&mine&&!me.canSelfApprove&&EXP_WAITING.includes(e.status)? '<div class="fm-muted">This one is yours — someone else in the Financial group approves it.</div>' : '')+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+        acts.map(([a,l,c])=>`<button class="btn btn-sm ${c}" onclick="expDecide('${a}')">${l}</button>`).join('')+
+        (mine&&e.status==='req-approved'? '<button class="btn btn-sm btn-primary" onclick="expEdit()">🧾 Add the receipt</button>' : '')+
+        (mine&&['requested','submitted','needs-info'].includes(e.status)? `<button class="btn btn-sm${e.status==='needs-info'?' btn-primary':''}" onclick="expEdit()">${e.status==='needs-info'?'Answer / fix':'Edit'}</button>` : '')+
+        (mine&&['requested','submitted','needs-info','req-denied'].includes(e.status)? '<button class="btn btn-sm btn-ghost" onclick="expDelete()">Delete</button>' : '')+
+        '<button class="btn btn-sm" onclick="expClose()">Close</button><span class="fm-muted" id="exp-msg"></span></div>'+
+    '</div>';
+  document.getElementById('exp-modal-backdrop').classList.add('open');
+  if(e.hasReceipt) expShowReceipt(e.id);
+}
+async function expShowReceipt(id){
+  const box=document.getElementById('exp-receipt-box'); if(!box) return;
+  try{
+    const token=await getApiToken();
+    const res=await fetch('/api/expenses/'+encodeURIComponent(id)+'/receipt',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok) throw new Error('Could not load the receipt ('+res.status+')');
+    const url=URL.createObjectURL(await res.blob());
+    if(exp.openId!==id){ URL.revokeObjectURL(url); return; }
+    box.innerHTML=`<a href="${url}" target="_blank" rel="noopener"><img class="exp-receipt" src="${url}" alt="Receipt"></a>`;
+    exp.receiptUrl=url;
+  }catch(e){ box.innerHTML=`<span class="fm-warn">${jsEsc(e.message||e)}</span>`; }
+}
+function expClose(){
+  exp.openId=null; exp.form=null;
+  if(exp.receiptUrl){ URL.revokeObjectURL(exp.receiptUrl); exp.receiptUrl=null; }
+  const b=document.getElementById('exp-modal-backdrop'); if(b) b.classList.remove('open');
+}
+async function expDecide(action){
+  const id=exp.openId, msg=document.getElementById('exp-msg'), note=(document.getElementById('exp-note')||{}).value||'';
+  if(['deny','reject','needs-info'].includes(action)&&!note.trim()){ if(msg) msg.innerHTML='<span class="fm-warn">Add a short note first.</span>'; return; }
+  document.querySelectorAll('#exp-modal button').forEach(b=>b.disabled=true); if(msg) msg.textContent='Saving…';
+  try{ const r=await expApi('POST','/expenses/'+encodeURIComponent(id)+'/decision',{action,note}); expUpsert(r.item); expClose(); expPaint(); }
+  catch(e){ document.querySelectorAll('#exp-modal button').forEach(b=>b.disabled=false); if(msg) msg.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span>'; }
+}
+async function expDelete(){
+  const id=exp.openId; if(!confirm('Delete this expense? This can’t be undone.')) return;
+  try{ await expApi('DELETE','/expenses/'+encodeURIComponent(id)); exp.items=exp.items.filter(x=>x.id!==id); expClose(); expPaint(); }
+  catch(e){ const m=document.getElementById('exp-msg'); if(m) m.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span>'; }
+}
+
+// ── Add / edit form ──
+function expNew(kind){ exp.openId=null; exp.form={kind, id:null, status:'', receipt:null, receiptRead:null, preview:null, v:{category:'materials', date:kind==='purchase'?finIso(new Date()):''}}; expForm(); }
+function expEdit(){
+  const e=(exp.items||[]).find(x=>x.id===exp.openId); if(!e) return;
+  // An approved request turns into its receipt: same entry, now with the real total.
+  const purchase=e.kind==='purchase'||e.status!=='requested';
+  exp.form={kind:purchase?'purchase':'request', id:e.id, status:e.status, receipt:null, receiptRead:null, preview:null, hadReceipt:e.hasReceipt,
+    v:{description:e.description, vendor:e.vendor, category:e.category, estimate:e.estimate, amount:e.amount, tax:e.tax, date:e.date||(purchase?finIso(new Date()):''), jobId:e.jobId, jobName:e.jobName, client:e.client, note:e.note}};
+  expForm();
+}
+async function expForm(){
+  const f=exp.form, modal=document.getElementById('exp-modal'); if(!f||!modal) return;
+  const v=f.v, p=f.kind==='purchase', inp=(k,type,extra)=>`<input class="fm-input" id="exp-f-${k}" type="${type||'text'}" value="${jsEsc(v[k]!=null?v[k]:'')}" ${extra||''}>`;
+  const title= !f.id? (p?'Add a receipt':'Ask to buy something') : (f.status==='req-approved'?'Add the receipt':(f.status==='needs-info'?'Answer / fix':'Edit'));
+  modal.innerHTML=
+    `<div class="js-modal-head"><div class="js-modal-title">${title}</div><button class="js-modal-close" onclick="expClose()" aria-label="Close">&times;</button></div>`+
+    '<div class="js-modal-body">'+
+      (p? '<div><div class="js-field-label">Receipt photo</div>'+
+        `<input type="file" accept="image/*,application/pdf" id="exp-file" onchange="expPickReceipt(this)">`+
+        `<div id="exp-preview" style="margin-top:8px">${f.preview? `<img class="exp-receipt" src="${f.preview}" alt="Receipt">` : (f.hadReceipt? '<span class="fm-muted">A receipt is already attached — pick a new one only to replace it.</span>' : '')}</div>`+
+        '<div class="fm-muted" id="exp-read-msg" style="margin-top:4px"></div></div>' : '')+
+      '<div class="exp-grid">'+
+        (p? `<label>Total *${inp('amount','number','min="0" step="0.01" inputmode="decimal"')}</label><label>Tax (in the total)${inp('tax','number','min="0" step="0.01" inputmode="decimal"')}</label><label>Date bought *${inp('date','date')}</label><label>Where (store / vendor) *${inp('vendor','text','maxlength="120"')}</label>`
+           : `<label>About how much *${inp('estimate','number','min="0" step="0.01" inputmode="decimal"')}</label><label>Where (store / vendor)${inp('vendor','text','maxlength="120"')}</label>`)+
+        `<label>Category<select class="js-select" id="exp-f-category">${EXP_CATS.map(([k,l])=>`<option value="${k}"${v.category===k?' selected':''}>${l}</option>`).join('')}</select></label>`+
+        '<label>Job (optional)<select class="js-select" id="exp-f-job"><option value="">Loading jobs…</option></select></label>'+
+      '</div>'+
+      `<label style="display:grid;gap:4px;font-size:12.5px;color:var(--text2)">${p?'What was it for':'What do you want to buy *'}${inp('description','text','maxlength="300"')}</label>`+
+      `<label style="display:grid;gap:4px;font-size:12.5px;color:var(--text2)">${p?'Note':'Why it’s needed'}<textarea class="js-edit" id="exp-f-note" rows="2" maxlength="1000">${jsEsc(v.note||'')}</textarea></label>`+
+      (f.status==='needs-info'? '<label style="display:grid;gap:4px;font-size:12.5px;color:var(--text2)">Your answer to the question<textarea class="js-edit" id="exp-f-reply" rows="2" maxlength="500"></textarea></label>' : '')+
+      `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-primary btn-sm" id="exp-save" onclick="expSave()">${p?(f.id?'Send for approval':'Send for approval'):(f.id?'Save':'Send request')}</button><button class="btn btn-sm" onclick="expClose()">Cancel</button><span class="fm-muted" id="exp-msg"></span></div>`+
+    '</div>';
+  document.getElementById('exp-modal-backdrop').classList.add('open');
+  // Recent calendar jobs (1 week back .. 2 weeks ahead), plus the one already picked.
+  try{
+    if(!exp.jobs) exp.jobs=await JCITDispatch.searchJobs('');
+    const sel=document.getElementById('exp-f-job'); if(!sel||exp.form!==f) return;
+    const jobs=exp.jobs.slice(); if(v.jobId&&!jobs.some(j=>j.id===v.jobId)) jobs.unshift({id:v.jobId, project:v.jobName, client:v.client, date:''});
+    sel.innerHTML='<option value="">— No job —</option>'+jobs.map(j=>`<option value="${jsEsc(j.id)}"${v.jobId===j.id?' selected':''}>${jsEsc((j.date?j.date+' · ':'')+j.project+(j.client?' ('+j.client+')':''))}</option>`).join('');
+  }catch(e){ const sel=document.getElementById('exp-f-job'); if(sel) sel.innerHTML='<option value="">— No job —</option>'; }
+}
+// Shrink to a JPEG (longest side 1600px) so it uploads fast on a phone and fits
+// one Azure record; a PDF receipt becomes a picture of its first page.
+async function expShrink(file){
+  let src, w, h;
+  if(/pdf$/i.test(file.type)||/\.pdf$/i.test(file.name)){
+    const lib=await fmEnsurePdfJs(), pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer()), isEvalSupported:false}).promise;
+    const page=await pdf.getPage(1), vp1=page.getViewport({scale:1}), vp=page.getViewport({scale:1600/Math.max(vp1.width,vp1.height)});
+    src=document.createElement('canvas'); src.width=Math.round(vp.width); src.height=Math.round(vp.height);
+    const cx=src.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,src.width,src.height);
+    await page.render({canvasContext:cx, viewport:vp}).promise; w=src.width; h=src.height;
+  } else { src=await createImageBitmap(file); w=src.width; h=src.height; }
+  for(const [max,q] of [[1600,0.8],[1300,0.7],[1000,0.6]]){
+    const s=Math.min(1,max/Math.max(w,h)), c=document.createElement('canvas'); c.width=Math.round(w*s); c.height=Math.round(h*s);
+    const cx=c.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,c.width,c.height); cx.drawImage(src,0,0,c.width,c.height);
+    const url=c.toDataURL('image/jpeg',q);
+    if(url.length*0.75<1100*1024){ if(src.close) src.close(); return url; }
+  }
+  if(src.close) src.close();
+  throw new Error('That photo is too large — try a closer, simpler shot.');
+}
+async function expPickReceipt(input){
+  const f=exp.form, file=input.files&&input.files[0], msg=document.getElementById('exp-read-msg'); if(!f||!file) return;
+  expKeepValues();
+  if(msg) msg.textContent='Preparing photo…';
+  try{
+    const url=await expShrink(file); if(exp.form!==f) return;
+    f.receipt=url.slice(url.indexOf(',')+1); f.preview=url; f.receiptRead=null;
+    const pv=document.getElementById('exp-preview'); if(pv) pv.innerHTML=`<img class="exp-receipt" src="${url}" alt="Receipt">`;
+    if(!(exp.me&&exp.me.receiptReader)){ if(msg) msg.textContent='Type the total, date and store below.'; return; }
+    if(msg) msg.textContent='Reading the receipt…';
+    const r=await expApi('POST','/expense-receipt/read',{receipt:f.receipt}); if(exp.form!==f) return;
+    if(!r.configured){ if(msg) msg.textContent='Type the total, date and store below.'; return; }
+    f.receiptRead={vendor:r.vendor||'', total:r.total, tax:r.tax, date:r.date};
+    // Fill only what's still empty -- never overwrite something already typed.
+    const set=(k,val)=>{ const el=document.getElementById('exp-f-'+k); if(el&&val!=null&&val!==''&&!el.value){ el.value=val; f.v[k]=val; } };
+    set('amount',r.total); set('tax',r.tax); set('date',r.date); set('vendor',r.vendor);
+    // A date the reader found replaces today's default.
+    if(r.date){ const el=document.getElementById('exp-f-date'); if(el&&el.value===finIso(new Date())) el.value=r.date; }
+    if(msg) msg.textContent= r.total!=null? '✓ Read from the receipt — check the numbers.' : 'Couldn’t find a total on it — type it in.';
+  }catch(e){ if(msg) msg.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span> You can still type the amounts in.'; }
+}
+function expKeepValues(){
+  const f=exp.form; if(!f) return;
+  ['amount','tax','date','vendor','estimate','description'].forEach(k=>{ const el=document.getElementById('exp-f-'+k); if(el) f.v[k]=el.value; });
+  const n=document.getElementById('exp-f-note'); if(n) f.v.note=n.value;
+  const c=document.getElementById('exp-f-category'); if(c) f.v.category=c.value;
+}
+async function expSave(){
+  const f=exp.form, msg=document.getElementById('exp-msg'), btn=document.getElementById('exp-save'); if(!f) return;
+  expKeepValues();
+  const sel=document.getElementById('exp-f-job'), job=sel&&sel.value? (exp.jobs||[]).find(j=>j.id===sel.value)||{id:sel.value, project:f.v.jobName, client:f.v.client} : null;
+  const body=Object.assign({}, f.v, {kind:f.kind, jobId:job?job.id:'', jobName:job?job.project:'', client:job?job.client:'',
+    reply:(document.getElementById('exp-f-reply')||{}).value||''});
+  if(f.receipt){ body.receipt=f.receipt; body.receiptRead=f.receiptRead; }
+  if(f.kind==='purchase'&&!f.receipt&&!f.hadReceipt&&!confirm('No receipt photo — send it anyway?')) return;
+  if(btn) btn.disabled=true; if(msg) msg.textContent='Sending…';
+  try{
+    const r= f.id? await expApi('PUT','/expenses/'+encodeURIComponent(f.id),body) : await expApi('POST','/expenses',body);
+    expUpsert(r.item); expClose(); if(exp.view!=='all'&&exp.view!=='approvals') exp.view='mine'; expPaint();
+  }catch(e){ if(btn) btn.disabled=false; if(msg) msg.innerHTML='<span class="fm-warn">'+jsEsc(e.message||e)+'</span>'; }
+}
+function expExportCsv(){
+  const list=(exp.items||[]).filter(e=>(!exp.month||expDate(e).startsWith(exp.month))&&(exp.status==='all'||(exp.status==='open'? !['approved','reconciled','rejected','req-denied'].includes(e.status) : e.status===exp.status)));
+  const decidedBy=e=>{ const h=(e.history||[]).filter(x=>/^(approved|req-approved)/.test(x.action)).pop(); return h? h.byName||h.by : ''; };
+  const head=['Date','Cardholder','Vendor','What','Category','Total','Tax','Estimate','Job','Client','Status','Approved by','Receipt'];
+  const rows=list.map(e=>[expDate(e),e.ownerName,e.vendor,e.description,expCat(e.category),e.amount!=null?e.amount:'',e.tax!=null?e.tax:'',e.estimate!=null?e.estimate:'',e.jobName,e.client,(EXP_STATUS[e.status]||[e.status])[0],decidedBy(e),e.hasReceipt?'yes':'no']);
+  const csv='﻿'+[head].concat(rows).map(r=>r.map(finCsvCell).join(',')).join('\r\n');
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`jcit-expenses-${exp.month||'all'}.csv`; document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000);
 }
 
 // ── Financial tab (FINANCE_UPNS group only) ─────────────────────────────────
@@ -5697,6 +5987,7 @@ let currentUserIsEditor=false;
 let currentUserIsFinance=false;
 let currentUserIsPlanner=false;
 let currentUserIsTester=false;
+let currentUserIsCardholder=false;
 function setCrewMode(m){
   crewMode=m;
   document.getElementById('crew-subtab-board').classList.toggle('active',m==='board');
@@ -8200,6 +8491,7 @@ function applyMyRole(me){
   currentUserIsFinance=!!me.isFinance;
   currentUserIsPlanner=!!me.isPlanner;
   currentUserIsTester=!!me.isTester;
+  currentUserIsCardholder=!!me.isCardholder;
   if(currentUserIsEditor) fbStartPolling(); // red count of unfinished feedback on the Manager view tab
   // Read-only users get `is-viewer` (write controls hide); editors get
   // `is-editor`, which reveals the Manager-view tab (hidden by default).
@@ -8212,6 +8504,9 @@ function applyMyRole(me){
   document.body.classList.toggle('is-planner', currentUserIsPlanner);
   // `is-tester` reveals the Job Sheets + Floor Maps tabs for the Testers group (TESTER_UPNS) only.
   document.body.classList.toggle('is-tester', currentUserIsTester);
+  // `is-cardholder` reveals the Expenses tab for company-card holders (CARDHOLDER_UPNS);
+  // the Financial group sees it too (they approve).
+  document.body.classList.toggle('is-cardholder', currentUserIsCardholder);
 }
 
 // ── Graph API helpers ─────────────────────────────────────────────────────────
