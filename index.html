@@ -126,6 +126,11 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .fb-tag.problem{background:var(--unavail-bg);color:var(--unavail-text)}
 .fb-tag.suggestion{background:var(--green-light);color:var(--green-dark)}
 .fb-msg{font-size:13.5px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.5}
+.fb-done-form{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.fb-done-lbl{font-size:12px;color:var(--text3)}
+.fb-done-note{width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical}
+.fb-done-chk{font-size:12.5px;color:var(--text2);display:flex;gap:6px;align-items:center}
+.fb-donenote{margin-top:6px;font-size:12.5px;color:var(--text3);word-break:break-word}
 .fb-item-act{margin-top:8px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
 .settings-menu{position:absolute;top:44px;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:12px;box-shadow:var(--shadow);padding:14px;z-index:1000;width:240px;display:none}
 .settings-menu.open{display:block}
@@ -6005,7 +6010,7 @@ const ACC_GROUPS=[
 ];
 const acc={data:null,dir:null,dirBusy:false,err:'',notice:null,live:'',loading:false,busy:false,pending:null,confirm:null,confirmAt:0,focusKey:null,seq:0,vals:{}};
 // Manager view → Feedback state (the code is further down, next to openFeedback)
-const fbm={items:null,loading:false,err:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{},focusKey:null,seq:0,mut:0};
+const fbm={items:null,loading:false,err:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{},focusKey:null,seq:0,mut:0,doneFor:null,note:'',notify:true,saving:null,caret:0};
 let fbOpenCount=null, fbPoll=null;
 let crewMode='board';
 let crewSelectedWorker='';
@@ -8254,7 +8259,7 @@ async function fbmLoad(silent){
   if(d) fbm.items=d.items||[];
   fbm.loading=false; fbmPaint(); fbRefreshCount(); // the exact count comes from the server (the list is capped)
 }
-function fbmShow(){ fbm.confirmDel=null; if(fbm.items===null) fbmLoad(false); else { fbmPaint(); fbmLoad(true); } }
+function fbmShow(){ fbm.confirmDel=null; fbm.doneFor=null; if(fbm.items===null) fbmLoad(false); else { fbmPaint(); fbmLoad(true); } }
 function fbmPaint(){
   const root=document.getElementById('fbm-root'); if(!root||mgrMode!=='feedback') return;
   const fa=document.activeElement, fk=(fa&&root.contains(fa)&&fa.getAttribute)?fa.getAttribute('data-fk'):null;
@@ -8273,14 +8278,18 @@ function fbmPaint(){
     h+=shown.length?shown.map(function(i){
       const act=fbm.deleting[i.id]
         ?'<div class="fb-item-act" role="status"><span style="font-size:12.5px;color:var(--text3)">Deleting…</span></div>'
+        :fbm.doneFor===i.id
+        ?'<div class="fb-done-form"><label class="fb-done-lbl" for="fbm-note">Note for '+esc((i.userName||i.user).split(' ')[0]||'them')+' (optional)</label><textarea id="fbm-note" class="fb-done-note" maxlength="500" rows="2" data-fk="note:'+esc(i.id)+'" oninput="fbm.note=this.value;fbm.caret=this.selectionStart" onclick="fbm.caret=this.selectionStart" onkeyup="fbm.caret=this.selectionStart" placeholder="e.g. Fixed in today’s update, refresh the page to see it">'+esc(fbm.note)+'</textarea>'
+          +'<label class="fb-done-chk"><input type="checkbox" data-fk="notify:'+esc(i.id)+'" '+(fbm.notify?'checked ':'')+'onchange="fbm.notify=this.checked"> Email '+esc(i.userName||i.user)+' that this is done</label>'
+          +'<div class="fb-item-act" style="margin-top:6px"><button class="btn btn-sm btn-primary" data-a="done-go" data-id="'+esc(i.id)+'" data-fk="go:'+esc(i.id)+'" onclick="fbmAct(this)"'+(fbm.saving===i.id?' disabled':'')+'>'+(fbm.saving===i.id?'Saving…':'✓ Mark done')+'</button><button class="btn btn-sm" data-a="done-no" data-id="'+esc(i.id)+'" data-fk="st:'+esc(i.id)+'" onclick="fbmAct(this)"'+(fbm.saving===i.id?' disabled':'')+'>Cancel</button></div></div>'
         :fbm.confirmDel===i.id
         ?'<div class="fb-item-act" role="alert"><span style="font-size:12.5px;color:var(--red);margin-right:auto">Delete this for good?</span><button class="btn btn-sm btn-danger" data-a="del-yes" data-id="'+esc(i.id)+'" data-fk="yes:'+esc(i.id)+'" onclick="fbmAct(this)">Yes, delete</button><button class="btn btn-sm" data-a="del-no" data-id="'+esc(i.id)+'" data-fk="keep" onclick="fbmAct(this)">Keep</button></div>'
         :'<div class="fb-item-act"><button class="btn btn-sm" data-a="status" data-id="'+esc(i.id)+'" data-to="'+(isNew(i)?'done':'new')+'" data-fk="st:'+esc(i.id)+'" onclick="fbmAct(this)">'+(isNew(i)?'✓ Mark done':'Reopen')+'</button><button class="btn btn-ghost btn-sm" style="color:var(--red)" data-a="del" data-id="'+esc(i.id)+'" data-fk="del:'+esc(i.id)+'" aria-label="Delete this feedback" onclick="fbmAct(this)">Delete</button></div>';
-      return '<div class="fb-item'+(isNew(i)?'':' done')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(fbWhen(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div><div class="fb-msg">'+esc(i.message)+'</div>'+act+'</div>';
+      return '<div class="fb-item'+(isNew(i)?'':' done')+'"><div class="fb-item-head"><span class="fb-tag '+esc(i.category)+'">'+esc({suggestion:'Suggestion',problem:'Not working',other:'Other'}[i.category]||'Other')+'</span><b>'+esc(i.userName||i.user)+'</b><span>'+esc(fbWhen(i.createdAt))+'</span>'+(i.page?'<span>· '+esc(i.page)+'</span>':'')+'</div><div class="fb-msg">'+esc(i.message)+'</div>'+(!isNew(i)&&(i.doneNote||i.notified)?'<div class="fb-donenote">'+(i.doneNote?'Note: '+esc(i.doneNote):'')+(i.notified?'<span>'+(i.doneNote?' · ':'')+'Sender emailed</span>':'')+'</div>':'')+act+'</div>';
     }).join(''):'<div class="tt-empty">'+(all.length?'Nothing here.':'No feedback yet.')+'</div>';
   }
   root.innerHTML='<div style="max-width:780px">'+h+'</div>';
-  if(key){ const el=root.querySelector('[data-fk="'+key+'"]'); if(el&&!el.disabled) el.focus({preventScroll:true}); }
+  if(key){ const el=root.querySelector('[data-fk="'+key+'"]'); if(el&&!el.disabled){ el.focus({preventScroll:true}); if(el.id==='fbm-note'){ const c=Math.min(fbm.caret==null?el.value.length:fbm.caret,el.value.length); try{ el.setSelectionRange(c,c); }catch(_){} } } }
 }
 function fbmAct(b){
   const a=b.getAttribute('data-a'), id=b.getAttribute('data-id');
@@ -8304,11 +8313,30 @@ function fbmAct(b){
       });
   }
   else if(a==='status'){
-    const to=b.getAttribute('data-to'); b.disabled=true;
+    const to=b.getAttribute('data-to');
+    if(to==='done'){ if(fbm.doneFor&&fbm.doneFor!==id&&fbm.note.trim()&&!confirm('Discard the note you started for the other item?')) return; if(fbm.doneFor!==id){ fbm.note=''; fbm.notify=true; fbm.caret=0; } fbm.doneFor=id; fbm.confirmDel=null; fbm.focusKey='note:'+id; fbmPaint(); return; } // ask for the optional note first
+    b.disabled=true;
     fbApi('PUT','/'+encodeURIComponent(id),{status:to}).then(function(){
       const it=(fbm.items||[]).find(function(x){ return x.id===id; }); if(it) it.status=to; fbm.mut++;
       fbm.focusKey='chip:'+fbm.filter; fbmPaint(); fbRefreshCount();
     }).catch(function(err){ b.disabled=false; alert('Couldn’t update: '+String(err.message||err).slice(0,140)); });
+  }
+  else if(a==='done-no'){ if(fbm.saving) return; fbm.doneFor=null; fbm.focusKey='st:'+id; fbmPaint(); }
+  else if(a==='done-go'){
+    if(fbm.saving) return;
+    fbm.saving=id; fbm.focusKey='note:'+id; fbmPaint();
+    fbApi('PUT','/'+encodeURIComponent(id),{status:'done',note:fbm.note,notify:fbm.notify}).then(function(d){
+      const it=(fbm.items||[]).find(function(x){ return x.id===id; });
+      if(it&&d&&d.item){ it.status=d.item.status; it.doneNote=d.item.doneNote; it.notified=d.item.notified; } else if(it) it.status='done';
+      fbm.mut++; fbm.saving=null; fbm.doneFor=null; fbm.note='';
+      fbm.focusKey='chip:'+fbm.filter; fbmPaint(); fbRefreshCount();
+      if(d&&d.notified==='failed') alert('Marked done, but the email to the sender couldn’t be sent. You may want to tell them yourself.');
+      else if(d&&d.notified==='unsure') alert('Marked done. The email to the sender is taking a while, so it may or may not arrive. Please don’t send it again; check with them if it matters.');
+    }).catch(function(err){
+      fbm.saving=null; fbmPaint();
+      if(err.status===409){ fbm.doneFor=null; fbmLoad(true); alert(String(err.message||err).slice(0,160)); }
+      else alert('Couldn’t update: '+String(err.message||err).slice(0,140));
+    });
   }
 }
 

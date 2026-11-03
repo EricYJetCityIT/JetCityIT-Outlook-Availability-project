@@ -1,0 +1,22 @@
+name: Feedback weekly digest
+
+# Every Monday, emails the team lead the site feedback nobody has dealt with yet
+# (api/src/functions/feedback.js, route feedback-digest). Sends nothing when
+# everything is done. Azure Static Web Apps' managed Functions only support HTTP
+# triggers, so this workflow calls the endpoint on a schedule, the same way
+# availability-reminder-schedule.yml does. Reuses the SYNC_SECRET repo secret.
+# 16:00 UTC is 8/9 am Pacific. Optional app setting FEEDBACK_DIGEST_TO changes who gets it.
+on:
+  schedule:
+    - cron: '0 16 * * 1'
+  workflow_dispatch:
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call feedback digest endpoint
+        run: |
+          curl -sf --retry 3 --retry-delay 5 --retry-all-errors \
+            -X POST "https://crew-calendar.jetcityit.com/api/feedback-digest" \
+            -H "X-Sync-Secret: ${{ secrets.SYNC_SECRET }}"

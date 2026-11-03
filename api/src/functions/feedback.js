@@ -5,6 +5,7 @@ const { getContainer } = require('../lib/cosmos');
 const { sendMail } = require('../lib/graph');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
+const { safeEqual } = require('../lib/secure');
 
 // Suggestions / feedback box (the header's "Feedback" button). Any signed-in user can
 // send one; the submission is stored in Cosmos (the shared `dispatch` container, doc ids
@@ -19,6 +20,9 @@ const MAX_MESSAGE = 2000;
 const MAX_PAGE = 40;
 const SEND_LIMIT = 10;                     // per person per hour (in memory; fails open)
 const SEND_WINDOW_MS = 60 * 60 * 1000;
+const MAX_NOTE = 500;     // the optional note sent back when an item is marked done
+const DONE_TO_RE = /^[a-z0-9][a-z0-9._%+'-]{0,63}@jetcityit\.com$/i;
+const DIGEST_LIST = 25;   // items listed in the weekly digest (the rest are counted)
 const LIST_LIMIT = 200;   // newest unresolved items returned
 const DONE_LIMIT = 100;   // newest finished items returned
 // Who gets the email copy. Same mailbox the availability reminder already sends from.
@@ -39,7 +43,29 @@ function feedbackError(e, context) {
 }
 
 function publicItem(d) {
-  return { id: d.id, category: d.category, message: d.message, page: d.page || '', user: d.user || '', userName: d.userName || '', createdAt: d.createdAt, status: d.status || 'new' };
+  return { id: d.id, category: d.category, message: d.message, page: d.page || '', user: d.user || '', userName: d.userName || '', createdAt: d.createdAt, status: d.status || 'new', doneNote: d.doneNote || '', notified: !!d.notifiedAt };
+}
+
+// Tells the person who sent a piece of feedback that it has been dealt with: 'sent', 'failed' (the mail service
+// refused it), or 'unsure' (no answer in time, so it may still be delivered: never retried automatically).
+async function notifyDone(doc, note, actor, context) {
+  try {
+    const subject = oneLine('Your feedback on the Team Availability site is done', 150);
+    const html = `<p>Hi ${escHtml((doc.userName || '').split(' ')[0] || 'there')},</p>` +
+      `<p>Thanks for your feedback. ${escHtml(actor.name || 'The team')} marked it as done.</p>` +
+      (note ? `<p><b>Note:</b></p><blockquote style="margin:8px 0;padding:8px 14px;border-left:3px solid #16A37F;white-space:pre-wrap">${escHtml(note)}</blockquote>` : '') +
+      `<p style="color:#666;margin-top:16px">What you sent:</p>` +
+      `<blockquote style="margin:8px 0;padding:8px 14px;border-left:3px solid #ccc;color:#555;white-space:pre-wrap">${escHtml(String(doc.message).slice(0, 600))}</blockquote>` +
+      `<p style="color:#666">If something still isn't right, just reply to this email.</p>`;
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve('unsure'), 8000); });
+    const res = await Promise.race([sendMail({ from: SENDER, to: doc.user, subject, html }).then(() => 'sent'), timeout]);
+    clearTimeout(timer);
+    return res;
+  } catch (e) {
+    try { context.error('feedback done-notification failed', e); } catch (_) { /* ignore */ }
+    return 'failed';
+  }
 }
 
 async function notify(doc, context) {
@@ -119,7 +145,7 @@ app.http('feedback', {
           const cond = isDone ? "c.status = 'done'" : "(NOT IS_DEFINED(c.status) OR c.status != 'done')";
           const { resources } = await container.items
             .query({
-              query: `SELECT TOP ${n} c.id, c.category, c.message, c.page, c.user, c.userName, c.createdAt, c.status FROM c WHERE STARTSWITH(c.id, @p) AND ${cond} ORDER BY c.createdAt DESC`,
+              query: `SELECT TOP ${n} c.id, c.category, c.message, c.page, c.user, c.userName, c.createdAt, c.status, c.doneNote, c.notifiedAt FROM c WHERE STARTSWITH(c.id, @p) AND ${cond} ORDER BY c.createdAt DESC`,
               parameters: [{ name: '@p', value: ID_PREFIX }],
             })
             .fetchAll();
@@ -150,7 +176,7 @@ app.http('feedback', {
         return { jsonBody: { ok: true } };
       }
 
-      // PUT: mark done / reopen
+      // PUT: mark done / reopen. Marking done may carry a short note and ask to email the sender.
       const body = await request.json().catch(() => null);
       if (!body || (body.status !== 'new' && body.status !== 'done')) return { status: 400, jsonBody: { error: "status must be 'new' or 'done'" } };
       let cur;
@@ -160,12 +186,86 @@ app.http('feedback', {
         if (e && e.code === 404) cur = null; else throw e;
       }
       if (!cur || cur.type !== 'feedback') return { status: 404, jsonBody: { error: 'Not found' } };
+      const closing = body.status === 'done' && cur.status !== 'done';
+      // Someone else already closed it: don't silently drop this editor's note / email request.
+      if (body.status === 'done' && !closing && (body.notify === true || (typeof body.note === 'string' && body.note.trim()))) {
+        return { status: 409, jsonBody: { error: 'Someone else already marked this done, so your note was not sent. Refresh to see it.' } };
+      }
       const next = { ...cur, status: body.status, updatedAt: new Date().toISOString(), updatedBy: oneLine(user.upn, 200) };
-      await container.item(id, id).replace(next);
-      audit(context, user, 'feedback.status', { id, status: body.status });
-      return { jsonBody: { ok: true, item: publicItem(next) } };
+      let toNotify = false;
+      if (closing) {
+        const note = typeof body.note === 'string' ? cleanText(body.note, MAX_NOTE) : '';
+        if (note) next.doneNote = note; else delete next.doneNote; // never carry an older closure's note forward
+        // One email per item, never to yourself, and only to a real company address.
+        toNotify = body.notify === true && !cur.notifiedAt && DONE_TO_RE.test(String(cur.user || '')) && String(cur.user).toLowerCase() !== user.upn;
+        // Claim the send in the same write that closes the item, BEFORE mailing: a slow or crashed send, a retry or a
+        // second editor can then never mail the sender twice. Cleared again below only if the mail definitely failed.
+        if (toNotify) next.notifiedAt = new Date().toISOString();
+      }
+      try {
+        // IfMatch: two editors marking the same item done at once must not both send the email.
+        await container.item(id, id).replace(next, cur._etag ? { accessCondition: { type: 'IfMatch', condition: cur._etag } } : undefined);
+      } catch (e) {
+        if (e && (e.code === 412 || e.code === 409)) return { status: 409, jsonBody: { error: 'Someone else just changed this item. Refresh and try again.' } };
+        throw e;
+      }
+      audit(context, user, 'feedback.status', { id, status: body.status, notify: toNotify });
+      let notified = 'no';
+      if (toNotify) {
+        notified = await notifyDone(cur, next.doneNote, user, context);
+        if (notified === 'failed') {
+          delete next.notifiedAt;
+          try { await container.item(id, id).patch([{ op: 'remove', path: '/notifiedAt' }]); }
+          catch (e) { try { context.error('feedback notifiedAt release failed', e); } catch (_) { /* ignore */ } }
+        }
+      }
+      return { jsonBody: { ok: true, notified, item: publicItem(next) } };
     } catch (e) {
       return feedbackError(e, context);
+    }
+  },
+});
+
+// Weekly digest of feedback nobody has dealt with yet, emailed to the team lead (FEEDBACK_DIGEST_TO, else the
+// same address as the instant copies). Like the other scheduled jobs it is a plain HTTP endpoint called by a
+// GitHub Actions cron (.github/workflows/feedback-digest-schedule.yml) and guarded by the shared SYNC_SECRET.
+// Nothing open => nothing sent. The response is counts only (the Actions log is public).
+app.http('feedbackDigest', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'feedback-digest',
+  handler: async (request, context) => {
+    const expected = process.env.SYNC_SECRET;
+    const provided = request.headers.get('x-sync-secret') || '';
+    if (!expected || !safeEqual(provided, expected)) return { status: 401, jsonBody: { error: 'Invalid or missing sync secret' } };
+    try {
+      const container = getContainer(CONTAINER_ID);
+      const q = (query, extra) => container.items.query({ query, parameters: [{ name: '@p', value: ID_PREFIX }].concat(extra || []) }).fetchAll().then((r) => r.resources);
+      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const open = "(NOT IS_DEFINED(c.status) OR c.status != 'done')";
+      const [count, freshCount, items] = await Promise.all([
+        q(`SELECT VALUE COUNT(1) FROM c WHERE STARTSWITH(c.id, @p) AND ${open}`),
+        q(`SELECT VALUE COUNT(1) FROM c WHERE STARTSWITH(c.id, @p) AND ${open} AND c.createdAt >= @since`, [{ name: '@since', value: weekAgo }]),
+        q(`SELECT TOP ${DIGEST_LIST} c.category, c.message, c.user, c.userName, c.createdAt FROM c WHERE STARTSWITH(c.id, @p) AND ${open} ORDER BY c.createdAt DESC`),
+      ]);
+      const total = Number(count[0]) || 0;
+      if (!total) return { jsonBody: { open: 0, sent: false } };
+      const fresh = Number(freshCount[0]) || 0;
+      const rows = items.map((d) => {
+        const msg = oneLine(d.message, 280);
+        return `<li style="margin:0 0 10px"><b>${escHtml(CATEGORY_LABEL[d.category] || 'Other')}</b> from ${escHtml(d.userName || d.user)}` +
+          ` <span style="color:#888">(${escHtml(String(d.createdAt || '').slice(0, 10))})</span><br>${escHtml(msg)}${d.message.length > msg.length ? '…' : ''}</li>`;
+      }).join('');
+      const html = `<p><b>${total}</b> piece${total === 1 ? '' : 's'} of site feedback ${total === 1 ? 'is' : 'are'} still open` +
+        `${fresh ? `, ${fresh} new in the last 7 days` : ''}.</p><ul style="padding-left:18px">${rows}</ul>` +
+        `${total > items.length ? `<p style="color:#666">…and ${total - items.length} older.</p>` : ''}` +
+        `<p style="color:#666">Open Manager view, then the Feedback tab to mark items done (you can let the sender know at the same time).</p>`;
+      await sendMail({ from: SENDER, to: process.env.FEEDBACK_DIGEST_TO || NOTIFY_TO(), subject: `Site feedback: ${total} open`, html });
+      context.log(`Feedback digest sent: ${total} open.`);
+      return { jsonBody: { open: total, sent: true } };
+    } catch (e) {
+      context.error('Feedback digest failed:', e);
+      return { status: 500, jsonBody: { error: 'Digest failed' } };
     }
   },
 });
