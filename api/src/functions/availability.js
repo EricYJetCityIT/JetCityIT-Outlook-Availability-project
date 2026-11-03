@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { requireUser, requireEditor, AuthError, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireEditor, deny, AuthError, authErrorResponse } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const { audit } = require('../lib/audit');
 
@@ -78,7 +78,7 @@ app.http('availabilityUser', {
       // (Matches on display-name slug since availability is keyed by name. A future
       // migration should key by the immutable oid/upn to make this airtight.)
       if (!user.isEditor && slugify(decodedName) !== slugify(user.name)) {
-        throw new AuthError(403, 'You can only change your own availability.');
+        deny(user, 'You can only change your own availability.');
       }
 
       const body = await request.json();

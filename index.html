@@ -103,6 +103,20 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .fb-cat.on{background:var(--green-light);border-color:var(--green);color:var(--green-dark);font-weight:600}
 .fb-cat:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .fb-count{font-size:11.5px;color:var(--text3);text-align:right;margin-top:4px}
+.acc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:14px;align-items:start}
+.acc-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;box-shadow:var(--shadow-sm)}
+.acc-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px}
+.acc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid var(--border)}
+.acc-name{font-size:13.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-mail{font-size:11.5px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-add{display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}
+.acc-add input[type=text]{flex:1;min-width:0;padding:7px 10px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font:inherit;font-size:13px}
+.acc-act{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.acc-note{font-size:12px;color:var(--text3)}
+.acc-msg{font-size:12.5px;margin-top:8px}
+.acc-msg.ok{color:var(--green-dark)}
+.acc-msg.err{color:var(--holiday-text)}
+.acc-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .mgr-badge{display:inline-block;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;vertical-align:1px;box-sizing:border-box}
 .fb-item{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px;background:var(--surface)}
 .fb-item.done{opacity:.6}
@@ -5384,6 +5398,7 @@ async function jsSaveCellLive(sheetId, rowId, columnId, value, meta){
     const body=Object.assign({sheetId,rowId,columnId,value},meta);
     res=await fetch('/api/jobsheet/cell',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
   }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
+  if(res.status===503||res.status===429){ const e=new Error('Temporarily unavailable'); e.offline=true; throw e; }
   if(!res.ok){ let m='Save failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
 }
 async function jsUploadPhotoLive(sheetId, rowId, columnId, file, meta){
@@ -5397,6 +5412,7 @@ async function jsUploadPhotoLive(sheetId, rowId, columnId, file, meta){
     Object.keys(meta||{}).forEach(k=>{ if(meta[k]!=null) fd.append(k,meta[k]); });
     res=await fetch('/api/jobsheet/photo-upload',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
   }catch(netErr){ const e=new Error('No connection'); e.offline=true; throw e; }
+  if(res.status===503||res.status===429){ const e=new Error('Temporarily unavailable'); e.offline=true; throw e; }
   if(!res.ok){ let m='Upload failed'; try{ m=(await res.json()).error||m; }catch(e){} throw new Error(m); }
 }
 
@@ -5981,6 +5997,13 @@ function ttPaint(){
 
 // ── Manager view ──────────────────────────────────────────────────────────────
 let mgrMode='dispatch';
+const ACC_GROUPS=[
+  ['editors','Editors','Manager view and changing data: assign crew, jobs, clear availability, feedback, tech tracking links'],
+  ['finance','Finance','The Financial tab (costs, prices, profit)'],
+  ['planners','Project planners','The Project Planning tab'],
+  ['testers','Testers','Job Sheets, Floor Maps and Tech tracking (features still being tried out)']
+];
+const acc={data:null,dir:null,dirBusy:false,err:'',notice:null,live:'',loading:false,busy:false,pending:null,confirm:null,confirmAt:0,focusKey:null,seq:0,vals:{}};
 // Manager view → Feedback state (the code is further down, next to openFeedback)
 const fbm={items:null,loading:false,err:'',filter:'new',confirmDel:null,confirmAt:0,deleting:{},focusKey:null,seq:0,mut:0};
 let fbOpenCount=null, fbPoll=null;
@@ -5992,6 +6015,7 @@ let currentUserIsFinance=false;
 let currentUserIsPlanner=false;
 let currentUserIsTester=false;
 let currentUserIsCardholder=false;
+let currentUserIsAccessAdmin=false; // editor through Azure: may change who has access (Manager view -> Access)
 function setCrewMode(m){
   crewMode=m;
   document.getElementById('crew-subtab-board').classList.toggle('active',m==='board');
@@ -6005,13 +6029,15 @@ function mgrSubTabsHtml(){
       <button class="mgr-sub-tab ${mgrMode==='dispatch'?'active':''}" onclick="setMgrMode('dispatch')">Dispatch</button>
       <button class="mgr-sub-tab ${mgrMode==='reports'?'active':''}" onclick="setMgrMode('reports')">Project reports</button>${currentUserIsTester?`
       <button class="mgr-sub-tab ${mgrMode==='tech'?'active':''}" onclick="setMgrMode('tech')">Tech tracking</button>`:''}${currentUserIsEditor?`
-      <button class="mgr-sub-tab ${mgrMode==='feedback'?'active':''}" onclick="setMgrMode('feedback')">Feedback${fbBadgeHtml()}</button>`:''}
+      <button class="mgr-sub-tab ${mgrMode==='feedback'?'active':''}" onclick="setMgrMode('feedback')">Feedback${fbBadgeHtml()}</button>`:''}${currentUserIsAccessAdmin?`
+      <button class="mgr-sub-tab ${mgrMode==='access'?'active':''}" onclick="setMgrMode('access')">Access</button>`:''}
     </div>`;
 }
 
 async function renderManager(){
   if(mgrMode==='tech'&&!currentUserIsTester) mgrMode='dispatch'; // Testers-only tab
   if(mgrMode==='feedback'&&!currentUserIsEditor) mgrMode='dispatch'; // Manager view people only
+  if(mgrMode==='access'&&!currentUserIsAccessAdmin) mgrMode='dispatch'; // Azure editors only
   await ensureAvailabilityLoaded(selectedWeekKey);
   let names=getNames();
   const el=document.getElementById('mgr-content');
@@ -6029,6 +6055,13 @@ async function renderManager(){
     subLbl.textContent='Week of '+week.label;
     await JCITDispatch.ensureLoaded();
     el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div>${JCITDispatch.reportsViewHtml()}`;
+    return;
+  }
+
+  if(mgrMode==='access'){
+    subLbl.textContent='Who has access';
+    el.innerHTML=`<div style="margin-bottom:16px">${mgrSubTabsHtml()}</div><div id="acc-root"></div><div id="acc-live" class="acc-live" role="status" aria-live="polite"></div>`;
+    accShow();
     return;
   }
 
@@ -6094,7 +6127,12 @@ async function renderManager(){
   el.innerHTML=html;
 }
 
-function setMgrMode(m){mgrMode=m;renderManager();}
+// The sub-tab strip scrolls sideways on a phone and is rebuilt on every switch: bring the chosen tab back into view.
+function mgrKeepActiveTabVisible(){
+  const s=document.querySelector('#mgr-content .mgr-sub-tabs'), a=s&&s.querySelector('.mgr-sub-tab.active');
+  if(s&&a) s.scrollLeft+=a.getBoundingClientRect().left-s.getBoundingClientRect().left-(s.clientWidth-a.offsetWidth)/2;
+}
+async function setMgrMode(m){document.querySelectorAll('#acc-root input[data-acc-in]').forEach(function(i){ acc.vals[i.getAttribute('data-acc-in')]=i.value; }); mgrMode=m;await renderManager();mgrKeepActiveTabVisible();}
 
 function buildIndividual(techData){
   const todayMon=getMondayOf(new Date());
@@ -6854,8 +6892,8 @@ const JCITDispatch=(function(){
   let __dirCache=null;
   async function fetchDirectory(){
     if(__dirCache) return __dirCache;
-    try{ const token=await getApiToken(); const res=await fetch('/api/directory',{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); __dirCache=res.ok?((await res.json()).users||[]):[]; }
-    catch(e){ __dirCache=[]; }
+    try{ const token=await getApiToken(); const res=await fetch('/api/directory',{headers:{'X-Jetcity-Authorization':'Bearer '+token}}); if(!res.ok) return []; __dirCache=(await res.json()).users||[]; }
+    catch(e){ return []; }
     return __dirCache;
   }
   // Sends the report as a formatted HTML email via the backend, which builds the
@@ -7850,8 +7888,9 @@ async function ppFetchDirectory(){
   try{
     var token=await getApiToken();
     var res=await fetch('/api/directory',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-    __ppDirCache=res.ok?((await res.json()).users||[]):[];
-  }catch(e){ __ppDirCache=[]; }
+    if(!res.ok) return [];
+    __ppDirCache=(await res.json()).users||[];
+  }catch(e){ return []; }
   return __ppDirCache;
 }
 // Sends the plan as a formatted HTML email via the backend (app-only Graph
@@ -8273,6 +8312,153 @@ function fbmAct(b){
   }
 }
 
+// ── Manager view → Access (people who are editors through Azure only) ──────────
+// Who can do what on the site. The people already set in Azure settings (and anyone with the Entra
+// "Data Editor" role) are shown locked; people added here are stored by the server and take effect
+// the next time they open or reload the site. The API enforces who may open or change this (GET/PUT /api/access).
+async function accApi(method,payload){
+  const token=await getApiToken();
+  let res;
+  try{ res=await fetch('/api/access',{method:method,headers:Object.assign({'X-Jetcity-Authorization':'Bearer '+token},payload?{'Content-Type':'application/json'}:{}),body:payload?JSON.stringify(payload):undefined}); }
+  catch(_){ throw new Error('No connection. Check your signal and try again.'); }
+  let data=null; try{ data=await res.json(); }catch(_){}
+  if(!res.ok){ const er=new Error((data&&data.error)||('Request failed ('+res.status+')')); er.status=res.status; throw er; }
+  return data;
+}
+async function accLoad(){
+  if(acc.busy){ accPaint(); return; } // a save is in flight and will hand back the fresh lists itself
+  const my=++acc.seq;
+  acc.loading=true; acc.err=''; accPaint();
+  let d=null, failure=null;
+  try{ d=await accApi('GET'); }catch(e){ failure=e; }
+  if(my!==acc.seq) return; // a newer load or a save started meanwhile; its result wins
+  if(failure){
+    acc.err=String(failure.message||failure).slice(0,160);
+    if(failure.status===401||failure.status===403) acc.data=null; // access was taken away: don't leave live controls on old lists
+  }else acc.data=d;
+  acc.loading=false; accPaint();
+  if(!failure&&!(acc.dir&&acc.dir.length)) accLoadDir();
+}
+// The directory only makes names friendlier and picking easier, so it loads in the background and a
+// failure is simply retried the next time the tab opens (it is never cached as "empty").
+async function accLoadDir(){
+  if(acc.dirBusy) return;
+  acc.dirBusy=true;
+  try{ const r=await fmFetch('GET','/directory'); const u=(r&&r.users)||[]; if(u.length) acc.dir=u; }catch(_){}
+  acc.dirBusy=false;
+  if(acc.dir&&acc.data) accPaint();
+}
+function accShow(){ acc.confirm=null; acc.notice=null; acc.live=''; acc.focusKey=null; accLoad(); }
+function accUpnOf(u){ return String(u.upn||u.email||'').toLowerCase(); }
+function accName(upn){
+  const u=(acc.dir||[]).find(function(x){ return accUpnOf(x)===upn||String(x.email||'').toLowerCase()===upn; });
+  return u&&u.name?u.name:'';
+}
+function accNote(g,kind,text){ acc.notice={g:g,kind:kind,text:text}; acc.live=text; }
+function accPaint(){
+  const root=document.getElementById('acc-root'); if(!root||mgrMode!=='access') return;
+  // A repaint rebuilds all four cards, so keep what is being typed and where focus is.
+  root.querySelectorAll('input[data-acc-in]').forEach(function(i){ acc.vals[i.getAttribute('data-acc-in')]=i.value; });
+  let fk=acc.focusKey; acc.focusKey=null;
+  const ae=document.activeElement;
+  if(!fk&&ae&&root.contains(ae)) fk=ae.getAttribute('data-fk')||null;
+  let h='';
+  if(acc.loading&&!acc.data) h='<div class="tt-empty">Loading…</div>';
+  else if(acc.err&&!acc.data) h='<div class="tt-empty">'+esc(acc.err)+' <button class="tt-link" onclick="accLoad()">Try again</button></div>';
+  else if(acc.data){
+    h+='<div class="fb-note" style="max-width:760px">Who can do what on this site. People marked <b>Azure</b> are set in Azure settings and can only be changed there. People you add here get the access the next time they open or reload the site. Only people who are editors through Azure can change this page.</div>';
+    if(acc.err) h+='<div class="tt-warn" role="alert">'+esc(acc.err)+'</div>';
+    h+='<datalist id="acc-dir">'+(acc.dir||[]).map(function(u){ return '<option value="'+esc(accUpnOf(u))+'" label="'+esc(u.name||'')+'"></option>'; }).join('')+'</datalist>';
+    h+='<div class="acc-grid">'+ACC_GROUPS.map(function(g){
+      const k=g[0], az=acc.data.azure[k]||[], pg=(acc.data.page[k]||[]);
+      const row=function(upn,azure,alsoPage){
+        const nm=accName(upn), key=k+'|'+upn, asking=acc.confirm===key, pend=acc.pending===key;
+        const who=esc(nm||upn), btn=function(a,label,cls,fk2,extra){ return '<button class="btn btn-sm '+cls+'" data-a="'+a+'" data-g="'+k+'" data-u="'+esc(upn)+'" data-fk="'+fk2+':'+k+'|'+esc(upn)+'"'+(acc.busy?' disabled':'')+(extra||'')+' onclick="accAct(this)">'+label+'</button>'; };
+        const act=pend?'<span class="acc-note">Removing…</span>'
+          :asking?'<span class="acc-note" style="color:var(--red)">Remove?</span>'+btn('rm-yes','Yes','btn-danger','yes',' aria-label="Yes, remove '+who+' from '+esc(g[1])+'"')+btn('rm-no','No','','no',' aria-label="No, keep '+who+'"')
+          :(!azure||alsoPage)?btn('rm',alsoPage?'Remove page copy':'Remove','btn-ghost','rm',' style="color:var(--red)" aria-label="Remove '+who+(alsoPage?' (added on this page; the Azure setting stays)':'')+' from '+esc(g[1])+'"')
+          :'';
+        return '<div class="acc-row"><div style="min-width:0;flex:1"><div class="acc-name" title="'+who+'">'+who+'</div>'+(nm?'<div class="acc-mail" title="'+esc(upn)+'">'+esc(upn)+'</div>':'')+'</div>'
+          +'<div class="acc-act">'+(azure?'<span class="fb-tag" title="Set in Azure settings; change it there">🔒 Azure</span>':'')+act+'</div></div>';
+      };
+      const seenAz=new Set(az);
+      const rows=az.map(function(u){ return row(u,true,pg.indexOf(u)>=0); }).concat(pg.filter(function(u){ return !seenAz.has(u); }).map(function(u){ return row(u,false,false); })).join('');
+      const nt=acc.notice&&acc.notice.g===k?acc.notice:null;
+      return '<div class="acc-card"><div class="acc-title">'+esc(g[1])+'</div><div class="fb-note" style="margin-bottom:8px">'+esc(g[2])+(k==='editors'?'. Anyone with the Data Editor role in Entra is also an editor.':'')+'</div>'
+        +(rows||'<div style="font-size:13px;color:var(--text3);padding:4px 0 8px">Nobody yet.</div>')
+        +'<form class="acc-add" onsubmit="accAdd(event,\''+k+'\')"><input type="text" id="acc-in-'+k+'" data-acc-in="'+k+'" data-fk="in:'+k+'" list="acc-dir" value="'+esc(acc.vals[k]||'')+'" placeholder="Name or email" autocomplete="off" aria-label="Add someone to '+esc(g[1])+' (name or @jetcityit.com email)"><button class="btn btn-sm btn-primary" type="submit"'+(acc.busy?' disabled':'')+'>Add</button></form>'
+        +(nt?'<div class="acc-msg '+(nt.kind==='err'?'err':'ok')+'">'+esc(nt.text)+'</div>':'')
+        +'</div>';
+    }).join('')+'</div>';
+  }
+  root.innerHTML='<div style="max-width:1000px">'+h+'</div>';
+  if(fk){
+    const el=root.querySelector('[data-fk="'+String(fk).replace(/(["\\])/g,'\\$1')+'"]');
+    if(el&&!el.disabled){ el.focus({preventScroll:true}); if(el.type==='text'){ try{ const n=el.value.length; el.setSelectionRange(n,n); }catch(_){} } }
+  }
+  if(acc.live){ // announced from a region that is not rebuilt, so screen readers reliably speak it
+    const lv=document.getElementById('acc-live'), t=acc.live; acc.live='';
+    if(lv){ lv.textContent=''; setTimeout(function(){ lv.textContent=t; },50); }
+  }
+}
+// What was typed or picked -> { upn, known }. Takes a name from the directory, an email, or a pasted
+// "Name <email>". Grants are matched against the SIGN-IN name, so a directory person's sign-in name wins
+// over their mail address when the two differ.
+function accResolve(text){
+  const t=String(text||'').trim().toLowerCase(), dir=acc.dir||[];
+  const m=t.match(/[^\s<>"';,()]+@[^\s<>"';,()]+/);
+  if(m){
+    const hit=dir.find(function(u){ return accUpnOf(u)===m[0]; })||dir.find(function(u){ return String(u.email||'').toLowerCase()===m[0]; });
+    return {upn:hit?accUpnOf(hit):m[0],known:!!hit};
+  }
+  const hits=dir.filter(function(u){ return String(u.name||'').toLowerCase()===t; });
+  return hits.length===1?{upn:accUpnOf(hits[0]),known:true}:{upn:'',known:false};
+}
+async function accChange(group,add,remove,extra){
+  if(acc.busy||!acc.data) return;
+  ++acc.seq; acc.loading=false; // any load still in flight started from older lists: drop it
+  acc.busy=true; acc.err=''; acc.notice=null; acc.pending=remove.length?group+'|'+remove[0]:null; accPaint();
+  let note=null, focus='in:'+group;
+  try{
+    const d=await accApi('PUT',{group:group,add:add,remove:remove,expect:acc.data.version});
+    acc.data=d;
+    const ch=d.changed||{added:add,removed:remove};
+    if(ch.added.length){ acc.vals[group]=''; const inp=document.getElementById('acc-in-'+group); if(inp) inp.value=''; note=['ok','Added. They get it the next time they open or reload the site (within about a minute).'+(extra||'')]; }
+    else if(ch.removed.length) note=['ok','Removed. They lose it the next time they reload (the server stops honoring it within about a minute).'];
+    else note=['ok','No change: the list was already up to date.'];
+    // If the person changed is the signed-in admin, refresh their own tabs now.
+    const me=String((msalAccount&&msalAccount.username)||'').toLowerCase();
+    if(me&&ch.added.concat(ch.removed).indexOf(me)>=0) loadMyRole();
+  }catch(err){
+    note=['err',String(err.message||err).slice(0,160)];
+    if(err.status===409){ try{ acc.data=await accApi('GET'); }catch(_){} }
+    else if(err.status===401||err.status===403){ acc.err=note[1]; acc.data=null; note=null; }
+    if(remove.length) focus='rm:'+group+'|'+remove[0];
+  }
+  acc.busy=false; acc.pending=null;
+  if(note) accNote(group,note[0],note[1]);
+  acc.focusKey=focus; accPaint();
+}
+function accAdd(ev,group){
+  ev.preventDefault();
+  if(acc.busy||!acc.data) return;
+  const inp=document.getElementById('acc-in-'+group); if(!inp) return;
+  acc.vals[group]=inp.value;
+  const fail=function(t){ accNote(group,'err',t); acc.focusKey='in:'+group; accPaint(); };
+  const r=accResolve(inp.value), upn=r.upn;
+  if(!upn) return fail('Pick someone from the list, or type their full @jetcityit.com email.');
+  if(!/@jetcityit\.com$/.test(upn)) return fail('Only @jetcityit.com accounts can be added.');
+  if((acc.data.azure[group]||[]).indexOf(upn)>=0||(acc.data.page[group]||[]).indexOf(upn)>=0) return fail((accName(upn)||upn)+' already has this access.');
+  accChange(group,[upn],[],r.known?'':(acc.dir&&acc.dir.length?' Note: that address is not in the company directory, so check it is their sign-in email.':' Note: the directory has not loaded, so check that is their sign-in email.'));
+}
+function accAct(b){
+  if(acc.busy) return;
+  const a=b.getAttribute('data-a'), g=b.getAttribute('data-g'), u=b.getAttribute('data-u');
+  if(a==='rm'){ acc.confirm=g+'|'+u; acc.confirmAt=Date.now(); acc.focusKey='no:'+g+'|'+u; accPaint(); }
+  else if(a==='rm-no'){ acc.confirm=null; acc.focusKey='rm:'+g+'|'+u; accPaint(); }
+  else if(a==='rm-yes'){ if(Date.now()-acc.confirmAt<500) return; acc.confirm=null; accChange(g,[],[u]); }
+}
+
 function openTeamContacts(e){
   if(e) e.stopPropagation();
   var im=document.getElementById('info-menu'); if(im) im.classList.remove('open');
@@ -8468,7 +8654,7 @@ function finishLogin(name){
 // Ask the API whether this user may edit (Entra DataEditor role or EDITOR_UPNS).
 // Read-only users get the `is-viewer` body class so write-only controls hide.
 // UX aid only — the API is the real authority and rejects unauthorized writes.
-async function loadMyRole(){
+async function loadMyRole(tries){
   try{
     const token=await getApiToken();
     const res=await fetch('/api/me',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
@@ -8479,16 +8665,25 @@ async function loadMyRole(){
       // itself) so a reload with no signal still shows the right tabs. UX only:
       // the API re-checks every request, so a stale flag can't grant access.
       try{ sessionStorage.setItem('jc-me', JSON.stringify({u: msalAccount&&msalAccount.username, me})); }catch(_){}
+    }else if(res.status>=500||res.status===429){
+      // The server is having a moment (e.g. 503 while it can't check the access lists): use the role we
+      // knew and ask again shortly, so a first load with nothing cached still ends up with the right tabs.
+      applyCachedRole(); loadMyRoleRetry(tries);
     }
   }catch(e){
     console.error('Failed to load role:',e);
     // Couldn't reach the API (e.g. no signal): fall back to the role we saw
     // earlier this session, but only for the same signed-in account.
-    try{
-      const c=JSON.parse(sessionStorage.getItem('jc-me')||'null');
-      if(c && c.me && msalAccount && c.u===msalAccount.username) applyMyRole(c.me);
-    }catch(_){}
+    applyCachedRole(); loadMyRoleRetry(tries);
   }
+}
+function loadMyRoleRetry(tries){ if((tries||0)<3) setTimeout(function(){ loadMyRole((tries||0)+1); },[3000,6000,12000][tries||0]); }
+function applyCachedRole(){
+  try{
+    const c=JSON.parse(sessionStorage.getItem('jc-me')||'null');
+    if(c && c.me && msalAccount && c.u===msalAccount.username){ applyMyRole(c.me); return true; }
+  }catch(_){}
+  return false;
 }
 function applyMyRole(me){
   currentUserIsEditor=!!me.isEditor;
@@ -8496,6 +8691,7 @@ function applyMyRole(me){
   currentUserIsPlanner=!!me.isPlanner;
   currentUserIsTester=!!me.isTester;
   currentUserIsCardholder=!!me.isCardholder;
+  currentUserIsAccessAdmin=!!me.isAccessAdmin;
   if(currentUserIsEditor) fbStartPolling(); // red count of unfinished feedback on the Manager view tab
   // Read-only users get `is-viewer` (write controls hide); editors get
   // `is-editor`, which reveals the Manager-view tab (hidden by default).

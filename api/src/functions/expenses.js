@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { randomUUID } = require('crypto');
-const { requireUser, requireCardholderOrFinance, AuthError, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireCardholderOrFinance, deny, AuthError, authErrorResponse } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const { sendMail } = require('../lib/graph');
 const { checkRateLimit } = require('../lib/ratelimit');
@@ -244,7 +244,7 @@ app.http('expenseDecision', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      if (!user.isFinance) throw new AuthError(403, 'Only the Financial group can approve expenses.');
+      if (!user.isFinance) deny(user, 'Only the Financial group can approve expenses.');
       const container = getContainer(CONTAINER_ID);
       const doc = await readExpense(container, request.params.id);
       const body = await request.json().catch(() => ({}));

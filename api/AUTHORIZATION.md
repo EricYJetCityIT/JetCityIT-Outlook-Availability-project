@@ -12,6 +12,7 @@ administer it.
 | **Submit / edit own** availability | Any signed-in tech (own record only) |
 | **Send feedback / a suggestion** (`POST /api/feedback`, the header's Feedback button; stored in Cosmos as `feedback:<uuid>` and emailed to the team lead; sender identity comes from the sign-in token; about 10 per person per hour, counted in memory per server instance so it resets on restart; the stored items, with the sender's name and email, can be read by any editor) | Any signed-in `@jetcityit.com` user |
 | **Read the feedback list / mark items done / delete an item / the count of unfinished ones** (`GET /api/feedback`, `GET /api/feedback?summary=1`, `PUT /api/feedback/{id}`, `DELETE /api/feedback/{id}`; shown in the Manager view's Feedback tab with a red count on the Manager view tab; delete removes the stored item for good, not the emailed copy). Regular techs can send feedback but can never read anyone's, including their own, once sent | **Editors only** (the same people who see the Manager view) |
+| **Manage who has Editor / Finance / Planner / Tester access** (Manager view → Access tab: `GET /api/access`, `PUT /api/access`). People added there are stored in Cosmos (`access-config`) and ADDED to the Azure lists on every request (cached about 30 s per server instance); the people in the Azure settings are shown but can only be changed in Azure. A change reaches the server within about a minute and the person at their next page load. Only real changes are written and audit-logged (group + the people really added/removed). A person is matched by their **sign-in name** (the directory's `upn`), not their mail address. If Cosmos can't be read, the last good copy is used (retry every ~5 s, each read gives up after 2.5 s); with nothing cached the Azure lists alone apply, and a check that depends on the page lists answers **503 (try again)** instead of 403, so nobody is told "no" when it really means "couldn't check" | **Access admins only**: editors through Azure (`EDITOR_UPNS` or the Entra `DataEditor` role), narrowed to the people in the optional `ACCESS_ADMIN_UPNS` setting when that is set. Someone made an editor from the page cannot open or change this, so access can't be escalated from the page. **Every access admin can add themselves or anyone else to Finance, Planner and Tester**, so set `ACCESS_ADMIN_UPNS` if the Finance group must stay smaller than the editor group |
 | **Reassign crew** on a job (`PUT /api/dispatch/jobs/{id}/crew`) | **Editors only** |
 | **Mark crew inactive** — hide people who left from Assign crew, the Individual availability view and the weekly reminder (`PUT /api/dispatch/inactive-crew`; the list is one Cosmos doc, `crew-inactive`, laid over the synced roster on read — no one is deleted and Smartsheet is untouched) | **Editors only**. The roster from `GET /api/dispatch` marks them `active:false` for everyone; the raw list (`inactiveNames`) is only returned to editors |
 | **Clear a whole week's** availability (`DELETE /api/availability/{week}`) | **Editors only** |
@@ -23,22 +24,27 @@ boundary.
 
 ## Who is an "editor"?
 
-A caller is treated as an editor if **either** is true:
+A caller is treated as an editor if **any** is true:
 
 1. **Entra App Role** — their token carries the `DataEditor` role (preferred;
    managed in the Entra portal, no code/redeploy to change who has it).
 2. **`EDITOR_UPNS` app setting** — their email is in this comma-separated list
    (quick start / fallback; no app-registration change needed).
+3. **Added on the Manager view's Access tab** by an access admin (stored in the
+   Cosmos doc `access-config`; see the access row in the table above).
 
 Everyone else is read-only. You can start with `EDITOR_UPNS` today and move to
-App Roles later with no code change.
+App Roles later with no code change. Only 1 and 2 make someone an access admin.
 
-## Separate access groups (Invoice, Project Planners)
+## Separate access groups (Invoice, Project Planners, Testers)
 
-Two additional groups gate their own tabs and are **independent** of editor
-status — being an editor does not grant them, and vice versa. Each is a
-comma-separated list of `@jetcityit.com` emails in an app setting; empty or
-unset means nobody is in the group and the tab stays hidden for everyone.
+These groups gate their own tabs and are **independent** of editor status —
+being an editor does not make someone a member, and vice versa, **except that an
+access admin can add anyone (themselves included) from the Access tab** (see
+`ACCESS_ADMIN_UPNS` above). Each group is a comma-separated list of
+`@jetcityit.com` emails in an app setting **plus** anyone added on the Access
+tab; if both are empty nobody is in the group and the tab stays hidden for
+everyone.
 
 | App setting | Grants | Frontend flag |
 |---|---|---|
@@ -53,8 +59,9 @@ managed Functions), e.g.:
 PLANNER_UPNS = dylanm@jetcityit.com,someone@jetcityit.com
 ```
 
-`GET /api/me` returns `{ isEditor, isFinance, isPlanner }`, which the frontend
-uses to reveal each tab. As always, the tab-hiding is only a UX aid — any data
+`GET /api/me` returns `{ upn, name, isEditor, isFinance, isPlanner, isTester, isAccessAdmin }`
+(or 503 while the page-granted lists can't be read and the caller has no access at all, so the
+browser keeps the role it already knew), which the frontend uses to reveal each tab. As always, the tab-hiding is only a UX aid — any data
 endpoint behind these tabs must call `requireFinance` / `requirePlanner`
 server-side to actually enforce the group.
 
@@ -163,3 +170,7 @@ if (!me.isEditor) document.body.classList.add('read-only'); // CSS hides .editor
   availability → 200; submit *another* name's availability → **403**; read
   dispatch (phone numbers) → 200.
 - Hammer any endpoint > 120x/min → **429**.
+- **Access tab**: as an access admin, add someone to Testers → they get Job Sheets after a
+  reload (within about a minute); remove them → the tab is gone and `/api/jobsheet/*` is 403.
+  As an editor who was only added from the page: no Access tab, `/api/access` is **403**.
+  As a plain tech: `/api/access` is **403**.

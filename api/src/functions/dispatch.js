@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { requireUser, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireAccessKnown, authErrorResponse } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const { readInactive, applyInactive } = require('../lib/crewInactive');
 
@@ -30,6 +30,7 @@ app.http('dispatch', {
           // "empty" and save over the real list.
           let inactive = { names: [], version: '' }, inactiveError = false;
           try { inactive = await readInactive(container); } catch (e) { inactiveError = true; context.error('inactive crew list unreadable', e); }
+          if (!user.isEditor) requireAccessKnown(user); // 503 rather than a non-editor payload when a page-granted editor can't be recognised right now
           const extra = user.isEditor ? { inactiveNames: inactiveError ? [] : inactive.names, inactiveVersion: inactive.version, inactiveError } : { inactiveNames: [] };
           return {
             jsonBody: resource

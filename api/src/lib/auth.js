@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { checkRateLimit } = require('./ratelimit');
+const { getAccessLists } = require('./access');
 
 const TENANT_ID = process.env.AAD_TENANT_ID;
 const CLIENT_ID = process.env.AAD_CLIENT_ID;
@@ -61,6 +62,16 @@ const TESTER_UPNS = (process.env.TESTER_UPNS || '')
 // approves them). Comma-separated @jetcityit.com emails in the CARDHOLDER_UPNS
 // app setting. Empty/unset => nobody.
 const CARDHOLDER_UPNS = (process.env.CARDHOLDER_UPNS || '')
+  .toLowerCase()
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// OPTIONAL: narrows who may manage access on the Manager view's Access tab (add/remove people in the
+// Editor / Finance / Planner / Tester lists). Unset or empty => every editor who is an editor through Azure
+// (EDITOR_UPNS or the DataEditor role) may. Set => only the people listed here (and who are also such editors).
+// Matters because the Finance group is meant to be smaller than the editor group.
+const ACCESS_ADMIN_UPNS = (process.env.ACCESS_ADMIN_UPNS || '')
   .toLowerCase()
   .split(',')
   .map((s) => s.trim())
@@ -136,40 +147,76 @@ async function requireUser(request) {
   }
 
   const roles = Array.isArray(decoded.roles) ? decoded.roles : [];
-  const isEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
-  const isFinance = FINANCE_UPNS.includes(upn);
-  const isPlanner = PLANNER_UPNS.includes(upn);
-  const isTester = TESTER_UPNS.includes(upn);
-  const isCardholder = CARDHOLDER_UPNS.includes(upn);
+  // Access is the Azure/Entra grants (the lists above and the DataEditor role) PLUS anyone an access
+  // admin added on the Manager view's Access tab (see lib/access.js; a failed read adds nobody).
+  const { lists: granted, unavailable } = await getAccessLists();
+  const azureEditor = roles.includes(WRITE_ROLE) || EDITOR_UPNS.includes(upn);
+  const isEditor = azureEditor || granted.editors.includes(upn);
+  const isFinance = FINANCE_UPNS.includes(upn) || granted.finance.includes(upn);
+  const isPlanner = PLANNER_UPNS.includes(upn) || granted.planners.includes(upn);
+  const isTester = TESTER_UPNS.includes(upn) || granted.testers.includes(upn);
+  const isCardholder = CARDHOLDER_UPNS.includes(upn); // Azure-managed only (not on the Access tab)
+  // Only people who are editors through Azure (EDITOR_UPNS or the Entra role) may change who has access,
+  // so someone granted Editor from the page can never hand out access themselves. If ACCESS_ADMIN_UPNS
+  // is set it narrows that further to the people listed there (they must still be Azure editors).
+  const isAccessAdmin = azureEditor && (ACCESS_ADMIN_UPNS.length === 0 || ACCESS_ADMIN_UPNS.includes(upn));
 
-  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner, isTester, isCardholder };
+  return { name: decoded.name || upn, upn, roles, isEditor, isFinance, isPlanner, isTester, isCardholder, isAccessAdmin, accessUnavailable: unavailable };
+}
+
+// "No" vs "couldn't check": when the page-granted lists could not be read and nothing is cached, someone
+// who fails a check may really be on those lists, so answer 503 (try again) instead of a misleading 403.
+function deny(user, message) {
+  if (user && user.accessUnavailable) {
+    throw new AuthError(503, 'Access list is temporarily unavailable. Please try again in a moment.');
+  }
+  throw new AuthError(403, message);
 }
 
 // Gate for write/change operations. Reads never call this; writes do.
 function requireEditor(user) {
   if (!user || !user.isEditor) {
-    throw new AuthError(403, 'You do not have permission to change this data.');
+    deny(user, 'You do not have permission to change this data.');
   }
+}
+
+// Gate for managing who has which access (the Manager view's Access tab and its endpoints). This one
+// depends only on Azure settings, so it never needs the 503 case.
+function requireAccessAdmin(user) {
+  if (!user || !user.isAccessAdmin) {
+    throw new AuthError(403, 'You do not have permission to manage access.');
+  }
+}
+
+// For /api/me (and handlers that branch on the caller's role): while the page lists are unreadable the flags
+// may be missing page grants, so answer 503 rather than a downgraded role the browser would remember.
+function requireAccessKnown(user) {
+  if (user && user.accessUnavailable) deny(user);
+}
+
+// The people granted in Azure settings (read-only from the site), for the Access tab to display.
+function azureAccessLists() {
+  return { editors: EDITOR_UPNS.slice(), finance: FINANCE_UPNS.slice(), planners: PLANNER_UPNS.slice(), testers: TESTER_UPNS.slice() };
 }
 
 // Gate for the financial group (Invoice tab and any invoice data endpoints).
 function requireFinance(user) {
   if (!user || !user.isFinance) {
-    throw new AuthError(403, 'You do not have permission to view this.');
+    deny(user, 'You do not have permission to view this.');
   }
 }
 
 // Gate for the Project Planners group (Project Planning tab and its endpoints).
 function requirePlanner(user) {
   if (!user || !user.isPlanner) {
-    throw new AuthError(403, 'You do not have permission to view this.');
+    deny(user, 'You do not have permission to view this.');
   }
 }
 
 // Gate for the Testers group (in-progress test-only tabs and their endpoints).
 function requireTester(user) {
   if (!user || !user.isTester) {
-    throw new AuthError(403, 'You do not have permission to view this.');
+    deny(user, 'You do not have permission to view this.');
   }
 }
 
@@ -178,14 +225,14 @@ function requireTester(user) {
 // for their recipient picker. Not every editor is a planner or vice versa.
 function requireEditorOrPlanner(user) {
   if (!user || (!user.isEditor && !user.isPlanner)) {
-    throw new AuthError(403, 'You do not have permission to view this.');
+    deny(user, 'You do not have permission to view this.');
   }
 }
 
 // Gate for the Expenses tab: cardholders submit, the Financial group approves.
 function requireCardholderOrFinance(user) {
   if (!user || (!user.isCardholder && !user.isFinance)) {
-    throw new AuthError(403, 'You do not have permission to view this.');
+    deny(user, 'You do not have permission to view this.');
   }
 }
 
@@ -203,10 +250,11 @@ function authErrorResponse(e, context) {
         jsonBody: { error: e.message },
       };
     }
+    if (e.status === 503) return { status: 503, headers: { 'Retry-After': '5' }, jsonBody: { error: e.message } };
     return { status: e.status, jsonBody: { error: e.message } };
   }
   context.error(e);
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, requireCardholderOrFinance, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, requireCardholderOrFinance, requireAccessAdmin, requireAccessKnown, deny, azureAccessLists, AuthError, authErrorResponse };

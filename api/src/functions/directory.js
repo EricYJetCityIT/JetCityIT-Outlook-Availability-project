@@ -30,7 +30,8 @@ app.http('directory', {
         const k = email.toLowerCase();
         if (seen[k]) return;
         seen[k] = 1;
-        out.push({ name: u.displayName || email, email });
+        // `upn` is the sign-in name the API matches access grants against (it can differ from `mail`).
+        out.push({ name: u.displayName || email, email, upn: String(u.userPrincipalName || '').trim().toLowerCase() });
       });
       out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
       cache = { users: out };

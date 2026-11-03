@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { requireUser, authErrorResponse } = require('../lib/auth');
+const { requireUser, requireAccessKnown, authErrorResponse } = require('../lib/auth');
 
 // Returns the caller's identity + whether they may edit data, so the frontend
 // can hide/disable "change" controls for read-only users. This is a UX aid
@@ -11,7 +11,8 @@ app.http('me', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      return { jsonBody: { upn: user.upn, name: user.name, isEditor: user.isEditor, isFinance: user.isFinance, isPlanner: user.isPlanner, isTester: user.isTester, isCardholder: user.isCardholder } };
+      requireAccessKnown(user); // 503 (not a downgraded role) while the page-granted lists can't be read
+      return { jsonBody: { upn: user.upn, name: user.name, isEditor: user.isEditor, isFinance: user.isFinance, isPlanner: user.isPlanner, isTester: user.isTester, isCardholder: user.isCardholder, isAccessAdmin: user.isAccessAdmin } };
     } catch (e) {
       return authErrorResponse(e, context);
     }

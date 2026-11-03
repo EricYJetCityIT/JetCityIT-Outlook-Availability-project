@@ -13,10 +13,11 @@
     "SYNC_SECRET": "<shared secret the GitHub Actions cron workflows send as X-Sync-Secret; must match the GitHub repo secret of the same name>",
     "MAIL_CLIENT_SECRET": "<client secret for the JetCity Availability App registration (Azure Portal > App registrations > Certificates & secrets); used ONLY for the app-only Graph Mail.Send call the availability-reminder cron makes -- also requires an admin-consented Mail.Send APPLICATION permission on that same app registration>",
     "RATE_LIMIT_PER_MIN": "120",
-    "EDITOR_UPNS": "<comma-separated emails allowed to CHANGE data (reassign crew, clear availability weeks), e.g. dylanm@jetcityit.com,ericy@jetcityit.com. Everyone else is read-only. Optional if using the Entra 'DataEditor' app role instead.>",
-    "FINANCE_UPNS": "<comma-separated emails in the financial group (Invoice tab). Empty/unset => nobody. Independent of EDITOR_UPNS.>",
-    "PLANNER_UPNS": "<comma-separated emails in the Project Planners group (Project Planning tab). Empty/unset => nobody. Independent of EDITOR_UPNS and FINANCE_UPNS.>",
-    "TESTER_UPNS": "<comma-separated emails in the Testers group — a private group that unlocks in-progress features (today the Job Sheets tab). Empty/unset => nobody. Independent of the other groups. e.g. dylanm@jetcityit.com,ericy@jetcityit.com>",
+    "EDITOR_UPNS": "<comma-separated emails allowed to CHANGE data (reassign crew, clear availability weeks), e.g. dylanm@jetcityit.com,ericy@jetcityit.com. Everyone else is read-only unless an access admin adds them on the Manager view's Access tab. Optional if using the Entra 'DataEditor' app role instead.>",
+    "FINANCE_UPNS": "<comma-separated emails in the financial group (Invoice tab). Empty/unset => nobody from Azure (more people can be added on the Access tab). Independent of EDITOR_UPNS.>",
+    "PLANNER_UPNS": "<comma-separated emails in the Project Planners group (Project Planning tab). Empty/unset => nobody from Azure (more people can be added on the Access tab). Independent of EDITOR_UPNS and FINANCE_UPNS.>",
+    "TESTER_UPNS": "<comma-separated emails in the Testers group — a private group that unlocks in-progress features (today the Job Sheets tab). Empty/unset => nobody from Azure (more people can be added on the Access tab). Independent of the other groups. e.g. dylanm@jetcityit.com,ericy@jetcityit.com>",
+    "ACCESS_ADMIN_UPNS": "<OPTIONAL. comma-separated emails who may change who has Editor/Finance/Planner/Tester access on the Manager view's Access tab. Unset => every editor who is an editor through EDITOR_UPNS or the DataEditor role. Set => only these people (who must also be such editors). Worth setting if the Finance group should stay smaller than the editor group. e.g. ericy@jetcityit.com>",
     "JOBSHEET_WORKSPACE_ID": "<UNUSED as of the workspace-picker version of Job Sheets — the tab now lets a Tester browse any workspace/sheet SMARTSHEET_API_TOKEN can see, no allow-list. Safe to delete this app setting; kept documented here only in case an older deploy still reads it.>"
   }
 }
