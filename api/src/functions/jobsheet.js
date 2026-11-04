@@ -14,6 +14,16 @@ function jobsheetError(e, context) {
   return { status: 500, jsonBody: { error: String((e && e.message) || e || 'Unknown error') } };
 }
 
+// Best-effort "Completed By" stamp after a successful write (see recordCompletedBy): the tech's own save
+// has already gone through, so a failure here is logged and never turned into a failed request.
+async function completedBy(context, sheetId, rowId, columnId, opts, user) {
+  try {
+    await ss.recordCompletedBy(sheetId, rowId, columnId, { ...opts, name: user.name || user.upn });
+  } catch (e) {
+    try { context.warn('Completed By not recorded: ' + String((e && e.message) || e).slice(0, 300)); } catch (_) { /* logging must never break the response */ }
+  }
+}
+
 // Job Sheets tab (Testers group). Serves a picker of the token's Smartsheet
 // workspaces, the sheets inside whichever one is chosen, and one sheet's
 // contents (items + live QA photos) to the in-app viewer, plus a write-back
@@ -209,6 +219,10 @@ app.http('jobsheetCell', {
         user: user.upn, userName: user.name, capturedAt: body.capturedAt, durationSec: body.durationSec,
         sessionId: body.sessionId,
       }, context);
+      // A checkbox tick/untick may be the item's completion: stamp / clear "Completed By" on the row.
+      if (typeof body.value === 'boolean') {
+        await completedBy(context, body.sheetId, body.rowId, body.columnId, { checked: body.value }, user);
+      }
       return { jsonBody: { ok: true } };
     } catch (e) {
       return jobsheetError(e, context);
@@ -259,6 +273,7 @@ app.http('jobsheetPhotoUpload', {
         user: user.upn, userName: user.name, capturedAt: form.get('capturedAt'), durationSec: form.get('durationSec'),
         sessionId: form.get('sessionId'),
       }, context);
+      await completedBy(context, sheetId, rowId, columnId, { photo: true }, user);
       return { jsonBody: { ok: true } };
     } catch (e) {
       return jobsheetError(e, context);

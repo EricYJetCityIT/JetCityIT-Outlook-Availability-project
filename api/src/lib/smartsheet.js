@@ -839,6 +839,82 @@ async function fetchImageUrls(images) {
   return out;
 }
 
+// The column that means "this item is done": a checkbox that clearly means completion (Complete/Done/
+// Verified/QC/Ready/Installed -- NOT just any checkbox, e.g. a T-Mobile "Mismatched Arm" flag isn't
+// completion); with no such checkbox a photo column stands in (a desk is done once it has a QA Pic); else
+// the first checkbox. Takes classifyJobSheetColumns() output; drives the viewer's progress bar and
+// "Completed By".
+const DONE_CHECKBOX_RE = /\b(complete|completed|done|finished|verif|verified|qc|ready|installed)\b/i;
+function pickProgressColumn(cols) {
+  const doneCheckbox = cols.find((c) => c.type === 'checkbox' && DONE_CHECKBOX_RE.test(c.label));
+  return doneCheckbox || cols.find((c) => c.type === 'photo') || cols.find((c) => c.type === 'checkbox') || null;
+}
+
+// "Completed By": when a tech finishes an item (ticks the sheet's done checkbox, or adds the photo on a
+// photo-only sheet) their name is written to a "Completed By" text column on that row; unticking clears it,
+// and whoever ticks last wins. The column is added the first time it's needed (needs Admin on the sheet; if
+// the app's token can't add columns the write is skipped and not retried for COMPLETED_BY_RETRY_MS). A
+// failure here never fails the tech's own save (the caller catches it): the tick already went through.
+const COMPLETED_BY_RE = /^\s*completed[\s_-]*by\s*$/i;
+const COMPLETED_BY_TITLE = 'Completed By';
+const COMPLETED_BY_RETRY_MS = 10 * 60 * 1000;
+const completedByAddFailed = new Map(); // sheetId -> when adding the column last failed
+const DONE_COLUMN_TTL_MS = 5 * 60 * 1000;
+const doneColumnCache = new Map(); // sheetId -> { columnId, type, at }: the sheet's "done" column
+// The column the app owns: titled "Completed By" and plain text. A same-titled picklist / contact / date
+// column is someone's own and is left alone (still shown in the viewer, never written).
+const isAppCompletedByColumn = (c) => COMPLETED_BY_RE.test(c.title || '') && (!c.type || c.type === 'TEXT_NUMBER');
+async function addTextColumn(sheetId, title, index) {
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${encodeURIComponent(sheetId)}/columns`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, type: 'TEXT_NUMBER', index }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Smartsheet add column error ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.result || null;
+}
+// `writtenColumnId` is the column the tech just wrote; `photo` says it was a photo upload (else a checkbox
+// write, `checked` = the new value). Returns 'written' | 'cleared' | 'skipped' (not a completion write, or
+// nothing to do) and throws on a Smartsheet failure.
+async function recordCompletedBy(sheetId, rowId, writtenColumnId, { photo = false, checked = false, name = '' } = {}) {
+  // Which column is "done" is worked out from the whole sheet (image columns with odd titles, a non-primary
+  // identifier), exactly as the viewer does. That is heavy, so a checkbox write reuses the answer for a few
+  // minutes; a photo upload always re-reads it, since the upload may be what makes its column an image column.
+  const key = String(sheetId);
+  let done = photo ? null : doneColumnCache.get(key);
+  if (!done || Date.now() - done.at > DONE_COLUMN_TTL_MS) {
+    const { progressCol } = analyzeJobSheet(await fetchGenericSheet(sheetId));
+    done = { columnId: progressCol ? progressCol.columnId : null, type: progressCol ? progressCol.type : null, at: Date.now() };
+    if (doneColumnCache.size > 200) doneColumnCache.clear();
+    doneColumnCache.set(key, done);
+  }
+  if (done.columnId == null || done.columnId !== Number(writtenColumnId) || done.type !== (photo ? 'photo' : 'checkbox')) return 'skipped';
+  const set = photo || checked;
+  let { columns } = await fetchSheetColumns(sheetId);
+  if (columns.some((c) => COMPLETED_BY_RE.test(c.title || '') && !isAppCompletedByColumn(c))) return 'skipped'; // a hand-made contact / picklist / date column: leave it alone
+  let cb = columns.find(isAppCompletedByColumn);
+  if (!cb) {
+    if (!set) return 'skipped'; // nothing to clear
+    const failedAt = completedByAddFailed.get(String(sheetId));
+    if (failedAt && Date.now() - failedAt < COMPLETED_BY_RETRY_MS) return 'skipped';
+    try {
+      cb = await addTextColumn(sheetId, COMPLETED_BY_TITLE, columns.length);
+    } catch (e) {
+      // Two techs ticking at once can both try to add it; the loser's add is refused as a duplicate title.
+      ({ columns } = await fetchSheetColumns(sheetId));
+      cb = columns.find(isAppCompletedByColumn);
+      if (!cb) { completedByAddFailed.set(String(sheetId), Date.now()); throw e; }
+    }
+  }
+  const value = set ? (String(name || '').trim().slice(0, 100) || null) : null;
+  await putRows(sheetId, [{ id: rowId, cells: [{ columnId: cb.id, value, strict: false }] }]);
+  return value ? 'written' : 'cleared';
+}
+
 // Classifies a sheet's columns by shape so the viewer can adapt to any job
 // sheet: identifierId is the item identifier (see pickIdentifierColumnId); a
 // column is a photo column if any row actually holds a cell image in it
@@ -897,6 +973,19 @@ function pickIdentifierColumnId(columns, rows, imageColumnIds) {
   return best ? best.id : (primary ? primary.id : null);
 }
 
+// How the viewer reads a fetched sheet's columns: classified columns plus the "done" (progress) column.
+// Shared with recordCompletedBy so "Completed By" follows exactly the column the progress bar counts.
+// The app's own "Completed By" text column holds tech names, so it is dropped here: not editable by hand,
+// and never reaches a client share link.
+function analyzeJobSheet(sheet) {
+  const imageColumnIds = new Set();
+  (sheet.rows || []).forEach((row) => (row.cells || []).forEach((c) => { if (c.image && c.image.id) imageColumnIds.add(c.columnId); }));
+  const sheetColumns = (sheet.columns || []).filter((c) => !isAppCompletedByColumn(c));
+  const identifierId = pickIdentifierColumnId(sheetColumns, sheet.rows || [], imageColumnIds);
+  const cols = classifyJobSheetColumns(sheetColumns, imageColumnIds, identifierId);
+  return { cols, progressCol: pickProgressColumn(cols) };
+}
+
 // Builds the read-only viewer payload for one job sheet: {name, columns,
 // progressKey, rows}. Photo cells become a temporary image URL (or null when
 // empty); checkboxes booleans; everything else text. Rows with a blank
@@ -905,10 +994,7 @@ function pickIdentifierColumnId(columns, rows, imageColumnIds) {
 // QA Pic).
 async function fetchJobSheetView(sheetId) {
   const sheet = await fetchGenericSheet(sheetId);
-  const imageColumnIds = new Set();
-  (sheet.rows || []).forEach((row) => (row.cells || []).forEach((c) => { if (c.image && c.image.id) imageColumnIds.add(c.columnId); }));
-  const identifierId = pickIdentifierColumnId(sheet.columns || [], sheet.rows || [], imageColumnIds);
-  const cols = classifyJobSheetColumns(sheet.columns || [], imageColumnIds, identifierId);
+  const { cols, progressCol } = analyzeJobSheet(sheet);
   const photoCols = cols.filter((c) => c.type === 'photo');
   const cellAt = (row, columnId) => (row.cells || []).find((c) => c.columnId === columnId);
 
@@ -952,8 +1038,6 @@ async function fetchJobSheetView(sheetId) {
   // QC/Ready/Installed) — NOT just any checkbox (e.g. a T-Mobile "Mismatched
   // Arm" flag isn't completion). If there's no such checkbox, a photo column
   // stands in (a desk is done once it has a QA Pic); else the first checkbox.
-  const doneCheckbox = cols.find((c) => c.type === 'checkbox' && /\b(complete|completed|done|finished|verif|verified|qc|ready|installed)\b/i.test(c.label));
-  const progressCol = doneCheckbox || cols.find((c) => c.type === 'photo') || cols.find((c) => c.type === 'checkbox') || null;
   return {
     name: sheet.name || '',
     columns: cols.map((c) => ({ key: c.key, label: c.label, type: c.type })),
@@ -1075,6 +1159,7 @@ module.exports = {
   fetchWorkspaceSheets,
   fetchJobSheetView,
   updateJobSheetCell,
+  recordCompletedBy,
   addCellImage,
   fetchImageBytes,
   fetchAttachment,

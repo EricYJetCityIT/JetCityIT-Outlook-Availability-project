@@ -137,6 +137,19 @@ at most two years. `GET /api/jobsheet/techday?user=&day=` (also **Testers-only**
 returns one tech's day as a time-ordered list of item visits for the tab's day
 timeline; it reads that day's raw log on request and saves nothing.
 
+**Completed By (Smartsheet).** When a tester ticks a job sheet's done checkbox
+(`POST /api/jobsheet/cell`) or, on a photo-only sheet, adds the photo
+(`POST /api/jobsheet/photo-upload`), the server writes their sign-in display name
+to a "Completed By" text column on that row; unticking clears it, and whoever
+ticks last wins. "Done" is the same column the viewer's progress bar uses. The
+column is added to the sheet the first time it's needed, which needs Admin on that
+sheet; if the app's Smartsheet token can't add columns the stamp is skipped (retry
+after 10 minutes) and nothing is shown to the tech. A failure never fails the
+tech's own save. The text column is hidden from the Job Sheets / Floor Maps viewer
+and is never part of a client share link, since it holds tech names. A same-named
+picklist / contact / date column that someone made by hand is left alone (not
+written, still shown).
+
 ## Rate limiting (anti-scraping)
 
 `requireUser` applies a per-user fixed-window limit (default **120 requests/min**
