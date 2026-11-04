@@ -133,7 +133,9 @@ The rollup feeds `GET /api/jobsheet/techtracking` (the Manager view's **Tech
 tracking** tab), which is **Testers-only** (`requireTester`) and returns per-tech
 pace and time data. The tab stays correct even if the nightly job never runs
 (missing days are built on demand); the job only keeps reads fast. Reads reach back
-at most two years.
+at most two years. `GET /api/jobsheet/techday?user=&day=` (also **Testers-only**)
+returns one tech's day as a time-ordered list of item visits for the tab's day
+timeline; it reads that day's raw log on request and saves nothing.
 
 ## Rate limiting (anti-scraping)
 

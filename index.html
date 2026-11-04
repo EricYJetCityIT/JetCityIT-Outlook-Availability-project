@@ -737,6 +737,17 @@ body.is-tester #tab-floormap{display:inline-block}
 .tt-sub td.tt-name{font-weight:500;padding-left:28px}
 .tt-tag{display:inline-block;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:10px;background:var(--green-light);color:var(--green-dark);margin-left:6px;vertical-align:1px}
 .tt-fast{color:var(--green-dark);font-weight:600}
+.tt-sub-n{font-size:11px;color:var(--text3);font-weight:400}
+.tt-chip{font:inherit;font-size:12px;padding:3px 10px;margin:2px 6px 2px 0;border-radius:12px;border:1px solid var(--border2);background:var(--surface);color:var(--text2);cursor:pointer}
+.tt-chip:hover{background:var(--surface2);color:var(--text)}
+.tt-chip:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.ttd-row{display:grid;grid-template-columns:84px 1fr;gap:12px;padding:8px 0;border-top:1px solid var(--border)}
+.ttd-time{font-size:12px;color:var(--text3);font-variant-numeric:tabular-nums}
+.ttd-label{font-weight:600;color:var(--text);font-size:14px;word-break:break-word}
+.ttd-sheet{font-size:12px;color:var(--text3);word-break:break-word}
+.ttd-pill{display:inline-block;font-size:11.5px;background:var(--surface2);color:var(--text2);border-radius:10px;padding:1px 8px;margin:4px 6px 0 0}
+.ttd-gap{font-size:11.5px;color:var(--text3);padding:4px 0 0 96px}
+.ttd-gap.brk{color:var(--holiday-text);font-weight:600}
 .tt-slow{color:var(--unavail-text);font-weight:600}
 .tt-note{font-size:12px;color:var(--text3);line-height:1.55;max-width:760px}
 .tt-warn{font-size:12.5px;color:var(--holiday-text);margin-bottom:12px}
@@ -5764,7 +5775,7 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 // sheets that have a floor map. Days are Pacific calendar days, like the server's.
 const TT_RANGES=[['week','Selected week'],['7','Last 7 days'],['30','Last 30 days'],['90','Last 90 days'],['all','All time']];
 const TT_SOURCES=[['all','All work'],['jobsheet','Job Sheets'],['floormap','Floor Maps']];
-const TT_COLS=[['name','Tech'],['items','Items'],['photos','Photos'],['labor','Time logged'],['avg','Avg / item'],['gap','Avg between items'],['rate','Items / hr'],['vs','vs team'],['days','Active days'],['last','Last active']];
+const TT_COLS=[['name','Tech'],['items','Items'],['photos','Photos'],['labor','Time logged'],['avg','Avg / item'],['gap','Avg between items'],['rate','Items / hr'],['vs','vs peers'],['days','Active days'],['last','Last active']];
 // [value getter, direction]: 1 = lowest first (names, pace: faster first), -1 = highest first
 const TT_SORT={name:[t=>String(t.name).toLowerCase(),1],items:[t=>t.items,-1],photos:[t=>t.photos,-1],labor:[t=>t.laborSec,-1],avg:[t=>t.avgSec,1],gap:[t=>t.gapAvg,1],rate:[t=>t.rate,-1],days:[t=>t.dayN,-1],last:[t=>Date.parse(t.last)||0,-1]};
 const tt={range:'30',source:'all',sort:'items',open:null,loading:false,loadingKey:'',loadedKey:'',loadedAt:null,error:'',records:null,truncated:false,fmSheets:new Set(),fmUnknown:false,model:null,bounds:null,rows:[],req:0};
@@ -5848,7 +5859,7 @@ function ttCompute(records,fmSheets,source){
     let ds=byDay.get(r.day); if(!ds){ ds=new Set(); byDay.set(r.day,ds); }
     (r.items||[]).forEach(k=>ds.add(sid+'|'+k));
   });
-  const techs=new Map(), jobs=[];
+  const techs=new Map(), jobs=[], sheetStat=new Map(); // sheetStat: per sheet, each tech's time and timed-item count (for the peer comparison)
   const k={photos:0,edits:0,laborSec:0,timedN:0,gapSum:0,gapN:0};
   sheets.forEach(s=>{
     const job={id:s.id,name:s.name||('Sheet '+s.id),fm:s.fm,techNames:[],items:new Set(),photos:0,laborSec:0,timedKeys:new Set(),timedN:0,last:''};
@@ -5858,7 +5869,8 @@ function ttCompute(records,fmSheets,source){
       if(u.last>=t.last){ t.last=u.last; t.name=u.name; }
       if(u.first<t.first) t.first=u.first;
       let labor=0; u.timed.forEach((sec,key)=>{ labor+=sec; t.timedKeys.add(s.id+'|'+key); job.timedKeys.add(key); });
-      const tj={name:job.name,fm:s.fm,items:u.items.size,photos:u.photos,laborSec:labor,timedN:u.timed.size};
+      const tj={sid:s.id,name:job.name,fm:s.fm,items:u.items.size,photos:u.photos,laborSec:labor,timedN:u.timed.size};
+      let ss=sheetStat.get(s.id); if(!ss){ ss=[]; sheetStat.set(s.id,ss); } ss.push({uk:u.uk,labor:labor,n:u.timed.size});
       u.items.forEach(key=>job.items.add(key));
       u.days.forEach(d=>t.days.add(d));
       t.items+=u.items.size; t.photos+=u.photos; t.edits+=u.edits; t.laborSec+=labor; t.gapSum+=u.gapSum; t.gapN+=u.gapN; t.jobs.push(tj);
@@ -5873,6 +5885,17 @@ function ttCompute(records,fmSheets,source){
     t.timedN=t.timedKeys.size;
     t.dayN=t.days.size; t.avgSec=t.timedN? t.laborSec/t.timedN : null; t.gapAvg=t.gapN? t.gapSum/t.gapN : null;
     t.rate=(t.laborSec>0&&t.timedN)? t.timedN/(t.laborSec/3600) : null;
+    // vs peers: this tech's time on the jobs where at least one other tech also logged timed items, against what the
+    // other techs averaged per item on those same jobs (weighted by how many items the tech did on each). Same jobs,
+    // so job type doesn't skew it the way a team-wide average would.
+    let exp=0, act=0, pn=0, pm=0;
+    t.jobs.forEach(j=>{
+      if(!j.timedN) return;
+      let pl=0, pc=0; (sheetStat.get(j.sid)||[]).forEach(o=>{ if(o.uk!==t.uk){ pl+=o.labor; pc+=o.n; } });
+      if(pc<3||pl<=0) return; // a benchmark from one or two peer items is too thin to judge anyone by
+      exp+=j.timedN*(pl/pc); act+=j.laborSec; pn+=j.timedN; pm+=pc;
+    });
+    t.peerN=pn; t.peerM=pm; t.peerPct=(pn>=3&&exp>0)? Math.round((act/exp-1)*100) : null;
     t.jobs.sort((a,b)=>b.items-a.items);
     k.photos+=t.photos; k.edits+=t.edits; k.laborSec+=t.laborSec; k.timedN+=t.timedN; k.gapSum+=t.gapSum; k.gapN+=t.gapN;
   });
@@ -5931,23 +5954,29 @@ function ttTechTable(m){
   const rows=m.techs.slice(), [f,dir]=TT_SORT[tt.sort]||TT_SORT.items;
   rows.sort((a,b)=>{ const x=f(a), y=f(b); if(x==null&&y==null) return String(a.name).localeCompare(String(b.name)); if(x==null) return 1; if(y==null) return -1; return x<y? -dir : x>y? dir : String(a.name).localeCompare(String(b.name)); });
   tt.rows=rows;
-  const teamAvg=m.kpi.avgSec, canCmp=m.techs.length>=2&&m.kpi.timedN>=8;
-  const head='<tr>'+TT_COLS.map(c=> c[0]==='vs'? `<th>${c[1]}</th>` : `<th><button class="${tt.sort===c[0]?'on':''}" data-f="sort:${c[0]}" onclick="ttSetSort('${c[0]}')" title="Sort by ${jsEsc(c[1])}">${jsEsc(c[1])}${tt.sort===c[0]?' ↓':''}</button></th>`).join('')+'</tr>';
+  const head='<tr>'+TT_COLS.map(c=> c[0]==='vs'? `<th title="Compares the tech's average time per item with the other techs' on the same jobs. Needs at least 3 timed items from the tech and from the other techs on the same jobs.">${c[1]}</th>` : `<th><button class="${tt.sort===c[0]?'on':''}" data-f="sort:${c[0]}" onclick="ttSetSort('${c[0]}')" title="Sort by ${jsEsc(c[1])}">${jsEsc(c[1])}${tt.sort===c[0]?' ↓':''}</button></th>`).join('')+'</tr>';
   const body=rows.map((t,i)=>{
     let vs='–';
-    if(canCmp&&teamAvg&&t.avgSec!=null&&t.timedN>=3){
-      const p=Math.round((t.avgSec/teamAvg-1)*100);
-      vs=Math.abs(p)<5? 'about the same' : (p<0? `<span class="tt-fast">${-p}% faster</span>` : `<span class="tt-slow">${p}% slower</span>`);
+    if(t.peerPct!=null){
+      const p=t.peerPct;
+      vs=(Math.abs(p)<5? 'about the same' : (p<0? `<span class="tt-fast">${-p}% faster</span>` : `<span class="tt-slow">${p}% slower</span>`))+`<div class="tt-sub-n">${t.peerN} items vs ${t.peerM} peer items</div>`;
     }
     const open=tt.open===t.uk;
     // The row keeps its table semantics; the real button in the first cell is the keyboard/screen-reader control (a click on it bubbles to the row, so it toggles once).
     let h=`<tr class="tt-row" onclick="ttToggle(${i})">`+
       `<td class="tt-name"><button class="tt-tog" data-f="row:${i}" aria-expanded="${open}" aria-label="${jsEsc(t.name)}: ${open?'hide':'show'} jobs">${open?'▾':'▸'} ${jsEsc(t.name)}</button></td><td>${t.items}</td><td>${t.photos}</td><td>${t.laborSec? fmFmtHM(t.laborSec) : '–'}</td>`+
       `<td>${ttDur(t.avgSec)}</td><td>${ttDur(t.gapAvg)}</td><td>${t.rate!=null? (Math.round(t.rate*10)/10) : '–'}</td><td>${vs}</td><td>${t.dayN}</td><td>${jsEsc(jsFmtWhen(t.last))}</td></tr>`;
-    if(open) h+=t.jobs.map(j=>`<tr class="tt-sub"><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td>${j.items}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td colspan="5"></td></tr>`).join('');
+    if(open) h+=t.jobs.map(j=>`<tr class="tt-sub"><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td>${j.items}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td colspan="5"></td></tr>`).join('')+ttDayChips(t,i);
     return h;
   }).join('');
   return `<div class="tt-wrap"><table class="tt-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+}
+// Under an expanded tech: their most recent active days, each opening that day's timeline.
+function ttDayChips(t,i){
+  const days=[...t.days].sort().reverse().slice(0,14); if(!days.length) return '';
+  const lab=d=>new Date(d+'T00:00:00Z').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'});
+  return `<tr class="tt-sub"><td colspan="10" style="text-align:left;white-space:normal;padding-left:28px"><span class="tt-sub-n" style="margin-right:6px">Day timeline:</span>`+
+    days.map(d=>`<button type="button" class="tt-chip" data-f="day:${i}:${d}" onclick="event.stopPropagation();ttOpenDay(${i},'${d}')">${jsEsc(lab(d))}</button>`).join('')+`</td></tr>`;
 }
 function ttJobTable(m){
   const shown=m.jobs.slice(0,30);
@@ -5960,6 +5989,117 @@ function ttJobTable(m){
 }
 function ttKpi(v,l,s){ return `<div class="tt-kpi"><div class="tt-kpi-v">${v}</div><div class="tt-kpi-l">${jsEsc(l)}</div>${s?`<div class="tt-kpi-s">${jsEsc(s)}</div>`:''}</div>`; }
 
+// ── Export (CSV and print / save as PDF) of what's on screen: the range and source filters, tables as sorted ──
+function ttCanExport(){ return !!(tt.model&&tt.model.techs.length&&tt.loadedKey===ttKey()&&!tt.loading); }
+function ttVsText(t){ if(t.peerPct==null) return ''; const p=t.peerPct; return (Math.abs(p)<5? 'About the same' : (p<0? (-p)+'% faster' : p+'% slower'))+' ('+t.peerN+' items vs '+t.peerM+' peer items)'; }
+const TT_EXPORT_TECH_HEAD=['Tech','Items','Photos','Time logged','Avg per item','Avg between items','Items per hour','vs peers (same jobs)','Active days','Last active'];
+const TT_EXPORT_JOB_HEAD=['Job','Floor map','Techs','Items','Photos','Time logged','Avg per item','Last activity'];
+function ttExportTechRows(){ return tt.rows.map(t=>[t.name,t.items,t.photos,t.laborSec? fmFmtHM(t.laborSec) : '',t.avgSec!=null? ttDur(t.avgSec) : '',t.gapAvg!=null? ttDur(t.gapAvg) : '',t.rate!=null? Math.round(t.rate*10)/10 : '',ttVsText(t),t.dayN,jsFmtWhen(t.last)||'']); }
+function ttExportJobRows(m){ return m.jobs.map(j=>[j.name,j.fm?'Yes':'No',j.techNames.join('; '),j.items.size,j.photos,j.laborSec? fmFmtHM(j.laborSec) : '',j.timedN? ttDur(j.laborSec/j.timedN) : '',jsFmtWhen(j.last)||'']); }
+function ttSourceLabel(){ const s=TT_SOURCES.find(x=>x[0]===tt.source); return s? s[1] : ''; }
+function ttDownloadCsv(){
+  if(!ttCanExport()) return; const m=tt.model, now=new Date();
+  const lines=[['Tech tracking'],['Range',ttRangeLabel()],['Source',ttSourceLabel()],['Generated',now.toLocaleString()],[],['By tech'],TT_EXPORT_TECH_HEAD].concat(ttExportTechRows(),[[],['By job'],TT_EXPORT_JOB_HEAD],ttExportJobRows(m));
+  const blob=new Blob(['\ufeff'+lines.map(l=>l.map(fmCsvCell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}), a=document.createElement('a');
+  const slug=(ttRangeLabel()+'-'+ttSourceLabel()).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+  a.href=URL.createObjectURL(blob); a.download='tech-tracking-'+slug+'-'+now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0')+'.csv'; // local date, not UTC
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function ttPrintTable(head,rows){
+  return '<table class="fm-rep-table"><thead><tr>'+head.map(h=>'<th>'+jsEsc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(c=>'<td>'+jsEsc(c)+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+}
+// Same print-only block and CSS as the floor map closeout report: everything else on the page is hidden while printing.
+function ttPrint(){
+  if(!ttCanExport()) return; const m=tt.model;
+  let host=document.getElementById('fm-print'); if(host) host.remove();
+  host=document.createElement('div'); host.id='fm-print';
+  host.innerHTML='<h1 style="font-size:20px;margin:0 0 4px">Tech tracking</h1><div style="font-size:12px;margin-bottom:10px">'+jsEsc(ttRangeLabel())+' · '+jsEsc(ttSourceLabel())+' · generated '+jsEsc(new Date().toLocaleString())+'</div>'+
+    '<h2 style="font-size:15px;margin:10px 0 4px">By tech</h2>'+ttPrintTable(TT_EXPORT_TECH_HEAD,ttExportTechRows())+
+    '<h2 style="font-size:15px;margin:14px 0 4px">By job</h2>'+ttPrintTable(TT_EXPORT_JOB_HEAD,ttExportJobRows(m))+
+    '<div style="font-size:11px;margin-top:10px">Only work done through the app is counted. “vs peers” compares a tech with the other techs on the same jobs.</div>';
+  document.body.appendChild(host);
+  const done=()=>{ document.body.classList.remove('fm-printing'); const h=document.getElementById('fm-print'); if(h) h.remove(); window.removeEventListener('afterprint',done); };
+  window.addEventListener('afterprint',done); document.body.classList.add('fm-printing');
+  setTimeout(done,120000); // some mobile browsers never fire afterprint; don't leave the print-only block behind
+  try{ window.print(); }catch(e){ done(); }
+}
+
+// ── One tech, one day: every item they worked, in order, with time on each and the gaps between ──
+// (GET /api/jobsheet/techday, the same visit / time rules as the rollups; times shown in Pacific like the day itself)
+const ttd={open:false,uk:'',name:'',days:[],day:'',loading:false,error:'',data:null,req:0,returnFocus:''};
+const TTD_TIME=new Intl.DateTimeFormat(undefined,{timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit'});
+function ttdT(iso){ try{ return TTD_TIME.format(new Date(iso)); }catch(_){ return ''; } }
+function ttEnsureModal(){
+  let b=document.getElementById('tt-modal-backdrop'); if(b) return b;
+  b=document.createElement('div'); b.className='js-modal-backdrop'; b.id='tt-modal-backdrop';
+  b.setAttribute('role','dialog'); b.setAttribute('aria-modal','true'); b.setAttribute('aria-labelledby','ttd-title');
+  b.innerHTML='<div class="js-modal" id="tt-modal" style="max-width:640px"></div>';
+  b.addEventListener('click',function(e){ if(e.target===b) ttCloseDay(); });
+  document.body.appendChild(b); return b;
+}
+function ttOpenDay(i,day){
+  const t=tt.rows[i]; if(!t) return;
+  ttd.uk=t.uk; ttd.name=t.name; ttd.days=[...t.days].sort(); ttd.returnFocus='day:'+i+':'+day; ttd.open=true;
+  ttEnsureModal().classList.add('open'); document.addEventListener('keydown',ttdKey); ttLoadDay(day);
+}
+function ttdKey(e){
+  if(e.key==='Escape'){ ttCloseDay(); return; }
+  if(e.key!=='Tab') return;
+  // Keep Tab inside the dialog: wrap from the last control to the first and back.
+  const box=document.getElementById('tt-modal'); if(!box) return;
+  const f=[...box.querySelectorAll('button:not([disabled]),[href],input,select,textarea,[tabindex]:not([tabindex="-1"])')];
+  if(!f.length){ e.preventDefault(); return; }
+  const first=f[0], last=f[f.length-1], act=document.activeElement;
+  if(!box.contains(act)){ e.preventDefault(); first.focus(); }
+  else if(e.shiftKey&&act===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey&&act===last){ e.preventDefault(); first.focus(); }
+}
+function ttCloseDay(){
+  ttd.open=false; ttd.req++;
+  const b=document.getElementById('tt-modal-backdrop'); if(b) b.classList.remove('open');
+  document.removeEventListener('keydown',ttdKey);
+  const el=document.querySelector('#tt-root [data-f="'+ttd.returnFocus+'"]'); if(el) el.focus({preventScroll:true});
+}
+async function ttLoadDay(day){
+  const my=++ttd.req; ttd.day=day; ttd.loading=true; ttd.error=''; ttd.data=null; ttdPaint('close');
+  try{
+    const d=await jsApi('/jobsheet/techday?user='+encodeURIComponent(ttd.uk)+'&day='+encodeURIComponent(day));
+    if(my!==ttd.req) return;
+    if(!d||!Array.isArray(d.visits)) throw new Error('Tech tracking was updated. Reload the page.');
+    ttd.data=d;
+  }catch(e){ if(my!==ttd.req) return; ttd.error=fmIsOffline(e)? 'The timeline needs a connection.' : (e.message||'Couldn’t load this day'); }
+  ttd.loading=false; ttdPaint();
+}
+function ttdStep(n){ const i=ttd.days.indexOf(ttd.day)+n; if(i>=0&&i<ttd.days.length) ttLoadDay(ttd.days[i]); }
+function ttdPaint(focusKey){
+  const box=document.getElementById('tt-modal'); if(!box||!ttd.open) return;
+  const fa=document.activeElement, fk=focusKey||((fa&&box.contains(fa)&&fa.getAttribute)? fa.getAttribute('data-f') : null);
+  const i=ttd.days.indexOf(ttd.day), d=ttd.data;
+  const head=new Date(ttd.day+'T00:00:00Z').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'UTC'});
+  let h='<div class="js-modal-head"><div><div class="js-modal-title" id="ttd-title">'+jsEsc((d&&d.userName)||ttd.name)+'</div><div style="font-size:13px;color:var(--text3)">'+jsEsc(head)+'</div></div><button class="js-modal-close" data-f="close" onclick="ttCloseDay()" aria-label="Close">&times;</button></div><div class="js-modal-body">';
+  h+='<div style="display:flex;gap:8px"><button class="btn btn-sm" data-f="prev" onclick="ttdStep(-1)"'+(i>0&&!ttd.loading?'':' disabled')+'>‹ Earlier day</button><button class="btn btn-sm" data-f="next" onclick="ttdStep(1)"'+(i>=0&&i<ttd.days.length-1&&!ttd.loading?'':' disabled')+'>Later day ›</button></div>';
+  if(ttd.loading) h+='<div class="tt-empty" role="status">Loading…</div>';
+  else if(ttd.error) h+='<div class="tt-empty">'+jsEsc(ttd.error)+' <button class="tt-link" data-f="retry" onclick="ttLoadDay(ttd.day)">Try again</button></div>';
+  else if(d){
+    const tot=d.totals||{};
+    if(d.truncated) h+='<div class="tt-warn">This day had more activity than could be loaded, so the earliest part may be missing.</div>';
+    if(!d.visits.length) h+='<div class="tt-empty">No logged work for this day.</div>';
+    else {
+      h+='<div style="font-size:13px;color:var(--text2)"><b>'+tot.items+'</b> item'+(tot.items===1?'':'s')+' · '+tot.photos+' photo'+(tot.photos===1?'':'s')+' · '+tot.edits+' edit'+(tot.edits===1?'':'s')+
+        (tot.laborSec? ' · '+jsEsc(fmFmtHM(tot.laborSec))+' logged' : '')+' · '+jsEsc(ttdT(tot.first))+' to '+jsEsc(ttdT(tot.last))+(tot.breaks? ' · '+tot.breaks+' break'+(tot.breaks===1?'':'s') : '')+'</div>';
+      h+='<div>'+d.visits.map(function(v,n){
+        const gap=(n>0&&v.gapSec!=null)? '<div class="ttd-gap'+(v.isBreak?' brk':'')+'">'+(v.isBreak? 'Break of '+jsEsc(jsFmtDuration(v.gapSec)) : (v.gapSec>=5? jsEsc(jsFmtDuration(v.gapSec))+' between items' : ''))+'</div>' : '';
+        return gap+'<div class="ttd-row"><div class="ttd-time">'+jsEsc(ttdT(v.start))+'<br>to '+jsEsc(ttdT(v.end))+'</div><div><div class="ttd-label">'+jsEsc(v.label||'Item')+'</div><div class="ttd-sheet">'+jsEsc(v.sheetName||'')+'</div>'+
+          (v.sec!=null? '<span class="ttd-pill">'+jsEsc(jsFmtDuration(v.sec))+' on item</span>' : '')+(v.photos? '<span class="ttd-pill">'+v.photos+' photo'+(v.photos===1?'':'s')+'</span>' : '')+(v.edits? '<span class="ttd-pill">'+v.edits+' edit'+(v.edits===1?'':'s')+'</span>' : '')+'</div></div>';
+      }).join('')+'</div>';
+      if(tt.source!=='all') h+='<div class="tt-note">This timeline shows all of this tech\'s work that day; it is not limited to the “'+jsEsc(ttSourceLabel())+'” filter, so its totals can be larger than the table row.</div>';
+      h+='<div class="tt-note">Only work saved through the app is shown. Time on item is how long the item was open before saving; a gap over 20 minutes is shown as a break.</div>';
+    }
+  }
+  h+='</div>'; box.innerHTML=h;
+  const el=fk&&box.querySelector('[data-f="'+fk+'"]'); if(el&&!el.disabled) el.focus({preventScroll:true});
+}
+
 function ttPaint(){
   const root=document.getElementById('tt-root'); if(!root||mgrMode!=='tech') return;
   const lbl=document.getElementById('mgr-sub-label'); if(lbl) lbl.textContent='Tech tracking · '+ttRangeLabel();
@@ -5968,7 +6108,8 @@ function ttPaint(){
   const scrolls=[...root.querySelectorAll(SCROLLERS)].map(w=>w.scrollLeft);
   const fa=document.activeElement, focusId=(fa&&fa!==document.body&&root.contains(fa))? fa.getAttribute('data-f') : null;
   let h='<div class="tt-controls">'+ttSegHtml(TT_RANGES,tt.range,'ttSetRange')+ttSegHtml(TT_SOURCES,tt.source,'ttSetSource');
-  h+='<div class="tt-updated">'+(tt.loading? 'Loading…' : (tt.loadedAt? 'Updated '+jsEsc(new Date(tt.loadedAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}))+' <button class="tt-link" data-f="refresh" onclick="ttLoad()">Refresh</button>' : ''))+'</div></div>';
+  h+='<div class="tt-updated">'+(tt.loading? 'Loading…' : (tt.loadedAt? 'Updated '+jsEsc(new Date(tt.loadedAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}))+' <button class="tt-link" data-f="refresh" onclick="ttLoad()">Refresh</button>' : ''))+
+    (ttCanExport()? ' <button class="tt-link" data-f="csv" onclick="ttDownloadCsv()">⬇ CSV</button> <button class="tt-link" data-f="print" onclick="ttPrint()">🖨 Print / PDF</button>' : '')+'</div></div>';
   // While a different range loads, the old range's numbers would sit under the new range's label: show nothing instead.
   const m=(tt.loading&&tt.loadingKey!==tt.loadedKey)? null : tt.model;
   if(tt.error&&!m) h+=`<div class="tt-empty">${jsEsc(tt.error)} <button class="tt-link" data-f="retry" onclick="ttLoad()">Try again</button></div>`;
@@ -5992,7 +6133,7 @@ function ttPaint(){
       const ch=ttChartHtml(m.byDay,tt.bounds);
       h+='<div class="tt-sec"><div class="js-act-sec-h">Items worked '+(ch.weekly? 'per week' : 'per day')+'</div>'+ch.html+'</div>';
       h+='<div class="tt-sec"><div class="js-act-sec-h">By job</div>'+ttJobTable(m)+'</div>';
-      h+='<div class="tt-note">Only work done through this app is counted — photos and edits made directly in Smartsheet aren\'t attributed to anyone. Time logged is how long a tech had an item open before saving; a gap over 20 minutes is treated as a break and left out. Between items is the time from one item to the next on the same job. Job types differ, so compare techs on the same jobs. The log doesn\'t record which tab a save came from, so "Floor Maps" means jobs that have a floor map.</div>';
+      h+='<div class="tt-note">Only work done through this app is counted — photos and edits made directly in Smartsheet aren\'t attributed to anyone. Time logged is how long a tech had an item open before saving; a gap over 20 minutes is treated as a break and left out. Between items is the time from one item to the next on the same job. “vs peers” compares a tech\'s average time per item with the other techs\' on the same jobs (it needs at least 3 timed items from the tech, and 3 from the other techs on each job used), so job type doesn\'t skew it. The log doesn\'t record which tab a save came from, so "Floor Maps" means jobs that have a floor map.</div>';
     }
   }
   root.innerHTML=h;

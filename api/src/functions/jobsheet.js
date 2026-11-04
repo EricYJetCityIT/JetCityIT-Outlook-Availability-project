@@ -2,7 +2,7 @@ const { app } = require('@azure/functions');
 const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
 const { logJobSheetActivity, listJobSheetActivity } = require('../lib/jobsheetActivity');
-const { readRange, isDay } = require('../lib/jobsheetRollup');
+const { readRange, isDay, readTechDay } = require('../lib/jobsheetRollup');
 
 // Auth failures (401/403/429) go through the shared handler; any other failure
 // (e.g. a Smartsheet API error) returns its real message here. This tab is
@@ -152,6 +152,28 @@ app.http('jobsheetTechTracking', {
       if (params.has('limit')) return { status: 400, jsonBody: { error: 'Tech tracking was updated. Reload the page.' } };
       const out = await readRange(from, to);
       return { jsonBody: out };
+    } catch (e) {
+      return jobsheetError(e, context);
+    }
+  },
+});
+
+// GET /api/jobsheet/techday?user=<sign-in name>&day=YYYY-MM-DD — one tech's day as a time-ordered
+// list of item visits across all their sheets (the Tech tracking "day timeline"). Pacific calendar
+// day, same visit / time-on-item rules as the rollups. Testers-only, like the rest.
+app.http('jobsheetTechDay', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'jobsheet/techday',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requireTester(user);
+      const params = new URL(request.url).searchParams;
+      const who = String(params.get('user') || '').trim(), day = params.get('day') || '';
+      if (!who || who.length > 200) return { status: 400, jsonBody: { error: 'Missing user' } };
+      if (!isDay(day)) return { status: 400, jsonBody: { error: 'day must be a YYYY-MM-DD day' } };
+      return { jsonBody: await readTechDay(day, who) };
     } catch (e) {
       return jobsheetError(e, context);
     }

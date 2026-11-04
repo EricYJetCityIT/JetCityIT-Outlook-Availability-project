@@ -82,6 +82,37 @@ function itemKey(it) {
   return n ? 'l:' + n : '';
 }
 
+// One raw log entry -> the shape the visit rules below work on.
+function toEntry(it, key, t) {
+  return {
+    key, t, at: it.capturedAt, photo: it.action === 'photo', dur: it.durationSec == null ? null : it.durationSec,
+    sid: it.sessionId || '', name: it.userName || it.user || 'Unknown', sheetName: it.sheetName || '', label: it.rowLabel || '',
+  };
+}
+// Consecutive saves on one item by one tech (already sorted by time) make one "visit"; it starts when the
+// tech opened the item (the first save minus its open->save time).
+function buildVisits(sorted) {
+  const visits = [];
+  sorted.forEach((e) => {
+    const open = e.t - (e.dur == null ? 0 : e.dur * 1000), last = visits[visits.length - 1];
+    if (last && last.key === e.key) { last.end = Math.max(last.end, e.t); last.start = Math.min(last.start, open); last.entries.push(e); }
+    else visits.push({ key: e.key, start: open, end: e.t, entries: [e] });
+  });
+  return visits;
+}
+// Time on a visit's item: the longest open->save per session, summed (several saves in one open all measure
+// "since open"); null when no save reported a duration.
+function visitStats(v) {
+  const sm = {};
+  let photos = 0, edits = 0;
+  v.entries.forEach((e) => {
+    if (e.sid && e.dur != null && (sm[e.sid] == null || e.dur > sm[e.sid])) sm[e.sid] = e.dur;
+    if (e.photo) photos++; else edits++;
+  });
+  const sids = Object.keys(sm);
+  return { sec: sids.length ? sids.reduce((n, k) => n + sm[k], 0) : null, photos, edits };
+}
+
 // Raw log entries -> one record per (sheet, tech) for ONE day's entries.
 //   items   distinct item keys worked        timed   { itemKey: seconds on it }
 //   photos / edits  save counts              gapSum / gapN  item-to-item gaps
@@ -95,32 +126,19 @@ function buildRecords(entries, day) {
     const gk = String(it.sheetId || '') + '\u0001' + user;
     let g = groups.get(gk);
     if (!g) { g = { sheetId: String(it.sheetId || ''), user, list: [] }; groups.set(gk, g); }
-    g.list.push({
-      key, t, at: it.capturedAt, photo: it.action === 'photo', dur: it.durationSec == null ? null : it.durationSec,
-      sid: it.sessionId || '', name: it.userName || it.user || 'Unknown', sheetName: it.sheetName || '',
-    });
+    g.list.push(toEntry(it, key, t));
   }
   const out = [];
   groups.forEach((g) => {
     const arr = g.list.sort((a, b) => a.t - b.t);
-    const visits = [];
-    arr.forEach((e) => {
-      const open = e.t - (e.dur == null ? 0 : e.dur * 1000), last = visits[visits.length - 1];
-      if (last && last.key === e.key) { last.end = Math.max(last.end, e.t); last.start = Math.min(last.start, open); last.entries.push(e); }
-      else visits.push({ key: e.key, start: open, end: e.t, entries: [e] });
-    });
+    const visits = buildVisits(arr);
     const items = new Set(), timed = {};
     let gapSum = 0, gapN = 0, photos = 0, edits = 0;
     visits.forEach((v, i) => {
       items.add(v.key);
-      // Time on an item: the longest open->save per session (several saves in one open all measure "since open").
-      const sm = {};
-      v.entries.forEach((e) => {
-        if (e.sid && e.dur != null && (sm[e.sid] == null || e.dur > sm[e.sid])) sm[e.sid] = e.dur;
-        if (e.photo) photos++; else edits++;
-      });
-      const sids = Object.keys(sm);
-      if (sids.length) timed[v.key] = (timed[v.key] || 0) + sids.reduce((s, k) => s + sm[k], 0);
+      const st = visitStats(v);
+      photos += st.photos; edits += st.edits;
+      if (st.sec != null) timed[v.key] = (timed[v.key] || 0) + st.sec;
       if (i > 0) {
         const gap = Math.max(0, Math.round((v.start - visits[i - 1].end) / 1000));
         if (gap <= GAP_CAP_SEC) { gapSum += gap; gapN++; }
@@ -134,6 +152,53 @@ function buildRecords(entries, day) {
     });
   });
   return out;
+}
+
+// ONE tech's day as a time-ordered list of item visits (across all their sheets), for the Tech tracking
+// "day timeline". Same visit and time-on-item rules as buildRecords. `gapSec` is the time since the previous
+// visit ended; a gap over GAP_CAP_SEC is a break (left out of the pace figures, but shown here).
+function buildDayTimeline(entries, user) {
+  const want = String(user || '').toLowerCase();
+  const bySheet = new Map();
+  let userName = '';
+  for (const it of entries || []) {
+    const key = itemKey(it), t = Date.parse(it.capturedAt);
+    if (!key || Number.isNaN(t)) continue;
+    if (String(it.user || it.userName || 'unknown').toLowerCase() !== want) continue;
+    const sid = String(it.sheetId || '');
+    let g = bySheet.get(sid);
+    if (!g) { g = []; bySheet.set(sid, g); }
+    g.push(toEntry(it, key, t));
+  }
+  const raw = [];
+  bySheet.forEach((list, sid) => {
+    list.sort((a, b) => a.t - b.t);
+    buildVisits(list).forEach((v) => {
+      const st = visitStats(v);
+      let sheetName = '', label = '', name = '';
+      v.entries.forEach((e) => { if (e.sheetName) sheetName = e.sheetName; if (e.label) label = e.label; if (e.name) name = e.name; });
+      raw.push({ sheetId: sid, sheetName, itemKey: v.key, label, start: v.start, end: v.end, sec: st.sec, photos: st.photos, edits: st.edits, name });
+    });
+  });
+  raw.sort((a, b) => a.start - b.start || a.end - b.end);
+  const items = new Set();
+  const tot = { photos: 0, edits: 0, laborSec: 0, breaks: 0 };
+  // Visits on different sheets can overlap (a visit starts when the item was opened, which may be well before the
+  // tech's other saves), so a gap is measured from the latest end seen so far, not just the previous visit's.
+  let maxEnd = null;
+  const visits = raw.map((v, i) => {
+    const gapSec = i > 0 ? Math.max(0, Math.round((v.start - maxEnd) / 1000)) : null;
+    maxEnd = maxEnd == null ? v.end : Math.max(maxEnd, v.end);
+    const isBreak = gapSec != null && gapSec > GAP_CAP_SEC;
+    items.add(v.sheetId + '|' + v.itemKey);
+    tot.photos += v.photos; tot.edits += v.edits; tot.laborSec += v.sec || 0; if (isBreak) tot.breaks++;
+    if (v.name) userName = v.name;
+    return { sheetId: v.sheetId, sheetName: v.sheetName, label: v.label, start: new Date(v.start).toISOString(), end: new Date(v.end).toISOString(), sec: v.sec, photos: v.photos, edits: v.edits, gapSec, isBreak };
+  });
+  return {
+    userName, visits,
+    totals: { items: items.size, photos: tot.photos, edits: tot.edits, laborSec: tot.laborSec, breaks: tot.breaks, first: visits.length ? visits[0].start : null, last: visits.length ? visits[visits.length - 1].end : null },
+  };
 }
 
 function rollId(rec) {
@@ -341,6 +406,14 @@ async function readRange(fromDay, toDay) {
 // re-roll yesterday and the day before (catches late-synced saves), then backfill any older day
 // that has no marker, newest first, until the time budget runs out (a later night continues).
 // Returns day counts only; the caller logs the failure details server-side.
+// One tech's day from the raw log (never cached or saved: a manager opens a handful of these by hand).
+// `truncated` means the day had more entries than we read (the oldest were left out).
+async function readTechDay(day, user) {
+  const container = getContainer(CONTAINER_ID);
+  const { entries, cut } = await entriesForDay(container, day, MAX_RAW);
+  return { day, user: String(user || '').toLowerCase(), ...buildDayTimeline(entries, user), truncated: cut };
+}
+
 async function runNightlyRollup(opts) {
   const started = Date.now();
   const budgetMs = (opts && opts.budgetMs) || 25000;
@@ -378,4 +451,4 @@ async function runNightlyRollup(opts) {
   return { today, rolled: rolledList.length, days: rolledList, pending, failed };
 }
 
-module.exports = { ptDay, isDay, addDays, dayRange, ptMidnight, buildRecords, readRange, rollupDay, invalidateRollupDay, runNightlyRollup, itemKey, MAX_RANGE_DAYS };
+module.exports = { ptDay, isDay, addDays, dayRange, ptMidnight, buildRecords, buildDayTimeline, readTechDay, readRange, rollupDay, invalidateRollupDay, runNightlyRollup, itemKey, MAX_RANGE_DAYS };
