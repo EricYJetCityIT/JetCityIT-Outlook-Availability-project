@@ -820,6 +820,14 @@ body.is-tester #tab-floormap{display:inline-block}
 .pp-sec-h{font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px}
 .pp-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
 .pp-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+/* T-Mobile view inside Project Planning: move-sheet picker + report downloads */
+.tm-pick{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.tm-pick select{min-width:240px;max-width:100%;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+.tm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:14px}
+.tm-stat{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.tm-stat b{display:block;font-size:22px;color:var(--text)}
+.tm-stat span{font-size:12.5px;color:var(--text3)}
+.tm-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .pp-box-h{font-size:12px;color:var(--text3);margin-bottom:6px}
 .pp-contact{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--text)}
 .pp-scope{font-size:13.5px;color:var(--text2);line-height:1.6;white-space:pre-wrap}
@@ -957,6 +965,7 @@ body.is-tester #tab-floormap{display:inline-block}
 .dp-tech-btn.dp-on{background:#E6F1FB;border-color:#185FA5;color:#185FA5}
 </style>
 <script src="/vendor/msal-browser-2.38.3.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script src="/tmobile-report.js"></script>
 <script>
 if('serviceWorker' in navigator){
   window.addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(e=>console.error('SW registration failed:',e))});
@@ -7891,8 +7900,18 @@ async function ppFetch(path,opts){
 
 function ppWire(){ var root=ppEl(); if(!root||root._wired) return; root._wired=1; root.addEventListener('click',ppOnClick); }
 
+// Project Planning has two views: the plans list and T-Mobile move reports.
+var ppView='plans';
+function ppNavHtml(){
+  return '<div class="js-mode-toggle">'+[['plans','📋 Plans'],['tmobile','📱 T-Mobile']].map(function(v){
+    return '<button class="js-mode-btn'+(ppView===v[0]?' active':'')+'" onclick="ppSetView(\''+v[0]+'\')">'+v[1]+'</button>';
+  }).join('')+'</div>';
+}
+function ppSetView(v){ ppView=v; renderPlanning(); }
+
 async function renderPlanning(){
   ppWire(); var root=ppEl(); if(!root) return;
+  if(ppView==='tmobile'){ renderTMobile(); return; }
   root.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>Loading…</p></div>';
   try{ var data=await ppFetch(''); ppRenderList(data); }
   catch(e){ console.error('plans load failed',e); root.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t load project plans. Please try again.</p></div>'; }
@@ -7912,7 +7931,79 @@ function ppRenderList(data){
     if(p.updatedAt) meta.push('<span>Updated '+ppWhen(p.updatedAt)+'</span>');
     return '<button class="pp-card" onclick="openPlan(\''+esc(p.id)+'\')"><div class="pp-card-top"><span class="pp-card-title">'+(esc(p.project)||'Untitled plan')+'</span>'+(p.bisDate?'<span class="pp-card-sub">BIS '+esc(p.bisDate)+'</span>':'')+'</div>'+(p.projectId?'<div class="pp-card-sub">'+esc(p.projectId)+'</div>':'')+(meta.length?'<div class="pp-card-meta">'+meta.join('')+'</div>':'')+'</button>';
   }).join('')+'</div>';
-  root.innerHTML=head+body;
+  root.innerHTML=head+ppNavHtml()+body;
+}
+
+// ── T-Mobile view (Project Planning) ──────────────────────────────────────────
+// Picks a move sheet from the T-mobile Smartsheet workspace (/api/tmobile only
+// serves that workspace) and downloads the two PDF reports built in the
+// browser by /tmobile-report.js. Project Planners only, re-checked server-side.
+var tm={sheets:null,sheetId:'',data:null,loading:false,error:''};
+
+async function tmFetch(path){
+  var token=await getApiToken();
+  var res=await fetch('/api/tmobile'+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){ } throw new Error(m); }
+  return res.json();
+}
+
+async function renderTMobile(){
+  if(!tm.sheets&&!tm.loading){
+    tm.loading=true; tm.error=''; tmPaint();
+    try{ tm.sheets=(await tmFetch('/sheets')).sheets||[]; }
+    catch(e){ console.error('tmobile sheets failed',e); tm.error='Couldn’t load the T-Mobile sheets: '+e.message; }
+    tm.loading=false;
+    if(tm.sheets&&tm.sheets.length&&!tm.sheetId){ tm.sheetId=tm.sheets[0].id; tmLoadSheet(); return; }
+  }
+  tmPaint();
+}
+
+async function tmLoadSheet(){
+  if(!tm.sheetId) return;
+  tm.loading=true; tm.error=''; tm.data=null; tmPaint();
+  try{ tm.data=await tmFetch('/sheet?id='+encodeURIComponent(tm.sheetId)); }
+  catch(e){ console.error('tmobile sheet failed',e); tm.error='Couldn’t load that sheet: '+e.message; }
+  tm.loading=false; tmPaint();
+}
+function tmPick(id){ tm.sheetId=id; tmLoadSheet(); }
+function tmRefresh(){ tm.sheets=null; tm.data=null; renderTMobile(); }
+
+function tmPaint(){
+  if(ppView!=='tmobile') return;
+  var root=ppEl(); if(!root) return;
+  var head='<div class="section-head"><div><h1>Project Planning</h1><p>T-Mobile move reports from the T-mobile Smartsheet workspace.</p></div></div>';
+  var body='';
+  if(tm.sheets){
+    body+='<div class="tm-pick"><select onchange="tmPick(this.value)" aria-label="Move sheet">'+
+      (tm.sheets.length? tm.sheets.map(function(s){ return '<option value="'+esc(s.id)+'"'+(s.id===tm.sheetId?' selected':'')+'>'+esc(s.name)+'</option>'; }).join('') : '<option value="">No move sheets yet</option>')+
+      '</select><button class="btn btn-ghost btn-sm" onclick="tmRefresh()">↻ Refresh</button></div>';
+  }
+  if(tm.error) body+='<div class="empty"><p style="color:var(--red)">'+esc(tm.error)+'</p></div>';
+  else if(tm.loading) body+='<div class="empty"><div class="empty-icon">📱</div><p>Loading…</p></div>';
+  else if(tm.data){
+    var d=tm.data, s=window.TMReport.summarize(d);
+    var stat=function(n,label){ return '<div class="tm-stat"><b>'+n+'</b><span>'+label+'</span></div>'; };
+    body+='<div class="tm-stats">'+stat(s.rows.length,'People')+stat(s.good.length,'Good to go')+stat(s.done.length,'Completed')+stat(s.open.length,'Still open')+stat(s.needRows.length,'Desks needing equipment')+'</div>';
+    body+='<div class="tm-actions"><button class="btn btn-primary btn-sm" onclick="tmDownload(\'walk\')">⬇ Walk summary (PDF)</button>'+
+      '<button class="btn btn-primary btn-sm" onclick="tmDownload(\'completion\')">⬇ Completion report (PDF)</button>'+
+      (d.permalink?'<a class="btn btn-ghost btn-sm" href="'+esc(d.permalink)+'" target="_blank" rel="noopener">Open in Smartsheet ↗</a>':'')+'</div>';
+    if(d.missingColumns&&d.missingColumns.length) body+='<div class="fm-muted" style="color:var(--red)">This sheet is missing some walk columns ('+esc(d.missingColumns.join(', '))+'), so the reports may be incomplete. Start new jobs from “TEMPLATE - T-Mobile Move”.</div>';
+    body+='<div class="fm-muted">Good to go = pre-move photo. Completed = post-move photo and/or JetCity Fix checked. Reports use the sheet as it is right now.</div>';
+  }
+  else if(tm.sheets&&!tm.sheets.length) body+='<div class="empty"><div class="empty-icon">📱</div><p>No move sheets in the T-mobile workspace yet. Copy “TEMPLATE - T-Mobile Move” to start one.</p></div>';
+  root.innerHTML=head+ppNavHtml()+body;
+}
+
+function tmDownload(kind){
+  if(!tm.data||!window.TMReport) return;
+  var now=new Date();
+  var bytes=kind==='walk'? window.TMReport.walkSummary(tm.data,now) : window.TMReport.completionReport(tm.data,now);
+  var stamp=(now.getMonth()+1)+'-'+now.getDate()+'-'+now.getFullYear();
+  var name=window.TMReport.jobTitle(tm.data)+' - '+(kind==='walk'?'Walk Summary':'Completion Report')+' '+stamp+'.pdf';
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+  a.download=name.replace(/[\\/:*?"<>|]+/g,'-'); document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
 }
 
 async function openPlan(id){
