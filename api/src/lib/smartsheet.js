@@ -1157,6 +1157,7 @@ module.exports = {
   fetchAllWorkspaces,
   searchSheets,
   fetchWorkspaceSheets,
+  fetchGenericSheet,
   fetchJobSheetView,
   updateJobSheetCell,
   recordCompletedBy,
