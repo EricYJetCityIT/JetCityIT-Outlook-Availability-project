@@ -828,6 +828,19 @@ body.is-tester #tab-floormap{display:inline-block}
 .tm-stat b{display:block;font-size:22px;color:var(--text)}
 .tm-stat span{font-size:12.5px;color:var(--text3)}
 .tm-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+button.tm-stat{text-align:left;cursor:pointer;font-family:inherit}
+button.tm-stat:hover{border-color:var(--green)}
+button.tm-stat.active{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.tm-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0 8px}
+.tm-tools input{flex:1 1 220px;max-width:320px;padding:7px 10px;border:1px solid var(--border2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+.tm-table-wrap{overflow:auto;max-height:65vh;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.tm-table{border-collapse:collapse;width:100%;font-size:12.5px;color:var(--text)}
+.tm-table th{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--border2);text-align:left;padding:7px 8px;font-weight:600;color:var(--text2);white-space:nowrap;z-index:1}
+.tm-table td{border-bottom:1px solid var(--border);padding:6px 8px;vertical-align:top}
+.tm-table td.tm-c{text-align:center;color:var(--green);font-weight:700}
+.tm-table td.tm-nw{white-space:nowrap}
+.tm-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tm-pill.good{background:#E3F4E8;color:#1B6B34}.tm-pill.done{background:#E6F1FB;color:#185FA5}.tm-pill.open{background:#FDF0DC;color:#9A5B00}.tm-pill.none{background:#EEE;color:#666}
 .pp-box-h{font-size:12px;color:var(--text3);margin-bottom:6px}
 .pp-contact{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--text)}
 .pp-scope{font-size:13.5px;color:var(--text2);line-height:1.6;white-space:pre-wrap}
@@ -7938,7 +7951,7 @@ function ppRenderList(data){
 // Picks a move sheet from the T-mobile Smartsheet workspace (/api/tmobile only
 // serves that workspace) and downloads the two PDF reports built in the
 // browser by /tmobile-report.js. Project Planners only, re-checked server-side.
-var tm={sheets:null,sheetId:'',data:null,loading:false,error:''};
+var tm={sheets:null,sheetId:'',data:null,loading:false,error:'',filter:'all',q:''};
 
 async function tmFetch(path){
   var token=await getApiToken();
@@ -7965,7 +7978,7 @@ async function tmLoadSheet(){
   catch(e){ console.error('tmobile sheet failed',e); tm.error='Couldn’t load that sheet: '+e.message; }
   tm.loading=false; tmPaint();
 }
-function tmPick(id){ tm.sheetId=id; tmLoadSheet(); }
+function tmPick(id){ tm.sheetId=id; tm.filter='all'; tm.q=''; tmLoadSheet(); }
 function tmRefresh(){ tm.sheets=null; tm.data=null; renderTMobile(); }
 
 function tmPaint(){
@@ -7982,16 +7995,43 @@ function tmPaint(){
   else if(tm.loading) body+='<div class="empty"><div class="empty-icon">📱</div><p>Loading…</p></div>';
   else if(tm.data){
     var d=tm.data, s=window.TMReport.summarize(d);
-    var stat=function(n,label){ return '<div class="tm-stat"><b>'+n+'</b><span>'+label+'</span></div>'; };
-    body+='<div class="tm-stats">'+stat(s.rows.length,'People')+stat(s.good.length,'Good to go')+stat(s.done.length,'Completed')+stat(s.open.length,'Still open')+stat(s.needRows.length,'Desks needing equipment')+'</div>';
+    // Each stat card is also a filter for the sheet preview below.
+    var stat=function(key,n,label){ return '<button class="tm-stat'+(tm.filter===key?' active':'')+'" onclick="tmSetFilter(\''+key+'\')" aria-pressed="'+(tm.filter===key)+'"><b>'+n+'</b><span>'+label+'</span></button>'; };
+    body+='<div class="tm-stats">'+stat('all',s.rows.length,'People')+stat('good',s.good.length,'Good to go')+stat('done',s.done.length,'Completed')+stat('open',s.open.length,'Still open')+stat('needs',s.needRows.length,'Desks needing equipment')+'</div>';
     body+='<div class="tm-actions"><button class="btn btn-primary btn-sm" onclick="tmDownload(\'walk\')">⬇ Walk summary (PDF)</button>'+
       '<button class="btn btn-primary btn-sm" onclick="tmDownload(\'completion\')">⬇ Completion report (PDF)</button>'+
       (d.permalink?'<a class="btn btn-ghost btn-sm" href="'+esc(d.permalink)+'" target="_blank" rel="noopener">Open in Smartsheet ↗</a>':'')+'</div>';
     if(d.missingColumns&&d.missingColumns.length) body+='<div class="fm-muted" style="color:var(--red)">This sheet is missing some walk columns ('+esc(d.missingColumns.join(', '))+'), so the reports may be incomplete. Start new jobs from “TEMPLATE - T-Mobile Move”.</div>';
     body+='<div class="fm-muted">Good to go = pre-move photo. Completed = post-move photo and/or JetCity Fix checked. Reports use the sheet as it is right now.</div>';
+    body+='<div class="tm-tools"><input type="search" placeholder="Search name, desk or note…" aria-label="Search the sheet" value="'+esc(tm.q)+'" oninput="tmSearch(this.value)"><span class="fm-muted" id="tm-count"></span></div>'+
+      '<div class="tm-table-wrap"><table class="tm-table"><thead><tr><th>Name</th><th>Status</th><th>Bldg</th><th>Floor</th><th>Desk</th><th>Pre pic</th><th>Needs</th><th>JCIT notes</th><th>Fix</th><th>Post pic</th><th>Current desk</th></tr></thead><tbody id="tm-tbody"></tbody></table></div>';
   }
   else if(tm.sheets&&!tm.sheets.length) body+='<div class="empty"><div class="empty-icon">📱</div><p>No move sheets in the T-mobile workspace yet. Copy “TEMPLATE - T-Mobile Move” to start one.</p></div>';
   root.innerHTML=head+ppNavHtml()+body;
+  if(tm.data) tmPaintRows();
+}
+
+// Sheet preview: only the rows are repainted while typing, so the search box keeps focus.
+var TM_STATUS={good:['good','Good to go'],done:['done','Completed'],open:['open','Still open'],none:['none','Nothing recorded']};
+function tmSetFilter(f){ tm.filter=(tm.filter===f&&f!=='all')?'all':f; tmPaint(); }
+function tmSearch(v){ tm.q=v; tmPaintRows(); }
+function tmPaintRows(){
+  var tb=document.getElementById('tm-tbody'); if(!tb||!tm.data) return;
+  var s=window.TMReport.summarize(tm.data), q=tm.q.trim().toLowerCase();
+  var rows=s.rows.filter(function(r){
+    if(tm.filter==='needs'){ if(!r.needs.length) return false; }
+    else if(tm.filter!=='all'&&r._status!==tm.filter) return false;
+    return !q||[r.name,r.bldg,r.floor,r.desk,r.note,r.needs.join(' '),r.curDesk].join(' ').toLowerCase().indexOf(q)>=0;
+  });
+  var tick=function(on){ return '<td class="tm-c">'+(on?'✓':'')+'</td>'; };
+  var t=function(v){ return esc(String(v==null?'':v)); };
+  tb.innerHTML=rows.length? rows.map(function(r){
+    var st=TM_STATUS[r._status]||TM_STATUS.none;
+    var bldg=(/building\s*(\w+)/i.exec(r.bldg||'')||[])[1];
+    return '<tr><td class="tm-nw">'+t(r.name)+'</td><td><span class="tm-pill '+st[0]+'">'+st[1]+'</span></td><td class="tm-nw">'+t(bldg?'Bldg '+bldg:r.bldg)+'</td><td>'+t(r.floor)+'</td><td class="tm-nw">'+t(r.desk)+'</td>'+
+      tick(r.pre)+'<td>'+t(r.needs.join(', '))+'</td><td>'+t(r.note)+'</td>'+tick(r.fix)+tick(r.post)+'<td class="tm-nw">'+t(r.curDesk)+'</td></tr>';
+  }).join('') : '<tr><td colspan="11" class="fm-muted" style="padding:14px">No rows match.</td></tr>';
+  var c=document.getElementById('tm-count'); if(c) c.textContent='Showing '+rows.length+' of '+s.rows.length;
 }
 
 function tmDownload(kind){

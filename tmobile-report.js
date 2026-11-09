@@ -72,8 +72,10 @@
     var m = /building\s*(\w+)/i.exec(b || '');
     return m ? 'Bldg ' + m[1] : (b || '');
   }
+  // Destination order; people with no destination building go last.
   function byDesk(a, b) {
-    return (a.bldg + '|' + a.desk + '|' + a.name).localeCompare(b.bldg + '|' + b.desk + '|' + b.name, undefined, { numeric: true });
+    var k = function (r) { return (r.bldg ? '0' : '1') + r.bldg + '|' + r.desk + '|' + r.name; };
+    return k(a).localeCompare(k(b), undefined, { numeric: true });
   }
   // Name parts typed in ALL CAPS ("JANE Doe") read better in title case.
   function tidyName(n) {
