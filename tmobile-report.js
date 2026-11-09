@@ -148,7 +148,13 @@
     return lines;
   }
 
-  function Doc() { this.pages = []; this.newPage(); }
+  function Doc() { this.pages = []; this.images = []; this.newPage(); }
+  // JPEG photos are embedded as-is (DCTDecode); the browser re-encodes every
+  // photo to JPEG before it gets here (see tmPreparePhotos in index.html).
+  Doc.prototype.addImage = function (img) { this.images.push(img); return 'Im' + this.images.length; };
+  Doc.prototype.drawImage = function (name, x, y, w, h) {
+    this.ops.push('q ' + w.toFixed(2) + ' 0 0 ' + h.toFixed(2) + ' ' + x.toFixed(2) + ' ' + y.toFixed(2) + ' cm /' + name + ' Do Q');
+  };
   Doc.prototype.newPage = function () { this.ops = []; this.pages.push(this.ops); this.y = PAGE_H - MARGIN_TOP; };
   Doc.prototype.room = function (h) { if (this.y - h < MARGIN_BOTTOM) this.newPage(); };
   Doc.prototype.textAt = function (x, y, s, size, bold, color) {
@@ -220,16 +226,25 @@
       var t = pdfText(footer) + '   |   Page ' + (i + 1) + ' of ' + n;
       ops.push('BT ' + GREY + ' rg /F1 8 Tf 1 0 0 1 ' + MARGIN_X + ' 32 Tm (' + esc(t) + ') Tj ET');
     });
-    // Objects: 1 catalog, 2 page tree, 3/4 fonts, then a page + content pair per page.
-    var objs = [];
+    // Objects: 1 catalog, 2 page tree, 3/4 fonts, a page + content pair per
+    // page, then one object per embedded photo.
+    var objs = [], imgBase = 5 + 2 * n;
+    var xobjects = this.images.length ? ' /XObject << ' + this.images.map(function (_, i) { return '/Im' + (i + 1) + ' ' + (imgBase + i) + ' 0 R'; }).join(' ') + ' >>' : '';
     objs[1] = '<< /Type /Catalog /Pages 2 0 R >>';
     objs[2] = '<< /Type /Pages /Kids [' + this.pages.map(function (_, i) { return (5 + 2 * i) + ' 0 R'; }).join(' ') + '] /Count ' + n + ' >>';
     objs[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
     objs[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
     this.pages.forEach(function (ops, i) {
       var content = ops.join('\n');
-      objs[5 + 2 * i] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PAGE_W + ' ' + PAGE_H + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' + (6 + 2 * i) + ' 0 R >>';
+      objs[5 + 2 * i] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PAGE_W + ' ' + PAGE_H + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>' + xobjects + ' >> /Contents ' + (6 + 2 * i) + ' 0 R >>';
       objs[6 + 2 * i] = '<< /Length ' + content.length + ' >>\nstream\n' + content + '\nendstream';
+    });
+    this.images.forEach(function (img, i) {
+      // Each byte of the JPEG becomes one char, so lengths and offsets stay byte-exact.
+      var s = '';
+      for (var p = 0; p < img.bytes.length; p += 8192) s += String.fromCharCode.apply(null, img.bytes.subarray(p, p + 8192));
+      objs[imgBase + i] = '<< /Type /XObject /Subtype /Image /Width ' + img.w + ' /Height ' + img.h +
+        ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + img.bytes.length + ' >>\nstream\n' + s + '\nendstream';
     });
     // Every character is a single Latin-1 byte, so string length == byte offset.
     var out = '%PDF-1.4\n%âãÏÓ\n', offsets = [];
@@ -317,9 +332,47 @@
     return d.toBytes(jobTitle(sheet) + ' - destination walk results - Jet City IT');
   }
 
+  // Desks whose photos go in the completion report's photo section: everything
+  // Jet City IT completed plus good-to-go desks that were re-checked after the
+  // move. The page uses this list to know which photos to download.
+  function photoDesks(sheet) {
+    var s = summarize(sheet);
+    return s.done.concat(s.good.filter(function (r) { return r.post || r.fix; }))
+      .filter(function (r) { return r.preUrl || r.postUrl; });
+  }
+
+  // Pre/post photos side by side, a few desks per page. photos maps
+  // "<row>:pre" / "<row>:post" to { bytes, w, h } (JPEG).
+  function photoSection(d, desks, photos) {
+    var gap = 14, boxW = (CONTENT_W - gap) / 2, boxH = 165; // three desks per page
+    d.h1('Photos (' + plural(desks.length, 'desk', 'desks') + ')');
+    d.para('Pre-move and post-move destination photos for the completed and re-checked desks.');
+    desks.forEach(function (r) {
+      d.room(boxH + 36);
+      var need = r.needs.length ? ' - ' + r.needs.map(needLabel).join(' + ') : '';
+      d.rich([{ text: r.name, bold: true }, { text: '  ' + shortBldg(r.bldg) + ', ' + (r.desk || 'no desk') + need }], { size: 10, after: 2 });
+      var top = d.y;
+      ['pre', 'post'].forEach(function (which, i) {
+        var x = MARGIN_X + i * (boxW + gap);
+        d.textAt(x, top - 10, which === 'pre' ? 'Pre-move' : 'Post-move', 8.5, true, GREY);
+        d.ops.push('0.8 0.8 0.8 RG 0.5 w ' + x.toFixed(2) + ' ' + (top - 16 - boxH).toFixed(2) + ' ' + boxW.toFixed(2) + ' ' + boxH.toFixed(2) + ' re S');
+        var img = photos[r.row + ':' + which];
+        if (img) {
+          var sc = Math.min((boxW - 8) / img.w, (boxH - 8) / img.h), w = img.w * sc, h = img.h * sc;
+          d.drawImage(d.addImage(img), x + (boxW - w) / 2, top - 16 - boxH + (boxH - h) / 2, w, h);
+        } else {
+          d.textAt(x + boxW / 2 - 22, top - 16 - boxH / 2, 'No photo', 9, false, GREY);
+        }
+      });
+      d.y = top - 16 - boxH - 14;
+    });
+  }
+
   // ── Completion report ──────────────────────────────────────────────────────
-  function completionReport(sheet, date) {
+  // opts.photos (optional) adds the photo section; see photoSection.
+  function completionReport(sheet, date, opts) {
     date = date || new Date();
+    opts = opts || {};
     var s = summarize(sheet), d = new Doc();
     var fixed = s.done.filter(function (r) { return r.needs.length; });
     var checked = s.done.filter(function (r) { return !r.needs.length; });
@@ -383,6 +436,11 @@
       }), [40, 22, 14, 24]);
     }
 
+    if (opts.photos) {
+      var desks = photoDesks(sheet);
+      if (desks.length) { d.pageBreak(); photoSection(d, desks, opts.photos); }
+    }
+
     if (s.good.length) {
       d.pageBreak();
       d.h1('Appendix: good-to-go desks (' + s.good.length + ')');
@@ -391,5 +449,5 @@
     return d.toBytes(jobTitle(sheet) + ' - completion report - Jet City IT');
   }
 
-  window.TMReport = { summarize: summarize, walkSummary: walkSummary, completionReport: completionReport, jobTitle: jobTitle };
+  window.TMReport = { summarize: summarize, walkSummary: walkSummary, completionReport: completionReport, photoDesks: photoDesks, jobTitle: jobTitle };
 })();

@@ -72,11 +72,21 @@ function multi(cell) {
   return text(cell).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-function normalize(sheet) {
+// Photo cells hold a Smartsheet cell image; collect them so their short-lived
+// signed URLs can be resolved in two batches (thumbnail + full size).
+const THUMB_PX = 240;
+const FULL_PX = 1000;
+
+async function normalize(sheet) {
   const ids = mapColumns(sheet.columns);
+  const images = []; // { row, which, imageId }
   const rows = (sheet.rows || []).map((r) => {
     const cells = new Map((r.cells || []).map((c) => [c.columnId, c]));
     const get = (f) => (ids[f] != null ? cells.get(ids[f]) : null);
+    for (const which of ['pre', 'post']) {
+      const c = get(which);
+      if (c && c.image && c.image.id) images.push({ row: r.rowNumber, which, imageId: c.image.id });
+    }
     return {
       row: r.rowNumber,
       name: text(get('name')),
@@ -93,9 +103,26 @@ function normalize(sheet) {
       curDesk: text(get('curDesk')),
       source: text(get('source')),
     };
-  }).filter((r) => r.name);
+  });
+  // Smartsheet scales the image when width is given; the URLs expire (~30 min),
+  // so the browser re-fetches the sheet for fresh ones when they go stale.
+  const [thumbs, fulls] = await Promise.all([
+    ss.fetchImageUrls(images.map((x) => ({ imageId: x.imageId, width: THUMB_PX }))),
+    ss.fetchImageUrls(images.map((x) => ({ imageId: x.imageId, width: FULL_PX }))),
+  ]);
+  const byRow = new Map(rows.map((r) => [r.row, r]));
+  for (const x of images) {
+    const r = byRow.get(x.row);
+    if (!r) continue;
+    r[x.which + 'Thumb'] = thumbs.get(x.imageId) || '';
+    r[x.which + 'Url'] = fulls.get(x.imageId) || '';
+  }
   const missing = ['name', 'bldg', 'desk', 'pre', 'needs', 'note', 'fix', 'post'].filter((f) => ids[f] == null);
-  return { id: String(sheet.id), name: sheet.name, permalink: sheet.permalink || '', rows, missingColumns: missing };
+  return {
+    id: String(sheet.id), name: sheet.name, permalink: sheet.permalink || '',
+    fetchedAt: new Date().toISOString(),
+    rows: rows.filter((r) => r.name), missingColumns: missing,
+  };
 }
 
 // GET /api/tmobile/sheets — the job sheets in the T-mobile workspace.
@@ -131,7 +158,37 @@ app.http('tmobileSheet', {
         return { status: 404, jsonBody: { error: 'That sheet is not in the T-Mobile workspace.' } };
       }
       const sheet = await ss.fetchGenericSheet(id);
-      return { jsonBody: normalize(sheet) };
+      return { jsonBody: await normalize(sheet) };
+    } catch (e) {
+      return tmobileError(e, context);
+    }
+  },
+});
+
+// GET /api/tmobile/photo?u=<signed Smartsheet image url> — streams one photo
+// to the browser (the page's CSP only allows same-origin images). Only
+// Smartsheet's signed storage URLs are accepted, and only for Project Planners;
+// the response is never cached by the service worker (it skips /api/*).
+app.http('tmobilePhoto', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'tmobile/photo',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requirePlanner(user);
+      const u = new URL(request.url).searchParams.get('u');
+      if (!u) return { status: 400, jsonBody: { error: 'Missing image url' } };
+      let target;
+      try { target = new URL(u); } catch (_) { return { status: 400, jsonBody: { error: 'Bad image url' } }; }
+      if (target.protocol !== 'https:' || target.hostname !== 'aws.smartsheet.com' || !target.pathname.startsWith('/storageProxy/')) {
+        return { status: 403, jsonBody: { error: 'Image host not permitted' } };
+      }
+      if (!target.searchParams.get('hmac')) return { status: 403, jsonBody: { error: 'Unsigned image url' } };
+      const exp = target.searchParams.get('expirationDate');
+      if (exp && new Date(exp).getTime() < Date.now()) return { status: 410, jsonBody: { error: 'Image link expired' } };
+      const { contentType, bytes } = await ss.fetchImageBytes(u);
+      return { status: 200, headers: { 'Content-Type': contentType, 'Cache-Control': 'private, no-store' }, body: bytes };
     } catch (e) {
       return tmobileError(e, context);
     }

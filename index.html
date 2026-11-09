@@ -840,6 +840,10 @@ button.tm-stat.active{border-color:var(--green);box-shadow:inset 0 0 0 1px var(-
 .tm-table td.tm-c{text-align:center;color:var(--green);font-weight:700}
 .tm-table td.tm-nw{white-space:nowrap}
 .tm-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tm-thumb{width:44px;height:33px;object-fit:cover;border-radius:4px;border:1px solid var(--border);background:var(--border);cursor:zoom-in;display:block;margin:0 auto}
+.tm-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:9999;padding:16px;cursor:zoom-out}
+.tm-lightbox img{max-width:100%;max-height:82vh;border-radius:6px;background:#222}
+.tm-lightbox div{color:#fff;font-size:14px;text-align:center}
 .tm-pill.good{background:#E3F4E8;color:#1B6B34}.tm-pill.done{background:#E6F1FB;color:#185FA5}.tm-pill.open{background:#FDF0DC;color:#9A5B00}.tm-pill.none{background:#EEE;color:#666}
 .pp-box-h{font-size:12px;color:var(--text3);margin-bottom:6px}
 .pp-contact{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--text)}
@@ -7978,7 +7982,7 @@ async function tmLoadSheet(){
   catch(e){ console.error('tmobile sheet failed',e); tm.error='Couldn’t load that sheet: '+e.message; }
   tm.loading=false; tmPaint();
 }
-function tmPick(id){ tm.sheetId=id; tm.filter='all'; tm.q=''; tmLoadSheet(); }
+function tmPick(id){ tm.sheetId=id; tm.filter='all'; tm.q=''; tmClearPhotos(); tmLoadSheet(); }
 function tmRefresh(){ tm.sheets=null; tm.data=null; renderTMobile(); }
 
 function tmPaint(){
@@ -8000,6 +8004,7 @@ function tmPaint(){
     body+='<div class="tm-stats">'+stat('all',s.rows.length,'People')+stat('good',s.good.length,'Good to go')+stat('done',s.done.length,'Completed')+stat('open',s.open.length,'Still open')+stat('needs',s.needRows.length,'Desks needing equipment')+'</div>';
     body+='<div class="tm-actions"><button class="btn btn-primary btn-sm" onclick="tmDownload(\'walk\')">⬇ Walk summary (PDF)</button>'+
       '<button class="btn btn-primary btn-sm" onclick="tmDownload(\'completion\')">⬇ Completion report (PDF)</button>'+
+      (window.TMReport.photoDesks(d).length?'<button class="btn btn-primary btn-sm" id="tm-photo-btn" onclick="tmDownloadWithPhotos(this)">⬇ Completion report + photos (PDF)</button>':'')+
       (d.permalink?'<a class="btn btn-ghost btn-sm" href="'+esc(d.permalink)+'" target="_blank" rel="noopener">Open in Smartsheet ↗</a>':'')+'</div>';
     if(d.missingColumns&&d.missingColumns.length) body+='<div class="fm-muted" style="color:var(--red)">This sheet is missing some walk columns ('+esc(d.missingColumns.join(', '))+'), so the reports may be incomplete. Start new jobs from “TEMPLATE - T-Mobile Move”.</div>';
     body+='<div class="fm-muted">Good to go = pre-move photo. Completed = post-move photo and/or JetCity Fix checked. Reports use the sheet as it is right now.</div>';
@@ -8025,21 +8030,139 @@ function tmPaintRows(){
   });
   var tick=function(on){ return '<td class="tm-c">'+(on?'✓':'')+'</td>'; };
   var t=function(v){ return esc(String(v==null?'':v)); };
+  // A photo cell shows a thumbnail when Smartsheet gave us an image link
+  // (loaded lazily as the row scrolls into view), else just a tick.
+  var photo=function(r,which){
+    var th=r[which+'Thumb'];
+    if(!th) return tick(r[which]);
+    return '<td class="tm-c"><img class="tm-thumb" alt="'+(which==='pre'?'Pre-move':'Post-move')+' photo, '+t(r.name)+'" data-u="'+t(th)+'" data-full="'+t(r[which+'Url']||th)+'" data-cap="'+t((which==='pre'?'Pre-move':'Post-move')+' - '+r.name+(r.desk?' - '+r.desk:''))+'"></td>';
+  };
   tb.innerHTML=rows.length? rows.map(function(r){
     var st=TM_STATUS[r._status]||TM_STATUS.none;
     var bldg=(/building\s*(\w+)/i.exec(r.bldg||'')||[])[1];
     return '<tr><td class="tm-nw">'+t(r.name)+'</td><td><span class="tm-pill '+st[0]+'">'+st[1]+'</span></td><td class="tm-nw">'+t(bldg?'Bldg '+bldg:r.bldg)+'</td><td>'+t(r.floor)+'</td><td class="tm-nw">'+t(r.desk)+'</td>'+
-      tick(r.pre)+'<td>'+t(r.needs.join(', '))+'</td><td>'+t(r.note)+'</td>'+tick(r.fix)+tick(r.post)+'<td class="tm-nw">'+t(r.curDesk)+'</td></tr>';
+      photo(r,'pre')+'<td>'+t(r.needs.join(', '))+'</td><td>'+t(r.note)+'</td>'+tick(r.fix)+photo(r,'post')+'<td class="tm-nw">'+t(r.curDesk)+'</td></tr>';
   }).join('') : '<tr><td colspan="11" class="fm-muted" style="padding:14px">No rows match.</td></tr>';
   var c=document.getElementById('tm-count'); if(c) c.textContent='Showing '+rows.length+' of '+s.rows.length;
+  tmObservePhotos();
+}
+
+// ── T-Mobile photos ───────────────────────────────────────────────────────────
+// Photos come through /api/tmobile/photo (Planner-only proxy for Smartsheet's
+// signed image links) and live only in memory as blob URLs for this page;
+// nothing is saved. Signed links expire after ~30 min, so older sheet data is
+// re-fetched for fresh links before photos load.
+var tmPhotoCache=new Map(), tmPhotoQueue=[], tmPhotoActive=0, tmPhotoObserver=null, tmRefreshing=null;
+function tmClearPhotos(){ tmPhotoCache.forEach(function(p){ p.then(function(u){ if(u) URL.revokeObjectURL(u); }); }); tmPhotoCache.clear(); tmPhotoQueue=[]; }
+function tmStale(){ return tm.data&&tm.data.fetchedAt&&(Date.now()-Date.parse(tm.data.fetchedAt))>20*60*1000; }
+// Re-fetch the sheet (keeping the filter/search) so photo links are fresh.
+async function tmEnsureFresh(){
+  if(!tmStale()) return;
+  if(!tmRefreshing) tmRefreshing=(async function(){
+    try{ var d=await tmFetch('/sheet?id='+encodeURIComponent(tm.sheetId)); tmClearPhotos(); tm.data=d; tmPaint(); }
+    finally{ tmRefreshing=null; }
+  })();
+  return tmRefreshing;
+}
+function tmPhotoBlob(u){
+  if(tmPhotoCache.has(u)) return tmPhotoCache.get(u);
+  var p=new Promise(function(resolve){ tmPhotoQueue.push({u:u,resolve:resolve}); tmPhotoPump(); });
+  tmPhotoCache.set(u,p); return p;
+}
+function tmPhotoPump(){
+  while(tmPhotoActive<6&&tmPhotoQueue.length){
+    var job=tmPhotoQueue.shift(); tmPhotoActive++;
+    (async function(job){
+      try{
+        var token=await getApiToken();
+        var res=await fetch('/api/tmobile/photo?u='+encodeURIComponent(job.u),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+        job.resolve(res.ok? URL.createObjectURL(await res.blob()) : '');
+      }catch(e){ console.error('tmobile photo failed',e); job.resolve(''); }
+      finally{ tmPhotoActive--; tmPhotoPump(); }
+    })(job);
+  }
+}
+function tmLoadThumb(img){
+  if(img._tmLoading) return; img._tmLoading=1;
+  tmEnsureFresh().then(function(){
+    if(!img.isConnected) return;
+    tmPhotoBlob(img.dataset.u).then(function(u){ if(u) img.src=u; else img.alt='Photo unavailable'; });
+  });
+}
+function tmObservePhotos(){
+  var imgs=document.querySelectorAll('#tm-tbody img.tm-thumb'); if(!imgs.length) return;
+  if(!('IntersectionObserver' in window)){ imgs.forEach(tmLoadThumb); return; }
+  if(tmPhotoObserver) tmPhotoObserver.disconnect();
+  var wrap=document.querySelector('.tm-table-wrap');
+  tmPhotoObserver=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){ if(e.isIntersecting){ tmPhotoObserver.unobserve(e.target); tmLoadThumb(e.target); } });
+  },{root:wrap,rootMargin:'200px'});
+  imgs.forEach(function(i){ tmPhotoObserver.observe(i); });
+}
+// Tap a thumbnail to see the full photo.
+document.addEventListener('click',function(ev){
+  var img=ev.target.closest&&ev.target.closest('#tm-tbody img.tm-thumb'); if(!img) return;
+  var box=document.createElement('div'); box.className='tm-lightbox'; box.setAttribute('role','dialog'); box.setAttribute('aria-label','Photo');
+  var big=document.createElement('img'); big.alt=img.alt; if(img.src) big.src=img.src;
+  var cap=document.createElement('div'); cap.textContent=img.dataset.cap||'';
+  box.appendChild(big); box.appendChild(cap); document.body.appendChild(box);
+  var close=function(){ box.remove(); document.removeEventListener('keydown',onKey); };
+  var onKey=function(e){ if(e.key==='Escape') close(); };
+  box.addEventListener('click',close); document.addEventListener('keydown',onKey);
+  tmPhotoBlob(img.dataset.full).then(function(u){ if(u) big.src=u; });
+});
+
+// Download each photo for the PDF and re-encode it as a JPEG (max 1000px),
+// which also turns PNGs into something the PDF can embed directly.
+// createImageBitmap keeps working if the user switches tabs mid-build (an
+// <img>.decode() started in a hidden tab can stall), and each photo gets a
+// time limit so one bad photo can't hang the report.
+function tmTimeout(p,ms){ return Promise.race([p,new Promise(function(r){ setTimeout(function(){ r(null); },ms); })]); }
+async function tmPhotoJpeg(u){
+  var blobUrl=await tmPhotoBlob(u); if(!blobUrl) return null;
+  return tmTimeout((async function(){
+    try{
+      var bmp=await createImageBitmap(await (await fetch(blobUrl)).blob());
+      var sc=Math.min(1,1000/Math.max(bmp.width,bmp.height));
+      var w=Math.max(1,Math.round(bmp.width*sc)), h=Math.max(1,Math.round(bmp.height*sc));
+      var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      var cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,w,h); cx.drawImage(bmp,0,0,w,h);
+      if(bmp.close) bmp.close();
+      var blob=await new Promise(function(r){ cv.toBlob(r,'image/jpeg',0.8); });
+      return blob? { bytes:new Uint8Array(await blob.arrayBuffer()), w:w, h:h } : null;
+    }catch(e){ console.error('tmobile photo convert failed',e); return null; }
+  })(),30000);
+}
+async function tmDownloadWithPhotos(btn){
+  if(!tm.data||btn.disabled) return;
+  var label=btn.textContent; btn.disabled=true;
+  try{
+    btn.textContent='Refreshing photo links…'; await tmEnsureFresh();
+    btn=document.getElementById('tm-photo-btn')||btn; btn.disabled=true;
+    var jobs=[];
+    window.TMReport.photoDesks(tm.data).forEach(function(r){ ['pre','post'].forEach(function(w){ if(r[w+'Url']) jobs.push({key:r.row+':'+w,u:r[w+'Url']}); }); });
+    var photos={}, done=0, missed=0;
+    btn.textContent='Preparing photos 0/'+jobs.length+'…';
+    await Promise.all(jobs.map(function(j){
+      return tmPhotoJpeg(j.u).then(function(p){ if(p) photos[j.key]=p; else missed++; done++; btn.textContent='Preparing photos '+done+'/'+jobs.length+'…'; });
+    }));
+    btn.textContent='Building PDF…';
+    tmSave(window.TMReport.completionReport(tm.data,new Date(),{photos:photos}),'Completion Report with Photos');
+    if(missed) alert(missed+' photo'+(missed===1?'':'s')+' couldn’t be loaded and show as “No photo” in the PDF.');
+  }catch(e){ console.error('photo report failed',e); alert('Couldn’t build the photo report: '+e.message); }
+  finally{ btn.disabled=false; btn.textContent=label; }
 }
 
 function tmDownload(kind){
   if(!tm.data||!window.TMReport) return;
   var now=new Date();
   var bytes=kind==='walk'? window.TMReport.walkSummary(tm.data,now) : window.TMReport.completionReport(tm.data,now);
+  tmSave(bytes,kind==='walk'?'Walk Summary':'Completion Report');
+}
+function tmSave(bytes,label){
+  var now=new Date();
   var stamp=(now.getMonth()+1)+'-'+now.getDate()+'-'+now.getFullYear();
-  var name=window.TMReport.jobTitle(tm.data)+' - '+(kind==='walk'?'Walk Summary':'Completion Report')+' '+stamp+'.pdf';
+  var name=window.TMReport.jobTitle(tm.data)+' - '+label+' '+stamp+'.pdf';
   var a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
   a.download=name.replace(/[\\/:*?"<>|]+/g,'-'); document.body.appendChild(a); a.click();
