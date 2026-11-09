@@ -8052,8 +8052,10 @@ function tmPaintRows(){
 // signed image links) and live only in memory as blob URLs for this page;
 // nothing is saved. Signed links expire after ~30 min, so older sheet data is
 // re-fetched for fresh links before photos load.
-var tmPhotoCache=new Map(), tmPhotoQueue=[], tmPhotoActive=0, tmPhotoObserver=null, tmRefreshing=null;
-function tmClearPhotos(){ tmPhotoCache.forEach(function(p){ p.then(function(u){ if(u) URL.revokeObjectURL(u); }); }); tmPhotoCache.clear(); tmPhotoQueue=[]; }
+// tmPhotoBlobs keeps the Blob itself (keyed by signed link) for the PDF: the
+// page's CSP connect-src doesn't allow fetch() of blob: URLs.
+var tmPhotoCache=new Map(), tmPhotoBlobs=new Map(), tmPhotoQueue=[], tmPhotoActive=0, tmPhotoObserver=null, tmRefreshing=null;
+function tmClearPhotos(){ tmPhotoCache.forEach(function(p){ p.then(function(u){ if(u) URL.revokeObjectURL(u); }); }); tmPhotoCache.clear(); tmPhotoBlobs.clear(); tmPhotoQueue=[]; }
 function tmStale(){ return tm.data&&tm.data.fetchedAt&&(Date.now()-Date.parse(tm.data.fetchedAt))>20*60*1000; }
 // Re-fetch the sheet (keeping the filter/search) so photo links are fresh.
 async function tmEnsureFresh(){
@@ -8076,7 +8078,8 @@ function tmPhotoPump(){
       try{
         var token=await getApiToken();
         var res=await fetch('/api/tmobile/photo?u='+encodeURIComponent(job.u),{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-        job.resolve(res.ok? URL.createObjectURL(await res.blob()) : '');
+        if(res.ok){ var b=await res.blob(); tmPhotoBlobs.set(job.u,b); job.resolve(URL.createObjectURL(b)); }
+        else job.resolve('');
       }catch(e){ console.error('tmobile photo failed',e); job.resolve(''); }
       finally{ tmPhotoActive--; tmPhotoPump(); }
     })(job);
@@ -8119,10 +8122,10 @@ document.addEventListener('click',function(ev){
 // time limit so one bad photo can't hang the report.
 function tmTimeout(p,ms){ return Promise.race([p,new Promise(function(r){ setTimeout(function(){ r(null); },ms); })]); }
 async function tmPhotoJpeg(u){
-  var blobUrl=await tmPhotoBlob(u); if(!blobUrl) return null;
+  var blobUrl=await tmPhotoBlob(u), src=tmPhotoBlobs.get(u); if(!blobUrl||!src) return null;
   return tmTimeout((async function(){
     try{
-      var bmp=await createImageBitmap(await (await fetch(blobUrl)).blob());
+      var bmp=await createImageBitmap(src);
       var sc=Math.min(1,1000/Math.max(bmp.width,bmp.height));
       var w=Math.max(1,Math.round(bmp.width*sc)), h=Math.max(1,Math.round(bmp.height*sc));
       var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
