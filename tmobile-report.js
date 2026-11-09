@@ -258,6 +258,38 @@
     return bytes;
   };
 
+
+  // ── Report options ─────────────────────────────────────────────────────────
+  // Both reports take opts (all optional; omitted = everything, as before):
+  //   sections:  section keys to include (see SECTIONS)
+  //   columns:   person-table columns to include (see COLUMNS); Name is always shown
+  //   hideNotes: leave out the text techs typed in JCIT Notes
+  //   scope:     a line describing what was left out, printed under the header
+  // Rows to leave out are removed by the caller before the sheet is passed in,
+  // so excluded people never reach the PDF at all.
+  var SECTIONS = {
+    walk: [['totals', 'Equipment totals'], ['bydesk', 'Equipment by desk'], ['followUp', 'Needs follow-up'], ['atDesk', 'Already at their desk'], ['notFound', 'Not found']],
+    completion: [['summary', 'Summary'], ['completed', 'Completed by Jet City IT'], ['good', 'Good to go (by floor)'], ['alsoChecked', 'Also checked after the move'],
+      ['open', 'Still open'], ['none', 'Nothing recorded'], ['photos', 'Photos'], ['appendix', 'Appendix: good-to-go list']],
+  };
+  var COLUMNS = [['bldg', 'Building'], ['floor', 'Floor'], ['desk', 'Desk'], ['curDesk', 'Current desk'], ['note', 'JCIT notes']];
+  var DEFAULT_COLUMNS = ['bldg', 'floor', 'desk', 'note'];
+
+  var O = {}; // options of the report being built (reports are built one at a time)
+  function on(key) { return !O.sections || O.sections.indexOf(key) >= 0; }
+  function col(key) {
+    if (key === 'note' && O.hideNotes) return false;
+    return (O.columns || DEFAULT_COLUMNS).indexOf(key) >= 0;
+  }
+  function note(r) { return O.hideNotes ? '' : noteText(r); }
+  // "Bldg 3, 07-7300" from whichever of building/desk are switched on.
+  function loc(r) {
+    var p = [];
+    if (col('bldg') && r.bldg) p.push(shortBldg(r.bldg));
+    if (col('desk')) p.push(r.desk || 'no desk');
+    return p.join(', ');
+  }
+
   // ── Shared report pieces ───────────────────────────────────────────────────
   function longDate(d) { return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); }
   function jobTitle(sheet) {
@@ -267,69 +299,96 @@
   function header(d, sheet, label, date) {
     d.title(jobTitle(sheet) + ' Move');
     d.para(label + '  |  ' + longDate(date) + '  |  Jet City IT', { color: GREY });
-    d.para('Source: ' + sheet.name + ' Smartsheet (' + plural(sheet.rows.length, 'person', 'people') + ').', { color: GREY, after: 6 });
+    d.para('Source: ' + sheet.name + ' Smartsheet (' + plural(sheet.rows.length, 'person', 'people') + ').', { color: GREY, after: O.scope ? 2 : 6 });
+    if (O.scope) d.para(O.scope, { color: GREY, after: 6 });
   }
-  function noteRow(r) { return [r.name, shortBldg(r.bldg), r.desk, noteText(r)]; }
   function needList(counts) {
     return counts.map(function (c) {
       return c.count + ' ' + pluralLabel(c.label, c.count !== 1).replace(/^[A-Z](?![A-Z])/, function (m) { return m.toLowerCase(); });
     }).join(', ');
   }
 
+  // One table of people. `fields` is the table's natural columns; only the
+  // ones switched on are shown. opts.need adds the Need column first,
+  // opts.noteFn overrides the note text.
+  var COL_DEF = {
+    bldg: ['Building', 10, function (r) { return shortBldg(r.bldg) || 'Not assigned'; }],
+    floor: ['Floor', 7, function (r) { return r.floor; }],
+    desk: ['Desk', 11, function (r) { return r.desk; }],
+    curDesk: ['Current desk', 11, function (r) { return r.curDesk; }],
+    note: ['Note', 30, function (r) { return note(r); }],
+  };
+  function personTable(d, rows, fields, opts) {
+    opts = opts || {};
+    var keys = fields.filter(col);
+    var heads = (opts.need ? ['Need'] : []).concat(['Name'], keys.map(function (k) { return COL_DEF[k][0]; }));
+    var weights = (opts.need ? [18] : []).concat([26], keys.map(function (k) { return COL_DEF[k][1]; }));
+    d.table(heads, rows.map(function (r) {
+      return (opts.need ? [r.needs.map(needLabel).join(' + ')] : []).concat([r.name], keys.map(function (k) {
+        return k === 'note' && opts.noteFn ? opts.noteFn(r) : COL_DEF[k][2](r);
+      }));
+    }), weights);
+  }
+  var PERSON_FIELDS = ['bldg', 'floor', 'desk', 'curDesk', 'note'];
+  function needTable(d, rows) { personTable(d, rows, PERSON_FIELDS, { need: true }); }
+
   // Notes split into "follow-up" (people sharing a desk and the same note, like
   // a project room, become one line), "at their desk", and "not found"
-  // (grouped by hotel desk).
-  function notesSection(d, rows) {
+  // (grouped by hotel desk). kinds limits which groups are printed.
+  function notesSection(d, rows, kinds) {
+    var want = function (k) { return !kinds || kinds.indexOf(k) >= 0; };
     var follow = rows.filter(function (r) { return r._kind === 'followUp'; });
     var atDesk = rows.filter(function (r) { return r._kind === 'atDesk'; });
     var notFound = rows.filter(function (r) { return r._kind === 'notFound'; });
-    if (follow.length) {
+    if (follow.length && want('followUp')) {
       d.h2('Needs follow-up (' + follow.length + ')');
       var groups = {}, order = [];
-      follow.forEach(function (r) { var k = r.desk + '|' + noteText(r); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r); });
+      follow.forEach(function (r) { var k = loc(r) + '|' + note(r); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(r); });
       order.forEach(function (k) {
-        var g = groups[k], r = g[0];
-        if (g.length === 1) d.label(r.name + ' (' + shortBldg(r.bldg) + ', ' + (r.desk || 'no desk') + '): ', noteText(r));
-        else d.label(shortBldg(r.bldg) + ', ' + r.desk + ' (' + g.length + ' people): ', noteText(r) + ' People: ' + g.map(function (p) { return tidyName(p.name); }).join(', ') + '.');
+        var g = groups[k], r = g[0], where = loc(r), n = note(r);
+        if (g.length === 1) d.label(r.name + (where ? ' (' + where + ')' : '') + (n ? ': ' : ''), n);
+        else d.label((where || 'Same note') + ' (' + g.length + ' people): ', (n ? n + ' ' : '') + 'People: ' + g.map(function (p) { return tidyName(p.name); }).join(', ') + '.');
       });
     }
-    if (atDesk.length) {
+    if (atDesk.length && want('atDesk')) {
       d.h2('Already at their new desk (' + atDesk.length + ')');
-      d.table(['Name', 'Building', 'Desk', 'Note'], atDesk.map(noteRow), [32, 12, 14, 42]);
+      personTable(d, atDesk, ['bldg', 'desk', 'curDesk', 'note']);
     }
-    if (notFound.length) {
+    if (notFound.length && want('notFound')) {
       d.h2('Not found (' + notFound.length + ')');
-      var byD = {};
-      notFound.forEach(function (r) { var k = r.desk + '|' + shortBldg(r.bldg); (byD[k] = byD[k] || []).push(r); });
-      Object.keys(byD).sort().forEach(function (k) {
-        var g = byD[k], parts = k.split('|');
-        d.label((parts[0] || 'No desk') + ', ' + parts[1] + ' (' + g.length + '): ', g.map(function (p) { return tidyName(p.name); }).join(', '));
+      var byD = {}, keys = [];
+      notFound.forEach(function (r) { var k = loc(r); if (!byD[k]) { byD[k] = []; keys.push(k); } byD[k].push(r); });
+      keys.sort().forEach(function (k) {
+        var g = byD[k];
+        d.label((k || 'Not found') + ' (' + g.length + '): ', g.map(function (p) { return tidyName(p.name); }).join(', '));
       });
     }
-  }
-
-  function needTable(d, rows) {
-    d.table(['Need', 'Name', 'Building', 'Floor', 'Desk', 'Note'], rows.map(function (r) {
-      return [r.needs.map(needLabel).join(' + '), r.name, shortBldg(r.bldg), r.floor, r.desk, noteText(r)];
-    }), [18, 24, 10, 8, 11, 29]);
   }
 
   // ── Walk summary ───────────────────────────────────────────────────────────
-  function walkSummary(sheet, date) {
+  function walkSummary(sheet, date, opts) {
     date = date || new Date();
-    var s = summarize(sheet), d = new Doc();
-    header(d, sheet, 'Destination walk results', date);
-    d.h1('Equipment needed: ' + plural(s.needRows.length, 'desk', 'desks'));
-    if (s.needRows.length) {
-      d.table(['Item', 'Qty'], s.needCounts.map(function (c) { return [c.label, String(c.count)]; }), [80, 20]);
-      d.h2('Equipment by desk');
-      needTable(d, s.needRows);
-    } else d.para('No equipment needs were recorded on the walk.');
-    // Desks with a need already show their note in the equipment table.
-    var noted = s.rows.filter(function (r) { return r._kind && !r.needs.length; });
-    d.h1('Notes');
-    if (noted.length) notesSection(d, noted); else d.para('No notes were recorded on the walk.');
-    return d.toBytes(jobTitle(sheet) + ' - destination walk results - Jet City IT');
+    O = opts || {};
+    try {
+      var s = summarize(sheet), d = new Doc();
+      header(d, sheet, 'Destination walk results', date);
+      if (on('totals') || on('bydesk')) {
+        d.h1('Equipment needed: ' + plural(s.needRows.length, 'desk', 'desks'));
+        if (!s.needRows.length) d.para('No equipment needs were recorded on the walk.');
+        else {
+          if (on('totals')) d.table(['Item', 'Qty'], s.needCounts.map(function (c) { return [c.label, String(c.count)]; }), [80, 20]);
+          if (on('bydesk')) { d.h2('Equipment by desk'); needTable(d, s.needRows); }
+        }
+      }
+      var kinds = ['followUp', 'atDesk', 'notFound'].filter(on);
+      if (kinds.length) {
+        // Desks with a need already show their note in the equipment table.
+        var noted = s.rows.filter(function (r) { return r._kind && !r.needs.length && kinds.indexOf(r._kind) >= 0; });
+        d.h1('Notes');
+        if (noted.length) notesSection(d, noted, kinds); else d.para('No notes were recorded on the walk.');
+      }
+      return d.toBytes(jobTitle(sheet) + ' - destination walk results - Jet City IT');
+    } finally { O = {}; }
   }
 
   // Desks whose photos go in the completion report's photo section: everything
@@ -350,7 +409,8 @@
     desks.forEach(function (r) {
       d.room(boxH + 36);
       var need = r.needs.length ? ' - ' + r.needs.map(needLabel).join(' + ') : '';
-      d.rich([{ text: r.name, bold: true }, { text: '  ' + shortBldg(r.bldg) + ', ' + (r.desk || 'no desk') + need }], { size: 10, after: 2 });
+      var where = loc(r);
+      d.rich([{ text: r.name, bold: true }, { text: (where ? '  ' + where : '') + need }], { size: 10, after: 2 });
       var top = d.y;
       ['pre', 'post'].forEach(function (which, i) {
         var x = MARGIN_X + i * (boxW + gap);
@@ -369,85 +429,97 @@
   }
 
   // ── Completion report ──────────────────────────────────────────────────────
-  // opts.photos (optional) adds the photo section; see photoSection.
+  // opts.photos (optional) maps photos for the Photos section; see photoSection.
   function completionReport(sheet, date, opts) {
     date = date || new Date();
-    opts = opts || {};
-    var s = summarize(sheet), d = new Doc();
-    var fixed = s.done.filter(function (r) { return r.needs.length; });
-    var checked = s.done.filter(function (r) { return !r.needs.length; });
-    var openNeeds = s.open.filter(function (r) { return r.needs.length; });
-    var openNotes = s.open.filter(function (r) { return !r.needs.length; });
-    var goodPost = s.good.filter(function (r) { return r.post || r.fix; });
+    O = opts || {};
+    try {
+      var s = summarize(sheet), d = new Doc();
+      var fixed = s.done.filter(function (r) { return r.needs.length; });
+      var checked = s.done.filter(function (r) { return !r.needs.length; });
+      var openNeeds = s.open.filter(function (r) { return r.needs.length; });
+      var openNotes = s.open.filter(function (r) { return !r.needs.length; });
+      var goodPost = s.good.filter(function (r) { return r.post || r.fix; });
 
-    header(d, sheet, 'Completion report', date);
-    d.para('A desk is good to go if it has a pre-move destination photo. Otherwise it is completed when it has a post-move photo and/or the JetCity Fix check.');
-    d.h1('Summary');
-    d.table(['Status', 'Desks'], [
-      ['Good to go (pre-move photo)', String(s.good.length)],
-      ['Completed by Jet City IT', String(s.done.length)],
-      ['Still open', String(s.open.length)],
-      ['Nothing recorded', String(s.none.length)],
-      ['Total', String(s.rows.length)],
-    ], [80, 20], { boldLast: true });
-    if (fixed.length) {
-      d.label('Equipment installed: ', plural(fixed.length, 'desk', 'desks') + ' (' + needList(countNeeds(fixed)) + ').' +
-        (openNeeds.length ? ' ' + plural(openNeeds.length, 'desk still needs', 'desks still need') + ' equipment.' : ' Every equipment need from the walk is done.'));
-    }
-
-    d.h1('Completed by Jet City IT (' + s.done.length + ')');
-    if (fixed.length) { d.h2('Equipment installed (' + fixed.length + ')'); needTable(d, fixed); }
-    if (checked.length) {
-      d.h2('Checked after the move (' + checked.length + ')');
-      d.table(['Name', 'Building', 'Desk', 'Note'], checked.map(function (r) {
-        var n = noteText(r); if (n && !/[.!?]$/.test(n)) n += '.';
-        return [r.name, shortBldg(r.bldg), r.desk, (n + (r.post ? ' Post-move photo taken.' : ' Marked fixed.')).trim()];
-      }), [32, 12, 14, 42]);
-    }
-    if (!s.done.length) d.para('Nothing has been marked completed yet.');
-
-    d.h1('Good to go (' + s.good.length + ')');
-    if (s.good.length) {
-      d.para('These desks had a pre-move destination photo. The full list is in the appendix.');
-      var floors = {};
-      s.good.forEach(function (r) { var k = shortBldg(r.bldg) + '|' + r.floor; floors[k] = (floors[k] || 0) + 1; });
-      var floorRows = Object.keys(floors).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); })
-        .map(function (k) { var p = k.split('|'); return [p[0], p[1], String(floors[k])]; });
-      floorRows.push(['Total', '', String(s.good.length)]);
-      d.table(['Building', 'Floor', 'Desks'], floorRows, [45, 25, 30], { boldLast: true });
-      if (goodPost.length) {
-        d.h2('Also checked after the move (' + goodPost.length + ')');
-        d.table(['Name', 'Building', 'Desk', 'Note'], goodPost.map(noteRow), [32, 12, 14, 42]);
+      header(d, sheet, 'Completion report', date);
+      d.para('A desk is good to go if it has a pre-move destination photo. Otherwise it is completed when it has a post-move photo and/or the JetCity Fix check.');
+      if (on('summary')) {
+        d.h1('Summary');
+        d.table(['Status', 'Desks'], [
+          ['Good to go (pre-move photo)', String(s.good.length)],
+          ['Completed by Jet City IT', String(s.done.length)],
+          ['Still open', String(s.open.length)],
+          ['Nothing recorded', String(s.none.length)],
+          ['Total', String(s.rows.length)],
+        ], [80, 20], { boldLast: true });
+        if (fixed.length) {
+          d.label('Equipment installed: ', plural(fixed.length, 'desk', 'desks') + ' (' + needList(countNeeds(fixed)) + ').' +
+            (openNeeds.length ? ' ' + plural(openNeeds.length, 'desk still needs', 'desks still need') + ' equipment.' : ' Every equipment need from the walk is done.'));
+        }
       }
-    } else d.para('No pre-move destination photos yet.');
 
-    d.h1('Still open (' + s.open.length + ')');
-    if (s.open.length) {
-      d.para('These have a need or a note from the walk but no photo or fix yet.');
-      if (openNeeds.length) { d.h2('Equipment still needed (' + openNeeds.length + ')'); needTable(d, openNeeds); }
-      notesSection(d, openNotes.filter(function (r) { return r._kind; }));
-    } else d.para('Nothing is open.');
+      if (on('completed')) {
+        d.h1('Completed by Jet City IT (' + s.done.length + ')');
+        if (fixed.length) { d.h2('Equipment installed (' + fixed.length + ')'); needTable(d, fixed); }
+        if (checked.length) {
+          d.h2('Checked after the move (' + checked.length + ')');
+          personTable(d, checked, ['bldg', 'desk', 'curDesk', 'note'], { noteFn: function (r) {
+            var n = note(r); if (n && !/[.!?]$/.test(n)) n += '.';
+            return (n + (r.post ? ' Post-move photo taken.' : ' Marked fixed.')).trim();
+          } });
+        }
+        if (!s.done.length) d.para('Nothing has been marked completed yet.');
+      }
 
-    if (s.none.length) {
-      d.h1('Nothing recorded (' + s.none.length + ')');
-      d.para('No photo, need or note yet. These are often people with no destination desk.');
-      d.table(['Name', 'Building', 'Floor', 'Desk'], s.none.map(function (r) {
-        return [r.name, shortBldg(r.bldg) || 'Not assigned', r.floor, r.desk];
-      }), [40, 22, 14, 24]);
-    }
+      if (on('good')) {
+        d.h1('Good to go (' + s.good.length + ')');
+        if (s.good.length) {
+          d.para('These desks had a pre-move destination photo.' + (on('appendix') ? ' The full list is in the appendix.' : ''));
+          var floors = {};
+          s.good.forEach(function (r) { var k = shortBldg(r.bldg) + '|' + r.floor; floors[k] = (floors[k] || 0) + 1; });
+          var floorRows = Object.keys(floors).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); })
+            .map(function (k) { var p = k.split('|'); return [p[0], p[1], String(floors[k])]; });
+          floorRows.push(['Total', '', String(s.good.length)]);
+          d.table(['Building', 'Floor', 'Desks'], floorRows, [45, 25, 30], { boldLast: true });
+        } else d.para('No pre-move destination photos yet.');
+      }
+      if (on('alsoChecked') && goodPost.length) {
+        var h = 'Also checked after the move (' + goodPost.length + ')';
+        if (on('good')) d.h2(h); else d.h1(h);
+        personTable(d, goodPost, ['bldg', 'desk', 'curDesk', 'note']);
+      }
 
-    if (opts.photos) {
-      var desks = photoDesks(sheet);
-      if (desks.length) { d.pageBreak(); photoSection(d, desks, opts.photos); }
-    }
+      if (on('open')) {
+        d.h1('Still open (' + s.open.length + ')');
+        if (s.open.length) {
+          d.para('These have a need or a note from the walk but no photo or fix yet.');
+          if (openNeeds.length) { d.h2('Equipment still needed (' + openNeeds.length + ')'); needTable(d, openNeeds); }
+          notesSection(d, openNotes.filter(function (r) { return r._kind; }));
+        } else d.para('Nothing is open.');
+      }
 
-    if (s.good.length) {
-      d.pageBreak();
-      d.h1('Appendix: good-to-go desks (' + s.good.length + ')');
-      d.table(['Name', 'Building', 'Desk'], s.good.map(function (r) { return [r.name, shortBldg(r.bldg), r.desk]; }), [55, 22, 23]);
-    }
-    return d.toBytes(jobTitle(sheet) + ' - completion report - Jet City IT');
+      if (on('none') && s.none.length) {
+        d.h1('Nothing recorded (' + s.none.length + ')');
+        d.para('No photo, need or note yet. These are often people with no destination desk.');
+        personTable(d, s.none, ['bldg', 'floor', 'desk', 'curDesk']);
+      }
+
+      if (on('photos') && O.photos) {
+        var desks = photoDesks(sheet);
+        if (desks.length) { d.pageBreak(); photoSection(d, desks, O.photos); }
+      }
+
+      if (on('appendix') && s.good.length) {
+        d.pageBreak();
+        d.h1('Appendix: good-to-go desks (' + s.good.length + ')');
+        personTable(d, s.good, ['bldg', 'floor', 'desk', 'curDesk']);
+      }
+      return d.toBytes(jobTitle(sheet) + ' - completion report - Jet City IT');
+    } finally { O = {}; }
   }
 
-  window.TMReport = { summarize: summarize, walkSummary: walkSummary, completionReport: completionReport, photoDesks: photoDesks, jobTitle: jobTitle };
+  window.TMReport = {
+    summarize: summarize, walkSummary: walkSummary, completionReport: completionReport, photoDesks: photoDesks, jobTitle: jobTitle,
+    SECTIONS: SECTIONS, COLUMNS: COLUMNS, DEFAULT_COLUMNS: DEFAULT_COLUMNS,
+  };
 })();

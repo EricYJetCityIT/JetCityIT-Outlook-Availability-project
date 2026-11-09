@@ -1,6 +1,7 @@
 const { app } = require('@azure/functions');
 const { requireUser, requirePlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
+const { getContainer } = require('../lib/cosmos');
 
 // T-Mobile view inside the Project Planning tab (Project Planners group).
 // Lists the move sheets in the T-mobile Smartsheet workspace and serves one
@@ -189,6 +190,64 @@ app.http('tmobilePhoto', {
       if (exp && new Date(exp).getTime() < Date.now()) return { status: 410, jsonBody: { error: 'Image link expired' } };
       const { contentType, bytes } = await ss.fetchImageBytes(u);
       return { status: 200, headers: { 'Content-Type': contentType, 'Cache-Control': 'private, no-store' }, body: bytes };
+    } catch (e) {
+      return tmobileError(e, context);
+    }
+  },
+});
+
+// Saved report versions ("Client copy", "Internal copy", ...), shared by the
+// Project Planners. One Cosmos doc in the `dispatch` container. A version holds
+// SETTINGS ONLY -- its name, which sections and columns to include, and whether
+// to hide note text -- never names, buildings or other sheet data, which are
+// picked per report and not stored.
+const PRESETS_ID = 'tmobile:presets';
+const SECTION_KEYS = {
+  walk: ['totals', 'bydesk', 'followUp', 'atDesk', 'notFound'],
+  completion: ['summary', 'completed', 'good', 'alsoChecked', 'open', 'none', 'photos', 'appendix'],
+};
+const COLUMN_KEYS = ['bldg', 'floor', 'desk', 'curDesk', 'note'];
+const pickKeys = (v, allowed) => (Array.isArray(v) ? v : []).filter((k) => allowed.includes(k));
+
+function sanitizePreset(p) {
+  if (!p || typeof p !== 'object') return null;
+  const name = String(p.name || '').replace(/[\x00-\x1f\x7f]+/g, '').trim().slice(0, 60);
+  if (!name) return null;
+  const sections = p.sections && typeof p.sections === 'object' ? p.sections : {};
+  return {
+    id: String(p.id || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40) || `p${Date.now().toString(36)}`,
+    name,
+    sections: { walk: pickKeys(sections.walk, SECTION_KEYS.walk), completion: pickKeys(sections.completion, SECTION_KEYS.completion) },
+    columns: pickKeys(p.columns, COLUMN_KEYS),
+    hideNotes: !!p.hideNotes,
+  };
+}
+
+// GET /api/tmobile/presets — the saved report versions.
+// PUT /api/tmobile/presets  { presets: [...] } — replace the list (max 20).
+app.http('tmobilePresets', {
+  methods: ['GET', 'PUT'],
+  authLevel: 'anonymous',
+  route: 'tmobile/presets',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requirePlanner(user);
+      const container = getContainer('dispatch');
+      if (request.method === 'GET') {
+        try {
+          const { resource } = await container.item(PRESETS_ID, PRESETS_ID).read();
+          return { jsonBody: { presets: (resource && resource.presets) || [] } };
+        } catch (e) {
+          if (e && e.code === 404) return { jsonBody: { presets: [] } };
+          throw e;
+        }
+      }
+      let body;
+      try { body = await request.json(); } catch (_) { return { status: 400, jsonBody: { error: 'Invalid JSON' } }; }
+      const presets = (Array.isArray(body && body.presets) ? body.presets : []).map(sanitizePreset).filter(Boolean).slice(0, 20);
+      await container.items.upsert({ id: PRESETS_ID, type: 'tmobilePresets', presets, updatedBy: user.upn, updatedAt: new Date().toISOString() });
+      return { jsonBody: { presets } };
     } catch (e) {
       return tmobileError(e, context);
     }

@@ -844,6 +844,20 @@ button.tm-stat.active{border-color:var(--green);box-shadow:inset 0 0 0 1px var(-
 .tm-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.82);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;z-index:9999;padding:16px;cursor:zoom-out}
 .tm-lightbox img{max-width:100%;max-height:82vh;border-radius:6px;background:#222}
 .tm-lightbox div{color:#fff;font-size:14px;text-align:center}
+.tm-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;z-index:9990;padding:24px 12px;overflow:auto}
+.tm-modal-card{background:var(--surface);color:var(--text);border-radius:12px;max-width:680px;width:100%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.tm-modal-card h2{margin:0 0 12px;font-size:18px}
+.tm-cx-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.tm-cx-row select,.tm-cx-row input{padding:6px 9px;border:1px solid var(--border2);border-radius:8px;background:var(--surface);color:var(--text);font:inherit}
+.tm-cx-row input{flex:1 1 200px}
+.tm-cx-set{border:1px solid var(--border);border-radius:10px;padding:8px 12px 10px;margin:0 0 12px}
+.tm-cx-set legend{font-weight:600;font-size:13px;padding:0 4px;color:var(--text2)}
+.tm-cx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 12px}
+.tm-cx-chk{display:flex;gap:6px;align-items:flex-start;font-size:13px;padding:3px 0;cursor:pointer}
+.tm-cx-chk input{margin-top:2px}
+.tm-cx-sub{font-size:12.5px;font-weight:600;color:var(--text2);margin:10px 0 4px}
+.tm-cx-people{max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px}
+.tm-cx-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;position:sticky;bottom:-18px;background:var(--surface)}
 .tm-pill.good{background:#E3F4E8;color:#1B6B34}.tm-pill.done{background:#E6F1FB;color:#185FA5}.tm-pill.open{background:#FDF0DC;color:#9A5B00}.tm-pill.none{background:#EEE;color:#666}
 .pp-box-h{font-size:12px;color:var(--text3);margin-bottom:6px}
 .pp-contact{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0;color:var(--text)}
@@ -8002,9 +8016,8 @@ function tmPaint(){
     // Each stat card is also a filter for the sheet preview below.
     var stat=function(key,n,label){ return '<button class="tm-stat'+(tm.filter===key?' active':'')+'" onclick="tmSetFilter(\''+key+'\')" aria-pressed="'+(tm.filter===key)+'"><b>'+n+'</b><span>'+label+'</span></button>'; };
     body+='<div class="tm-stats">'+stat('all',s.rows.length,'People')+stat('good',s.good.length,'Good to go')+stat('done',s.done.length,'Completed')+stat('open',s.open.length,'Still open')+stat('needs',s.needRows.length,'Desks needing equipment')+'</div>';
-    body+='<div class="tm-actions"><button class="btn btn-primary btn-sm" onclick="tmDownload(\'walk\')">⬇ Walk summary (PDF)</button>'+
-      '<button class="btn btn-primary btn-sm" onclick="tmDownload(\'completion\')">⬇ Completion report (PDF)</button>'+
-      (window.TMReport.photoDesks(d).length?'<button class="btn btn-primary btn-sm" id="tm-photo-btn" onclick="tmDownloadWithPhotos(this)">⬇ Completion report + photos (PDF)</button>':'')+
+    body+='<div class="tm-actions"><button class="btn btn-primary btn-sm" onclick="tmOpenCustomize(\'walk\')">⬇ Walk summary (PDF)…</button>'+
+      '<button class="btn btn-primary btn-sm" onclick="tmOpenCustomize(\'completion\')">⬇ Completion report (PDF)…</button>'+
       (d.permalink?'<a class="btn btn-ghost btn-sm" href="'+esc(d.permalink)+'" target="_blank" rel="noopener">Open in Smartsheet ↗</a>':'')+'</div>';
     if(d.missingColumns&&d.missingColumns.length) body+='<div class="fm-muted" style="color:var(--red)">This sheet is missing some walk columns ('+esc(d.missingColumns.join(', '))+'), so the reports may be incomplete. Start new jobs from “TEMPLATE - T-Mobile Move”.</div>';
     body+='<div class="fm-muted">Good to go = pre-move photo. Completed = post-move photo and/or JetCity Fix checked. Reports use the sheet as it is right now.</div>';
@@ -8020,14 +8033,18 @@ function tmPaint(){
 var TM_STATUS={good:['good','Good to go'],done:['done','Completed'],open:['open','Still open'],none:['none','Nothing recorded']};
 function tmSetFilter(f){ tm.filter=(tm.filter===f&&f!=='all')?'all':f; tmPaint(); }
 function tmSearch(v){ tm.q=v; tmPaintRows(); }
+// Whether a summarized row passes the preview's stat-card filter + search
+// (also used by the report's "only the rows in the preview" option).
+function tmPreviewMatch(r){
+  var q=tm.q.trim().toLowerCase();
+  if(tm.filter==='needs'){ if(!r.needs.length) return false; }
+  else if(tm.filter!=='all'&&r._status!==tm.filter) return false;
+  return !q||[r.name,r.bldg,r.floor,r.desk,r.note,r.needs.join(' '),r.curDesk].join(' ').toLowerCase().indexOf(q)>=0;
+}
 function tmPaintRows(){
   var tb=document.getElementById('tm-tbody'); if(!tb||!tm.data) return;
-  var s=window.TMReport.summarize(tm.data), q=tm.q.trim().toLowerCase();
-  var rows=s.rows.filter(function(r){
-    if(tm.filter==='needs'){ if(!r.needs.length) return false; }
-    else if(tm.filter!=='all'&&r._status!==tm.filter) return false;
-    return !q||[r.name,r.bldg,r.floor,r.desk,r.note,r.needs.join(' '),r.curDesk].join(' ').toLowerCase().indexOf(q)>=0;
-  });
+  var s=window.TMReport.summarize(tm.data);
+  var rows=s.rows.filter(tmPreviewMatch);
   var tick=function(on){ return '<td class="tm-c">'+(on?'✓':'')+'</td>'; };
   var t=function(v){ return esc(String(v==null?'':v)); };
   // A photo cell shows a thumbnail when Smartsheet gave us an image link
@@ -8136,31 +8153,165 @@ async function tmPhotoJpeg(u){
     }catch(e){ console.error('tmobile photo convert failed',e); return null; }
   })(),30000);
 }
-async function tmDownloadWithPhotos(btn){
-  if(!tm.data||btn.disabled) return;
-  var label=btn.textContent; btn.disabled=true;
-  try{
-    btn.textContent='Refreshing photo links…'; await tmEnsureFresh();
-    btn=document.getElementById('tm-photo-btn')||btn; btn.disabled=true;
-    var jobs=[];
-    window.TMReport.photoDesks(tm.data).forEach(function(r){ ['pre','post'].forEach(function(w){ if(r[w+'Url']) jobs.push({key:r.row+':'+w,u:r[w+'Url']}); }); });
-    var photos={}, done=0, missed=0;
-    btn.textContent='Preparing photos 0/'+jobs.length+'…';
-    await Promise.all(jobs.map(function(j){
-      return tmPhotoJpeg(j.u).then(function(p){ if(p) photos[j.key]=p; else missed++; done++; btn.textContent='Preparing photos '+done+'/'+jobs.length+'…'; });
-    }));
-    btn.textContent='Building PDF…';
-    tmSave(window.TMReport.completionReport(tm.data,new Date(),{photos:photos}),'Completion Report with Photos');
-    if(missed) alert(missed+' photo'+(missed===1?'':'s')+' couldn’t be loaded and show as “No photo” in the PDF.');
-  }catch(e){ console.error('photo report failed',e); alert('Couldn’t build the photo report: '+e.message); }
-  finally{ btn.disabled=false; btn.textContent=label; }
+// ── Customize report step ─────────────────────────────────────────────────────
+// Before a PDF is made, pick its sections and columns and what to leave out
+// (rows from the preview filter, buildings/floors, individual people, note
+// text). Left-out rows are removed before the PDF is built, so they never
+// reach the file. "Versions" save SETTINGS ONLY (sections, columns, hide
+// notes) to Azure via /api/tmobile/presets for the whole planning team; the
+// per-report leave-out picks (names, floors) are never stored.
+var tmPresets=null, tmCx=null;
+var TM_BUILTIN_PRESETS=[
+  {id:'all',name:'Everything',builtin:true},
+  {id:'client',name:'Client copy (no internal notes)',builtin:true,
+   sections:{walk:['totals','bydesk','notFound'],completion:['summary','completed','good','alsoChecked','open','photos','appendix']},
+   columns:['bldg','floor','desk'],hideNotes:true},
+];
+function tmAllSections(kind){ return window.TMReport.SECTIONS[kind].map(function(s){ return s[0]; }).filter(function(k){ return k!=='photos'; }); }
+function tmPresetList(){ return TM_BUILTIN_PRESETS.concat(tmPresets||[]); }
+async function tmPresetsSave(list){
+  var token=await getApiToken();
+  var res=await fetch('/api/tmobile/presets',{method:'PUT',headers:{'X-Jetcity-Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({presets:list})});
+  if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){ } throw new Error(m); }
+  tmPresets=(await res.json()).presets||[];
 }
 
-function tmDownload(kind){
+async function tmOpenCustomize(kind){
   if(!tm.data||!window.TMReport) return;
-  var now=new Date();
-  var bytes=kind==='walk'? window.TMReport.walkSummary(tm.data,now) : window.TMReport.completionReport(tm.data,now);
-  tmSave(bytes,kind==='walk'?'Walk Summary':'Completion Report');
+  if(!tmPresets){ try{ tmPresets=(await tmFetch('/presets')).presets||[]; }catch(e){ console.error('tmobile presets failed',e); tmPresets=[]; } }
+  tmCx={kind:kind,preset:'all',sec:new Set(),cols:new Set(),hideNotes:false,onlyPreview:false,offFloors:new Set(),offRows:new Set(),pq:'',busy:false};
+  tmCxApplyPreset('all');
+  tmCxPaint();
+}
+function tmCxApplyPreset(id){
+  var p=tmPresetList().find(function(x){ return x.id===id; })||TM_BUILTIN_PRESETS[0];
+  var secs=p.sections&&p.sections[tmCx.kind]&&p.sections[tmCx.kind].length? p.sections[tmCx.kind] : tmAllSections(tmCx.kind);
+  tmCx.preset=p.id; tmCx.sec=new Set(secs);
+  tmCx.cols=new Set(p.columns&&p.columns.length? p.columns : window.TMReport.DEFAULT_COLUMNS);
+  tmCx.hideNotes=!!p.hideNotes;
+}
+function tmCxFloorKey(r){ var m=/building\s*(\w+)/i.exec(r.bldg||''); return (m?'Bldg '+m[1]:(r.bldg||'No building'))+'|'+(r.floor||'—'); }
+function tmCxRows(){
+  return window.TMReport.summarize(tm.data).rows.filter(function(r){
+    if(tmCx.onlyPreview&&!tmPreviewMatch(r)) return false;
+    if(tmCx.offFloors.has(tmCxFloorKey(r))) return false;
+    return !tmCx.offRows.has(r.row);
+  });
+}
+
+function tmCxPaint(){
+  var el=document.getElementById('tm-cx');
+  if(!el){ el=document.createElement('div'); el.id='tm-cx'; document.body.appendChild(el); document.addEventListener('keydown',tmCxKey); }
+  var R=window.TMReport, kind=tmCx.kind, all=R.summarize(tm.data);
+  var chk=function(attrs,checked,label,disabled){ return '<label class="tm-cx-chk"><input type="checkbox" '+attrs+(checked?' checked':'')+(disabled?' disabled':'')+'> '+label+'</label>'; };
+  var presetOpts=tmPresetList().map(function(p){ return '<option value="'+esc(p.id)+'"'+(p.id===tmCx.preset?' selected':'')+'>'+esc(p.name)+'</option>'; }).join('');
+  var cur=tmPresetList().find(function(p){ return p.id===tmCx.preset; })||{};
+  var photoN=kind==='completion'? R.photoDesks({name:tm.data.name,rows:tmCxRows()}).length : 0;
+  var sections=R.SECTIONS[kind].map(function(s){
+    var label=esc(s[1])+(s[0]==='photos'? ' <span class="fm-muted">('+photoN+' desks; downloads their photos, so it takes longer)</span>' : '');
+    return chk('onchange="tmCxSet(\'sec\',\''+s[0]+'\',this.checked)"',tmCx.sec.has(s[0]),label,s[0]==='photos'&&!photoN);
+  }).join('');
+  var cols=chk('',true,'Name (always)',true)+R.COLUMNS.map(function(c){
+    var hid=c[0]==='note'&&tmCx.hideNotes;
+    return chk('onchange="tmCxSet(\'cols\',\''+c[0]+'\',this.checked)"',tmCx.cols.has(c[0])&&!hid,esc(c[1])+(hid?' <span class="fm-muted">(hidden)</span>':''),hid);
+  }).join('');
+  var floors={}; all.rows.forEach(function(r){ var k=tmCxFloorKey(r); floors[k]=(floors[k]||0)+1; });
+  var floorBoxes=Object.keys(floors).sort(function(a,b){ return a.localeCompare(b,undefined,{numeric:true}); }).map(function(k){
+    var p=k.split('|'); return chk('data-floor="'+esc(k)+'" onchange="tmCxFloor(this.dataset.floor,this.checked)"',!tmCx.offFloors.has(k),esc(p[0]+' · Fl '+p[1])+' <span class="fm-muted">('+floors[k]+')</span>');
+  }).join('');
+  var previewN=all.rows.filter(tmPreviewMatch).length;
+  var previewDesc=(tm.filter!=='all'?({good:'Good to go',done:'Completed',open:'Still open',needs:'Needs equipment'}[tm.filter]||''):'')+(tm.q.trim()?(tm.filter!=='all'?' + ':'')+'search “'+esc(tm.q.trim())+'”':'');
+  el.innerHTML='<div class="tm-modal" onclick="if(event.target===this)tmCxClose()"><div class="tm-modal-card" role="dialog" aria-modal="true" aria-labelledby="tm-cx-title">'+
+    '<h2 id="tm-cx-title">'+(kind==='walk'?'Walk summary':'Completion report')+': choose what goes in</h2>'+
+    '<div class="tm-cx-row"><label>Version <select onchange="tmCxPreset(this.value)">'+presetOpts+'</select></label>'+
+      '<button class="btn btn-ghost btn-sm" onclick="tmCxSavePreset()">Save as new version…</button>'+
+      (cur.builtin?'':'<button class="btn btn-ghost btn-sm" onclick="tmCxDeletePreset()">Delete version</button>')+'</div>'+
+    '<div class="fm-muted" style="margin:-4px 0 10px">Versions are shared with the planning team and save only these settings, never names or buildings.</div>'+
+    '<fieldset class="tm-cx-set"><legend>Sections</legend><div class="tm-cx-grid">'+sections+'</div></fieldset>'+
+    '<fieldset class="tm-cx-set"><legend>Columns in the tables</legend><div class="tm-cx-grid">'+cols+'</div></fieldset>'+
+    '<fieldset class="tm-cx-set"><legend>Leave out</legend>'+
+      chk('onchange="tmCxSetFlag(\'hideNotes\',this.checked)"',tmCx.hideNotes,'Hide note text (keeps the counts, drops what techs typed)')+
+      chk('onchange="tmCxSetFlag(\'onlyPreview\',this.checked)"',tmCx.onlyPreview,'Only the rows shown in the preview <span class="fm-muted">('+previewN+(previewDesc?': '+previewDesc:': no filter set')+')</span>',!previewDesc)+
+      '<div class="tm-cx-sub">Buildings and floors</div><div class="tm-cx-grid">'+floorBoxes+'</div>'+
+      '<div class="tm-cx-sub">People</div><div class="tm-cx-row"><input type="search" placeholder="Find a person, desk or note…" aria-label="Find people" value="'+esc(tmCx.pq)+'" oninput="tmCx.pq=this.value;tmCxPaintPeople()">'+
+        '<button class="btn btn-ghost btn-sm" onclick="tmCxPeopleAll(true)">Include shown</button><button class="btn btn-ghost btn-sm" onclick="tmCxPeopleAll(false)">Leave out shown</button></div>'+
+      '<div class="tm-cx-people" id="tm-cx-people"></div></fieldset>'+
+    '<div class="tm-cx-foot"><span id="tm-cx-count" class="fm-muted"></span><span style="flex:1"></span>'+
+      '<button class="btn btn-ghost btn-sm" onclick="tmCxClose()">Cancel</button><button class="btn btn-primary btn-sm" id="tm-cx-go" onclick="tmCxCreate(this)">Create PDF</button></div>'+
+    '</div></div>';
+  tmCxPaintPeople();
+}
+function tmCxPeopleShown(){
+  var q=tmCx.pq.trim().toLowerCase();
+  return window.TMReport.summarize(tm.data).rows.filter(function(r){ return !q||[r.name,r.desk,r.note,r.bldg].join(' ').toLowerCase().indexOf(q)>=0; });
+}
+function tmCxPaintPeople(){
+  var box=document.getElementById('tm-cx-people'); if(!box) return;
+  var rows=tmCxPeopleShown();
+  box.innerHTML=rows.map(function(r){
+    var where=[(/building\s*(\w+)/i.exec(r.bldg||'')||[])[1]?'Bldg '+(/building\s*(\w+)/i.exec(r.bldg)[1]):'',r.desk].filter(Boolean).join(', ');
+    return '<label class="tm-cx-chk"><input type="checkbox" data-row="'+r.row+'" onchange="tmCxPerson(+this.dataset.row,this.checked)"'+(tmCx.offRows.has(r.row)?'':' checked')+'> '+esc(r.name)+(where?' <span class="fm-muted">'+esc(where)+'</span>':'')+'</label>';
+  }).join('')||'<div class="fm-muted" style="padding:6px">No one matches.</div>';
+  tmCxCount();
+}
+function tmCxCount(){
+  var el=document.getElementById('tm-cx-count'), go=document.getElementById('tm-cx-go'); if(!el) return;
+  var n=tmCxRows().length, total=tm.data.rows.length, secs=tmCx.sec.size;
+  el.textContent='Covers '+n+' of '+total+' people · '+secs+' section'+(secs===1?'':'s');
+  if(go) go.disabled=tmCx.busy||!n||!secs;
+}
+function tmCxSet(which,key,on){ var set=tmCx[which]; if(on) set.add(key); else set.delete(key); tmCxCount(); }
+function tmCxSetFlag(flag,on){ tmCx[flag]=on; tmCxPaint(); }
+function tmCxFloor(key,on){ if(on) tmCx.offFloors.delete(key); else tmCx.offFloors.add(key); tmCxCount(); }
+function tmCxPerson(row,on){ if(on) tmCx.offRows.delete(row); else tmCx.offRows.add(row); tmCxCount(); }
+function tmCxPeopleAll(on){ tmCxPeopleShown().forEach(function(r){ if(on) tmCx.offRows.delete(r.row); else tmCx.offRows.add(r.row); }); tmCxPaintPeople(); }
+function tmCxPreset(id){ tmCxApplyPreset(id); tmCxPaint(); }
+function tmCxKey(e){ if(e.key==='Escape'&&document.getElementById('tm-cx')) tmCxClose(); }
+function tmCxClose(){ var el=document.getElementById('tm-cx'); if(el) el.remove(); document.removeEventListener('keydown',tmCxKey); tmCx=null; }
+
+async function tmCxSavePreset(){
+  var name=(prompt('Name this version (for example “Client copy”). It saves only the sections, columns and hide-notes setting:')||'').trim();
+  if(!name) return;
+  var other=tmCx.kind==='walk'?'completion':'walk';
+  var p={id:'p'+Date.now().toString(36),name:name,columns:Array.from(tmCx.cols),hideNotes:tmCx.hideNotes,sections:{}};
+  p.sections[tmCx.kind]=Array.from(tmCx.sec); p.sections[other]=tmAllSections(other);
+  try{ await tmPresetsSave((tmPresets||[]).concat([p])); tmCx.preset=p.id; tmCxPaint(); }
+  catch(e){ alert('Couldn’t save the version: '+e.message); }
+}
+async function tmCxDeletePreset(){
+  var cur=(tmPresets||[]).find(function(p){ return p.id===tmCx.preset; }); if(!cur) return;
+  if(!confirm('Delete the version “'+cur.name+'” for everyone on the planning team?')) return;
+  try{ await tmPresetsSave(tmPresets.filter(function(p){ return p.id!==cur.id; })); tmCxApplyPreset('all'); tmCxPaint(); }
+  catch(e){ alert('Couldn’t delete the version: '+e.message); }
+}
+
+async function tmCxCreate(btn){
+  if(!tmCx||tmCx.busy) return;
+  var cx=tmCx, rows=tmCxRows(); if(!rows.length||!cx.sec.size) return;
+  cx.busy=true; btn.disabled=true; var label=btn.textContent;
+  try{
+    var total=tm.data.rows.length;
+    var opts={sections:Array.from(cx.sec),columns:Array.from(cx.cols),hideNotes:cx.hideNotes,
+      scope:rows.length<total? 'This report covers '+rows.length+' of '+total+' people on the sheet.' : ''};
+    var want=cx.kind==='completion'&&cx.sec.has('photos'), missed=0;
+    if(want){
+      btn.textContent='Refreshing photo links…'; await tmEnsureFresh(); rows=tmCxRows();
+      var jobs=[]; window.TMReport.photoDesks({name:tm.data.name,rows:rows}).forEach(function(r){ ['pre','post'].forEach(function(w){ if(r[w+'Url']) jobs.push({key:r.row+':'+w,u:r[w+'Url']}); }); });
+      var photos={}, done=0;
+      btn.textContent='Preparing photos 0/'+jobs.length+'…';
+      await Promise.all(jobs.map(function(j){
+        return tmPhotoJpeg(j.u).then(function(p){ if(p) photos[j.key]=p; else missed++; done++; btn.textContent='Preparing photos '+done+'/'+jobs.length+'…'; });
+      }));
+      opts.photos=photos;
+    }
+    btn.textContent='Building PDF…';
+    var sheet={id:tm.data.id,name:tm.data.name,rows:rows};
+    var bytes=cx.kind==='walk'? window.TMReport.walkSummary(sheet,new Date(),opts) : window.TMReport.completionReport(sheet,new Date(),opts);
+    var p=tmPresetList().find(function(x){ return x.id===cx.preset; });
+    tmSave(bytes,(cx.kind==='walk'?'Walk Summary':'Completion Report')+(p&&p.id!=='all'?' ('+p.name.replace(/\s*\(.*\)$/,'')+')':''));
+    if(missed) alert(missed+' photo'+(missed===1?'':'s')+' couldn’t be loaded and show as “No photo” in the PDF.');
+    tmCxClose();
+  }catch(e){ console.error('tmobile report failed',e); alert('Couldn’t build the report: '+e.message); cx.busy=false; btn.disabled=false; btn.textContent=label; }
 }
 function tmSave(bytes,label){
   var now=new Date();
