@@ -979,17 +979,48 @@ function pickIdentifierColumnId(columns, rows, imageColumnIds) {
     return { fill, unique, short };
   };
   const looksLikeIds = (s) => s.fill >= 0.5 && s.unique >= 0.9 && s.short >= 0.9;
-  if (primary && !primary.hidden && looksLikeIds(stats(primary))) return primary.id;
   const candidates = (columns || []).filter((c) => !c.hidden && c.type !== 'CHECKBOX'
     && !(imageColumnIds && imageColumnIds.has(c.id)) && !PHOTO_TITLE_RE.test(c.title || ''));
-  let best = null;
-  candidates.forEach((c) => {
-    const s = stats(c);
-    if (!looksLikeIds(s)) return;
-    const score = s.fill * s.unique + (ID_TITLE_RE.test(c.title || '') ? 1 : 0);
-    if (!best || score > best.score) best = { id: c.id, score };
-  });
+  // Best non-primary column that looks like ids. An id-style title (desk /
+  // station / office / #) adds 1; a "new / destination" title adds 0.5, so a
+  // move list's New Station beats its Current Station.
+  const bestOther = (requireIdTitle) => {
+    let best = null;
+    candidates.forEach((c) => {
+      if (primary && c.id === primary.id) return;
+      const title = c.title || '';
+      if (requireIdTitle && !ID_TITLE_RE.test(title)) return;
+      const s = stats(c);
+      if (!looksLikeIds(s)) return;
+      const score = s.fill * s.unique + (ID_TITLE_RE.test(title) ? 1 : 0) + (DEST_TITLE_RE.test(title) ? 0.5 : 0);
+      if (!best || score > best.score) best = { id: c.id, score };
+    });
+    return best;
+  };
+  if (primary && !primary.hidden && looksLikeIds(stats(primary))) {
+    // A move list keyed by person ("Name") also looks unique and short, but
+    // floor-map pins are desk numbers: when the primary column holds people's
+    // names, use a station/desk-titled column instead if the sheet has one.
+    if (!ID_TITLE_RE.test(primary.title || '') && mostlyPersonNames(rows, primary.id)) {
+      const alt = bestOther(true);
+      if (alt) return alt.id;
+    }
+    return primary.id;
+  }
+  const best = bestOther(false);
   return best ? best.id : (primary ? primary.id : null);
+}
+const DEST_TITLE_RE = /\b(new|destination|dest|to)\b/i;
+// True when most filled cells in the column read like "First Last" names.
+function mostlyPersonNames(rows, columnId) {
+  let filled = 0, names = 0;
+  (rows || []).forEach((row) => {
+    const v = cellText((row.cells || []).find((x) => x.columnId === columnId));
+    if (!v) return;
+    filled++;
+    if (/^[A-Za-z][A-Za-z.'À-ɏ-]*(,? [A-Za-z][A-Za-z.'À-ɏ-]*)+( \([^)]*\))?$/.test(v) && !/\d/.test(v)) names++;
+  });
+  return filled > 0 && names / filled >= 0.8;
 }
 
 // How the viewer reads a fetched sheet's columns: classified columns plus the "done" (progress) column.
