@@ -1,7 +1,8 @@
 const { app } = require('@azure/functions');
 const { randomUUID } = require('crypto');
-const { requireUser, requirePlanner, authErrorResponse } = require('../lib/auth');
+const { requireUser, requirePlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
+const ss = require('../lib/smartsheet');
 
 // Project plans (the "Project Planning" tab). Any signed-in @jetcityit.com user
 // can READ a plan (crew pull it up on-site); only the Project Planners group
@@ -62,6 +63,17 @@ function sanitizeTimeline(r) {
   return { task, when, lead };
 }
 
+// Linked Smartsheet ({id, name, url}) or null. The URL must be a Smartsheet
+// app link, so a plan can never carry an arbitrary link to somewhere else.
+function sanitizeSheet(s) {
+  if (!s || typeof s !== 'object') return null;
+  const id = clean(s.id, 20);
+  if (!/^\d+$/.test(id)) return null;
+  let url = clean(s.url, 300);
+  if (!/^https:\/\/app\.smartsheet\.(com|eu|au)\//.test(url)) url = '';
+  return { id, name: clean(s.name, 200) || id, url };
+}
+
 function arr(v, fn, cap) {
   return (Array.isArray(v) ? v : []).map(fn).filter(Boolean).slice(0, cap);
 }
@@ -75,6 +87,7 @@ function sanitizePlan(body, id, user) {
     projectId: clean(body.projectId, 60),
     jobId: clean(body.jobId, 60),
     client: clean(body.client, 200),
+    sheet: sanitizeSheet(body.sheet),
     planDate: clean(body.planDate, 60),
     bisDate: clean(body.bisDate, 60),
     managers: arr(body.managers, sanitizeContact, MAX.contacts),
@@ -182,6 +195,41 @@ app.http('plans', {
       return { jsonBody: { plan: resource || plan } };
     } catch (e) {
       return authErrorResponse(e, context);
+    }
+  },
+});
+
+// "📊 Link Smartsheet" on the plan form (Project Planners only).
+// GET /api/plan-sheets?q=<term>  -> account-wide sheet-name search
+// GET /api/plan-sheets?id=<id>   -> that sheet's name + permalink
+// Same Smartsheet search the Job Sheets tab uses, but gated to Planners
+// (Job Sheets is Testers-only). Nothing is stored here; the plan save stores
+// the picked {id, name, url}.
+app.http('planSheets', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'plan-sheets',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requirePlanner(user);
+      const id = (request.query.get('id') || '').trim();
+      if (id) {
+        if (!/^\d{1,20}$/.test(id)) return { status: 400, jsonBody: { error: 'Bad sheet id' } };
+        try {
+          return { jsonBody: { sheet: await ss.fetchSheetInfo(id) } };
+        } catch (e) {
+          if (e.status === 404 || e.status === 403) return { status: 404, jsonBody: { error: 'Sheet not found' } };
+          throw e;
+        }
+      }
+      const q = (request.query.get('q') || '').trim().slice(0, 100);
+      if (!q) return { jsonBody: { results: [] } };
+      return { jsonBody: { results: await ss.searchSheets(q) } };
+    } catch (e) {
+      if (e instanceof AuthError) return authErrorResponse(e, context);
+      try { context.error(e); } catch (_) { /* logging must never break the response */ }
+      return { status: 500, jsonBody: { error: 'Smartsheet lookup failed' } };
     }
   },
 });

@@ -7914,6 +7914,7 @@ var ppCurrent=null;     // plan shown in the detail view (for Edit/Delete)
 var ppEditingId=null;   // id being edited (null = creating a new plan)
 var ppEditingJobId=null;   // linked dispatch job id carried through the edit form (jobId isn't a visible field)
 var ppEditingClient='';    // linked job's client, same treatment
+var ppEditingSheet=null;   // linked Smartsheet {id,name,url} on the edit form, or null
 
 function ppEl(){ return document.getElementById('pp-root'); }
 function ppTel(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
@@ -8344,7 +8345,8 @@ function ppContactBox(title,list,showOrg){
 function ppDetailBodyHtml(p){
   var discT=ppTotal(p.disconnect), reconT=ppTotal(p.reconnect);
   var chips=function(rows){ return (rows||[]).map(function(r){ return '<span class="pp-chip">'+esc(r.floor||'')+'<b>'+(parseInt(r.hc,10)||0)+'</b></span>'; }).join(''); };
-  var html='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
+  var html=p.sheet&&p.sheet.id?'<div style="font-size:13px;margin-bottom:12px">📊 Smartsheet: <b>'+ppSheetLinkHtml(p.sheet)+'</b></div>':'';
+  html+='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
   if(p.scope) html+='<div class="pp-sec"><div class="pp-sec-h">Move scope</div><div class="pp-scope">'+esc(p.scope)+'</div></div>';
   if((p.disconnect&&p.disconnect.length)||(p.reconnect&&p.reconnect.length)){
     html+='<div class="pp-sec pp-two"><div><div class="pp-sec-h" style="display:flex;justify-content:space-between;align-items:baseline">Disconnect <span class="pp-total">total <b>'+discT.toLocaleString()+'</b> HC</span></div><div class="pp-chips">'+(chips(p.disconnect)||'<span style="color:var(--text3);font-size:13px">—</span>')+'</div></div>'
@@ -8382,6 +8384,7 @@ function ppTlErow(r){ r=r||{}; return '<div class="pp-erow" data-erow>'+ppInput(
 function openPlanEdit(plan){
   ppWire(); var root=ppEl(); if(!root) return; plan=plan||{}; ppEditingId=plan.id||null;
   ppEditingJobId=plan.jobId||null; ppEditingClient=plan.client||'';
+  ppEditingSheet=plan.sheet&&plan.sheet.id?plan.sheet:null;
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
@@ -8389,7 +8392,9 @@ function openPlanEdit(plan){
   html+='<form id="pp-form" onsubmit="return false">';
   html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')
     +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
-    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-link style="margin-top:6px">🔗 Link to calendar</button></div>'
+    +'<div data-pp-sheetnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppSheetNoteHtml()+'</div>'
+    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-link style="margin-top:6px">🔗 Link to calendar</button>'
+    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-sheet style="margin-top:6px">📊 Link Smartsheet</button></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
     +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
     +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
@@ -8413,7 +8418,7 @@ async function ppSave(root){
   var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
   var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
   var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'),
-    jobId:ppEditingJobId||'', client:ppEditingClient||'',
+    jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null,
     scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
     managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
     disconnect:ppCollectRows(root,'disconnect'), reconnect:ppCollectRows(root,'reconnect'), timeline:ppCollectRows(root,'timeline') };
@@ -8498,6 +8503,8 @@ function ppOnClick(ev){
   if(ev.target.closest('[data-cancel]')){ if(ppEditingId) openPlan(ppEditingId); else renderPlanning(); return; }
   if(ev.target.closest('[data-pp-link]')){ ppPickJobModal(function(job){ ppApplyJobLink(root,job); }); return; }
   if(ev.target.closest('[data-pp-unlink]')){ ppEditingJobId=null; ppEditingClient=''; ppRenderLinkNote(root); return; }
+  if(ev.target.closest('[data-pp-sheet]')){ ppPickSheetModal(function(sheet){ ppEditingSheet=sheet; ppRenderSheetNote(root); }); return; }
+  if(ev.target.closest('[data-pp-sheet-unlink]')){ ppEditingSheet=null; ppRenderSheetNote(root); return; }
   if(ev.target.closest('[data-save]')){ ppSave(root); return; }
 }
 
@@ -8533,6 +8540,65 @@ function ppApplyJobLink(root,job){
   }
   ppRenderLinkNote(root);
 }
+// Linked Smartsheet (plan.sheet = {id,name,url}). Picked from the account-wide
+// Smartsheet search via /api/plan-sheets (Planners only); the link opens the
+// sheet in Smartsheet itself, so viewers still need their own Smartsheet access.
+function ppSheetLinkHtml(s){
+  if(!s||!s.id) return '';
+  var name=esc(s.name||s.id);
+  return s.url?'<a href="'+esc(s.url)+'" target="_blank" rel="noopener">'+name+' ↗</a>':name;
+}
+function ppSheetNoteHtml(){
+  if(!ppEditingSheet) return '';
+  return '📊 Smartsheet: <b>'+ppSheetLinkHtml(ppEditingSheet)+'</b> <button type="button" class="btn btn-ghost btn-sm" data-pp-sheet-unlink style="padding:0 4px;font-size:11px">Unlink</button>';
+}
+function ppRenderSheetNote(root){ var n=root.querySelector('[data-pp-sheetnote]'); if(n) n.innerHTML=ppSheetNoteHtml(); }
+async function ppSheetFetch(qs){
+  var token=await getApiToken();
+  var res=await fetch('/api/plan-sheets?'+qs,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){ } throw new Error(m); }
+  return res.json();
+}
+function ppPickSheetModal(onPick){
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Link a Smartsheet</span><button class="dp-close" data-ps="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><input type="text" data-ps-q placeholder="Search Smartsheet by sheet name…" style="width:100%;margin-bottom:10px"/><div data-ps-results style="max-height:50vh;overflow:auto"><div style="padding:8px 2px;color:var(--text3);font-size:13px">Type at least 2 letters.</div></div></div>'
+    +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Opens in Smartsheet — viewers need their own access</span><button class="btn btn-sm" data-ps="close">Cancel</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); clearTimeout(timer); }
+  document.addEventListener('keydown',onKey);
+  var q=ov.querySelector('[data-ps-q]'), results=ov.querySelector('[data-ps-results]');
+  var reqId=0, timer=null, busy=false;
+  var note=function(t,red){ results.innerHTML='<div style="padding:8px 2px;color:var('+(red?'--red':'--text3')+');font-size:13px">'+esc(t)+'</div>'; };
+  async function runSearch(){
+    var term=q.value.trim(), myReq=++reqId;
+    if(term.length<2){ note('Type at least 2 letters.'); return; }
+    note('Searching…');
+    try{
+      var list=(await ppSheetFetch('q='+encodeURIComponent(term))).results||[];
+      if(myReq!==reqId) return;
+      results._list=list;
+      results.innerHTML=list.length?list.map(function(s,i){
+        return '<button type="button" class="pp-job-pick" data-ps-idx="'+i+'" style="display:block;width:100%;text-align:left;padding:8px 6px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;color:inherit">'
+          +'<div style="font-weight:600;font-size:14px">'+esc(s.name)+'</div>'
+          +(s.workspaceName?'<div style="font-size:12px;color:var(--text3)">'+esc(s.workspaceName)+'</div>':'')+'</button>';
+      }).join(''):'<div style="padding:8px 2px;color:var(--text3);font-size:13px">No matching sheets.</div>';
+    }catch(e){ if(myReq===reqId) note('Couldn’t search Smartsheet: '+String(e.message||e).slice(0,100),true); }
+  }
+  q.addEventListener('input',function(){ clearTimeout(timer); timer=setTimeout(runSearch,350); });
+  ov.addEventListener('click',async function(ev){
+    if(ev.target===ov||ev.target.closest('[data-ps="close"]')){ cleanup(); return; }
+    var btn=ev.target.closest('[data-ps-idx]'); if(!btn||busy) return;
+    var s=results._list&&results._list[parseInt(btn.getAttribute('data-ps-idx'),10)]; if(!s) return;
+    busy=true; reqId++; note('Linking “'+s.name+'”…');
+    try{ var info=(await ppSheetFetch('id='+encodeURIComponent(s.id))).sheet; cleanup(); onPick({id:info.id,name:info.name,url:info.permalink||''}); }
+    catch(e){ busy=false; note('Couldn’t open that sheet: '+String(e.message||e).slice(0,100),true); }
+  });
+  setTimeout(function(){ q.focus(); },0);
+}
+
 // Small search-and-pick overlay over JCITDispatch.searchJobs (the only way
 // top-level pp* code can reach the live calendar's job list).
 function ppPickJobModal(onPick){

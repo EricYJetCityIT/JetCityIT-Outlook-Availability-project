@@ -782,6 +782,25 @@ async function searchSheets(query) {
     }));
 }
 
+// One sheet's name + permalink, without its rows (rowsModifiedSince=now
+// returns the sheet header with no rows). Used to link a Project Plan to a
+// Smartsheet.
+async function fetchSheetInfo(sheetId) {
+  if (!/^\d{1,20}$/.test(String(sheetId))) throw new Error('Bad sheet id');
+  const since = encodeURIComponent(new Date().toISOString());
+  const res = await fetch(`${SMARTSHEET_API_BASE}/sheets/${sheetId}?rowsModifiedSince=${since}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    const err = new Error(`Smartsheet sheet error ${res.status}: ${t}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  return { id: String(data.id), name: data.name || String(data.id), permalink: data.permalink || '' };
+}
+
 // Lists the sheets directly in a workspace (id + name), newest-modified first.
 async function fetchWorkspaceSheets(workspaceId) {
   const res = await fetch(`${SMARTSHEET_API_BASE}/workspaces/${encodeURIComponent(workspaceId)}`, {
@@ -1156,6 +1175,7 @@ module.exports = {
   deleteSheetAttachment,
   fetchAllWorkspaces,
   searchSheets,
+  fetchSheetInfo,
   fetchWorkspaceSheets,
   fetchGenericSheet,
   fetchImageUrls,
