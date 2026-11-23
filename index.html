@@ -8393,8 +8393,9 @@ function openPlanEdit(plan){
   html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')
     +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
     +'<div data-pp-sheetnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppSheetNoteHtml()+'</div>'
-    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-link style="margin-top:6px">🔗 Link to calendar</button>'
-    +'<button type="button" class="btn btn-ghost btn-sm" data-pp-sheet style="margin-top:6px">📊 Link Smartsheet</button></div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
+    +'<button type="button" class="btn btn-sm" data-pp-link style="color:var(--text);font-weight:600">🔗 Link to calendar</button>'
+    +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button></div></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
     +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
     +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
