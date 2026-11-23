@@ -74,6 +74,15 @@ function sanitizeSheet(s) {
   return { id, name: clean(s.name, 200) || id, url };
 }
 
+// Linked floor map ({id, name}) -- id is the Floor Maps doc id. Only the id and
+// a display name are kept; the map itself stays Testers-only in floormaps.js.
+function sanitizeMap(m) {
+  if (!m || typeof m !== 'object') return null;
+  const id = clean(m.id, 80);
+  if (!/^(floormap:)?[0-9a-f-]{36}$/i.test(id)) return null;
+  return { id: id.indexOf('floormap:') === 0 ? id : 'floormap:' + id, name: clean(m.name, 200) || 'Floor map' };
+}
+
 function arr(v, fn, cap) {
   return (Array.isArray(v) ? v : []).map(fn).filter(Boolean).slice(0, cap);
 }
@@ -88,6 +97,7 @@ function sanitizePlan(body, id, user) {
     jobId: clean(body.jobId, 60),
     client: clean(body.client, 200),
     sheet: sanitizeSheet(body.sheet),
+    maps: arr(body.maps, sanitizeMap, 20),
     planDate: clean(body.planDate, 60),
     bisDate: clean(body.bisDate, 60),
     managers: arr(body.managers, sanitizeContact, MAX.contacts),

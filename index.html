@@ -7915,6 +7915,7 @@ var ppEditingId=null;   // id being edited (null = creating a new plan)
 var ppEditingJobId=null;   // linked dispatch job id carried through the edit form (jobId isn't a visible field)
 var ppEditingClient='';    // linked job's client, same treatment
 var ppEditingSheet=null;   // linked Smartsheet {id,name,url} on the edit form, or null
+var ppEditingMaps=[];      // linked floor maps [{id,name}] on the edit form (Testers pick them)
 
 function ppEl(){ return document.getElementById('pp-root'); }
 function ppTel(p){ return 'tel:'+String(p||'').replace(/[^0-9+]/g,''); }
@@ -8346,6 +8347,7 @@ function ppDetailBodyHtml(p){
   var discT=ppTotal(p.disconnect), reconT=ppTotal(p.reconnect);
   var chips=function(rows){ return (rows||[]).map(function(r){ return '<span class="pp-chip">'+esc(r.floor||'')+'<b>'+(parseInt(r.hc,10)||0)+'</b></span>'; }).join(''); };
   var html=p.sheet&&p.sheet.id?'<div style="font-size:13px;margin-bottom:12px">📊 Smartsheet: <b>'+ppSheetLinkHtml(p.sheet)+'</b></div>':'';
+  html+=ppMapLinksHtml(p);
   html+='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
   if(p.scope) html+='<div class="pp-sec"><div class="pp-sec-h">Move scope</div><div class="pp-scope">'+esc(p.scope)+'</div></div>';
   if((p.disconnect&&p.disconnect.length)||(p.reconnect&&p.reconnect.length)){
@@ -8385,6 +8387,7 @@ function openPlanEdit(plan){
   ppWire(); var root=ppEl(); if(!root) return; plan=plan||{}; ppEditingId=plan.id||null;
   ppEditingJobId=plan.jobId||null; ppEditingClient=plan.client||'';
   ppEditingSheet=plan.sheet&&plan.sheet.id?plan.sheet:null;
+  ppEditingMaps=Array.isArray(plan.maps)?plan.maps.slice():[];
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
@@ -8393,9 +8396,11 @@ function openPlanEdit(plan){
   html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')
     +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
     +'<div data-pp-sheetnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppSheetNoteHtml()+'</div>'
+    +'<div data-pp-mapnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppMapNoteHtml()+'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
     +'<button type="button" class="btn btn-sm" data-pp-link style="color:var(--text);font-weight:600">🔗 Link to calendar</button>'
-    +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button></div></div>'
+    +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>'
+    +(currentUserIsTester?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor map</button>':'')+'</div></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
     +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
     +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
@@ -8419,7 +8424,7 @@ async function ppSave(root){
   var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
   var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
   var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'),
-    jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null,
+    jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null, maps:ppEditingMaps,
     scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
     managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
     disconnect:ppCollectRows(root,'disconnect'), reconnect:ppCollectRows(root,'reconnect'), timeline:ppCollectRows(root,'timeline') };
@@ -8506,6 +8511,8 @@ function ppOnClick(ev){
   if(ev.target.closest('[data-pp-unlink]')){ ppEditingJobId=null; ppEditingClient=''; ppRenderLinkNote(root); return; }
   if(ev.target.closest('[data-pp-sheet]')){ ppPickSheetModal(function(sheet){ ppEditingSheet=sheet; ppRenderSheetNote(root); }); return; }
   if(ev.target.closest('[data-pp-sheet-unlink]')){ ppEditingSheet=null; ppRenderSheetNote(root); return; }
+  if(ev.target.closest('[data-pp-map]')){ ppPickMapModal(function(m){ if(!ppEditingMaps.some(function(x){ return x.id===m.id; })) ppEditingMaps.push(m); ppRenderMapNote(root); }); return; }
+  var mu=ev.target.closest('[data-pp-map-unlink]'); if(mu){ var mid=mu.getAttribute('data-pp-map-unlink'); ppEditingMaps=ppEditingMaps.filter(function(x){ return x.id!==mid; }); ppRenderMapNote(root); return; }
   if(ev.target.closest('[data-save]')){ ppSave(root); return; }
 }
 
@@ -8596,6 +8603,68 @@ function ppPickSheetModal(onPick){
     busy=true; reqId++; note('Linking “'+s.name+'”…');
     try{ var info=(await ppSheetFetch('id='+encodeURIComponent(s.id))).sheet; cleanup(); onPick({id:info.id,name:info.name,url:info.permalink||''}); }
     catch(e){ busy=false; note('Couldn’t open that sheet: '+String(e.message||e).slice(0,100),true); }
+  });
+  setTimeout(function(){ q.focus(); },0);
+}
+
+// Linked floor maps (plan.maps = [{id,name}]). Floor Maps is Testers-only, so
+// only Testers get the picker and see the map links; other planners editing the
+// plan keep whatever maps are already linked (ppEditingMaps is saved as-is).
+function ppMapNoteHtml(){
+  if(!currentUserIsTester||!ppEditingMaps.length) return '';
+  return '🗺️ Floor maps: '+ppEditingMaps.map(function(m){
+    return '<b>'+esc(m.name)+'</b> <button type="button" class="btn btn-ghost btn-sm" data-pp-map-unlink="'+esc(m.id)+'" style="padding:0 4px;font-size:11px">Unlink</button>';
+  }).join(' · ');
+}
+function ppRenderMapNote(root){ var n=root.querySelector('[data-pp-mapnote]'); if(n) n.innerHTML=ppMapNoteHtml(); }
+function ppMapLinksHtml(p){
+  if(!currentUserIsTester||!p||!Array.isArray(p.maps)||!p.maps.length) return '';
+  return '<div class="pp-noprint" style="font-size:13px;margin-bottom:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">🗺️ Floor maps:'
+    +p.maps.map(function(m){ return '<button type="button" class="btn btn-sm" style="color:var(--text);font-weight:600" onclick="ppOpenPlanMap(this,\''+esc(m.id)+'\')">'+esc(m.name)+' ↗</button>'; }).join('')+'</div>';
+}
+// Opens a linked map in the Floor Maps tab, closing the job-popup plan
+// quick-look first if the button was clicked from inside it.
+function ppOpenPlanMap(btn,id){
+  var ov=btn&&btn.closest('.dp-overlay'); if(ov) ov.remove();
+  fmGoToMap(id);
+}
+function ppMapLabel(m){ return (m.floorLabel?m.floorLabel+' · ':'')+(m.name||'Floor map'); }
+function ppPickMapModal(onPick){
+  var ov=document.createElement('div'); ov.className='dp-overlay';
+  ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Link a floor map</span><button class="dp-close" data-pm="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><input type="text" data-pm-q placeholder="Filter by map, floor or job name…" style="width:100%;margin-bottom:10px"/><div data-pm-results style="max-height:50vh;overflow:auto"><div style="padding:8px 2px;color:var(--text3);font-size:13px">Loading floor maps…</div></div></div>'
+    +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Maps from the Floor Maps tab</span><button class="btn btn-sm" data-pm="close">Cancel</button></div></div>';
+  document.body.appendChild(ov);
+  var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
+  function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
+  document.addEventListener('keydown',onKey);
+  var q=ov.querySelector('[data-pm-q]'), results=ov.querySelector('[data-pm-results]'), all=null;
+  var projEl=document.querySelector('#pp-form [data-f="project"]'), proj=(projEl?projEl.value:'').trim().toLowerCase();
+  function render(){
+    var t=q.value.trim().toLowerCase();
+    var list=(all||[]).filter(function(m){ return !t||[m.name,m.floorLabel,m.jobName,m.project,m.sheetName].join(' ').toLowerCase().indexOf(t)>=0; });
+    results._list=list;
+    results.innerHTML=list.length?list.map(function(m,i){
+      var linked=proj&&(String(m.project||'').toLowerCase()===proj||String(m.jobName||'').toLowerCase()===proj);
+      var sub=[m.jobName&&m.jobName!==m.name?m.jobName:'',m.pinCount+' desks',linked?'linked to this project':''].filter(Boolean).join(' · ');
+      return '<button type="button" class="pp-job-pick" data-pm-idx="'+i+'" style="display:block;width:100%;text-align:left;padding:8px 6px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;color:inherit">'
+        +'<div style="font-weight:600;font-size:14px">'+esc(ppMapLabel(m))+'</div><div style="font-size:12px;color:var(--text3)">'+esc(sub)+'</div></button>';
+    }).join(''):'<div style="padding:8px 2px;color:var(--text3);font-size:13px">'+(all&&all.length?'No matching maps.':'No floor maps yet.')+'</div>';
+  }
+  fmFetch('GET','/floormaps').then(function(d){
+    all=(d.maps||[]).slice();
+    // Maps already tied to this plan's project name float to the top.
+    var score=function(m){ return proj&&(String(m.project||'').toLowerCase()===proj||String(m.jobName||'').toLowerCase()===proj)?0:1; };
+    all.sort(function(a,b){ return score(a)-score(b)||ppMapLabel(a).localeCompare(ppMapLabel(b),undefined,{numeric:true}); });
+    render();
+  }).catch(function(e){ results.innerHTML='<div style="padding:8px 2px;color:var(--red);font-size:13px">Couldn’t load floor maps: '+esc(String(e.message||e).slice(0,100))+'</div>'; });
+  q.addEventListener('input',function(){ if(all) render(); });
+  ov.addEventListener('click',function(ev){
+    if(ev.target===ov||ev.target.closest('[data-pm="close"]')){ cleanup(); return; }
+    var b=ev.target.closest('[data-pm-idx]'); if(!b) return;
+    var m=results._list&&results._list[parseInt(b.getAttribute('data-pm-idx'),10)]; if(!m) return;
+    cleanup(); onPick({id:m.id,name:ppMapLabel(m)});
   });
   setTimeout(function(){ q.focus(); },0);
 }
