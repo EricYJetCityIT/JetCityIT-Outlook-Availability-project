@@ -946,8 +946,8 @@ button.tm-stat.active{border-color:var(--green);box-shadow:inset 0 0 0 1px var(-
 .pp-erow-x:hover{color:var(--red)}
 .pp-warn{font-size:12px;color:#B45309;margin-top:4px}
 :root[data-theme="dark"] .pp-warn{color:#FBBF24}
-#pp-form input,#pp-form textarea{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;outline:none}
-#pp-form input:focus,#pp-form textarea:focus{border-color:var(--green)}
+#pp-form input,#pp-form textarea,#pp-form select{width:100%;padding:9px 11px;border-radius:8px;border:1.5px solid var(--border2);background:var(--surface);color:var(--text);font-family:inherit;font-size:14px;outline:none}
+#pp-form input:focus,#pp-form textarea:focus,#pp-form select:focus{border-color:var(--green)}
 #pp-form textarea{resize:vertical;line-height:1.5}
 #pp-form label.dp-fld{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px;margin-top:14px}
 
@@ -8449,7 +8449,7 @@ function tmCxPaint(){
         '<button class="btn btn-ghost btn-sm" onclick="tmCxPeopleAll(true)">Include shown</button><button class="btn btn-ghost btn-sm" onclick="tmCxPeopleAll(false)">Leave out shown</button></div>'+
       '<div class="tm-cx-people" id="tm-cx-people"></div></fieldset>'+
     '<div class="tm-cx-foot"><span id="tm-cx-count" class="fm-muted"></span><span style="flex:1"></span>'+
-      '<button class="btn btn-ghost btn-sm" onclick="tmCxClose()">Cancel</button><button class="btn btn-primary btn-sm" id="tm-cx-go" onclick="tmCxCreate(this)">Create PDF</button></div>'+
+      '<button class="btn btn-sm" onclick="tmCxClose()">Cancel</button><button class="btn btn-primary btn-sm" id="tm-cx-go" onclick="tmCxCreate(this)">Create PDF</button></div>'+
     '</div></div>';
   tmCxPaintPeople();
 }
@@ -8579,7 +8579,7 @@ function ppDetailBodyHtml(p){
 function ppRenderDetail(p,canEdit){
   var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
   var sub=[]; var acct=PP_ACCOUNTS[ppAccountOf(p)]; if(acct) sub.push(acct.icon+' '+esc(acct.label)); if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
-  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm pp-noprint" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
+  var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-sm pp-noprint" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
   html+=ppDetailBodyHtml(p);
   html+='<div class="pp-sec pp-noprint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:14px">';
   html+='<button class="btn btn-sm" onclick="window.print()">🖨 Print</button>';
@@ -8601,7 +8601,7 @@ function openPlanEdit(plan){
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
-  var html='<div class="section-head"><div><button class="btn btn-ghost btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1></div></div>';
+  var html='<div class="section-head"><div><button class="btn btn-sm" data-cancel style="margin-bottom:8px">← Cancel</button><h1 style="margin:0">'+(isNew?'New project plan':'Edit plan')+'</h1></div></div>';
   html+='<form id="pp-form" onsubmit="return false">';
   html+='<div class="pp-two"><div><label class="dp-fld">Project name</label>'+ppInput('project',plan.project,'Amazon Doppler restack')
     +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
