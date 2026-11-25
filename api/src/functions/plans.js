@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { randomUUID } = require('crypto');
-const { requireUser, requirePlanner, authErrorResponse, AuthError } = require('../lib/auth');
+const { requireUser, requirePlanner, requireEditorOrPlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const ss = require('../lib/smartsheet');
 
@@ -225,9 +225,10 @@ app.http('plans', {
 // GET /api/plan-sheets?q=<term>        -> account-wide sheet-name search
 // GET /api/plan-sheets?id=<id>         -> that sheet's name + permalink
 // GET /api/plan-sheets?progress=<id>   -> {total, done, ...} for progress bars
-// Same Smartsheet search the Job Sheets tab uses, but gated to Planners
-// (Job Sheets is Testers-only). Nothing is stored here; the plan save stores
-// the picked {id, name, url}.
+// Same Smartsheet search the Job Sheets tab uses, gated to Planners and
+// Editors (Editors pick a sheet for a calendar job in the New / Edit job
+// modal; Job Sheets is Testers-only). Nothing is stored here; the plan save
+// (or /api/job-links) stores the picked {id, name, url}.
 app.http('planSheets', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -235,7 +236,7 @@ app.http('planSheets', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requirePlanner(user);
+      requireEditorOrPlanner(user);
       // ?progress=<id> -> how far along that sheet is (done / total items)
       const progressId = (request.query.get('progress') || '').trim();
       if (progressId) {

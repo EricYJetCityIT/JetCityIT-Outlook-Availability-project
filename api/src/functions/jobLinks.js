@@ -1,0 +1,69 @@
+const { app } = require('@azure/functions');
+const { requireUser, requireEditor, authErrorResponse } = require('../lib/auth');
+const { getContainer } = require('../lib/cosmos');
+const { audit } = require('../lib/audit');
+
+// A calendar job's linked Smartsheet ("📊 Link Smartsheet" in the New / Edit
+// job modal; shown in the job popup). Stored in Cosmos, NOT in the crew
+// calendar sheet, so linking never changes Smartsheet. One doc per job in the
+// shared `dispatch` container, id-namespaced `joblink:<jobId>` (jobId is the
+// app's "ss-<rowId>").
+//   GET    /api/job-links            -> { links: { <jobId>: {id,name,url} } }  (any signed-in user)
+//   PUT    /api/job-links/{jobId}    -> body { sheet: {id,name,url} }         (Editors)
+//   DELETE /api/job-links/{jobId}                                             (Editors)
+const CONTAINER_ID = 'dispatch';
+const ID_PREFIX = 'joblink:';
+
+function clean(s, max) {
+  return String(s == null ? '' : s).replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, max);
+}
+function sanitizeSheet(s) {
+  if (!s || typeof s !== 'object') return null;
+  const id = clean(s.id, 20);
+  if (!/^\d+$/.test(id)) return null;
+  let url = clean(s.url, 300);
+  if (!/^https:\/\/app\.smartsheet\.(com|eu|au)\//.test(url)) url = ''; // only ever a Smartsheet link
+  return { id, name: clean(s.name, 200) || id, url };
+}
+const validJobId = (v) => /^ss-\d{1,20}$/.test(String(v || ''));
+
+app.http('jobLinks', {
+  methods: ['GET', 'PUT', 'DELETE'],
+  authLevel: 'anonymous',
+  route: 'job-links/{jobId?}',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      const container = getContainer(CONTAINER_ID);
+      if (request.method === 'GET') {
+        const { resources } = await container.items.query({
+          query: 'SELECT c.jobId, c.sheet FROM c WHERE STARTSWITH(c.id, @p)',
+          parameters: [{ name: '@p', value: ID_PREFIX }],
+        }).fetchAll();
+        const links = {};
+        resources.forEach((r) => { if (r.jobId && r.sheet) links[r.jobId] = r.sheet; });
+        return { jsonBody: { links } };
+      }
+      requireEditor(user); // changing shared job data -- editors only, like editing the job
+      const jobId = String(request.params.jobId || '');
+      if (!validJobId(jobId)) return { status: 400, jsonBody: { error: 'Bad job id' } };
+      const docId = ID_PREFIX + jobId;
+      if (request.method === 'DELETE') {
+        try { await container.item(docId, docId).delete(); } catch (e) { if (e.code !== 404) throw e; }
+        audit(context, user, 'dispatch.job.unlinkSheet', { jobId });
+        return { jsonBody: { ok: true } };
+      }
+      const body = await request.json().catch(() => ({}));
+      const sheet = sanitizeSheet(body && body.sheet);
+      if (!sheet) return { status: 400, jsonBody: { error: 'Pick a Smartsheet to link' } };
+      await container.items.upsert({
+        id: docId, type: 'jobLink', jobId, sheet,
+        updatedAt: new Date().toISOString(), updatedBy: user.upn || null,
+      });
+      audit(context, user, 'dispatch.job.linkSheet', { jobId, sheetId: sheet.id });
+      return { jsonBody: { ok: true, sheet } };
+    } catch (e) {
+      return authErrorResponse(e, context);
+    }
+  },
+});

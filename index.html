@@ -6434,6 +6434,7 @@ const JCITDispatch=(function(){
           if(Array.isArray(data.clientOptions)) syncClientOptions=data.clientOptions;
           inactiveNames=Array.isArray(data.inactiveNames)?data.inactiveNames:[]; inactiveVersion=data.inactiveVersion||''; inactiveError=!!data.inactiveError;
           dispatchLoaded=true;
+          loadJobLinks();
         }
       }catch(e){console.error('Failed to load dispatch data:',e)}
       dispatchLoadPromise=null;
@@ -6453,6 +6454,26 @@ const JCITDispatch=(function(){
     inactiveNames=Array.isArray(data.inactiveNames)?data.inactiveNames:[]; inactiveVersion=data.inactiveVersion||''; inactiveError=!!data.inactiveError;
     syncMeta={updatedAt:data.updatedAt||null,source:data.source||null};
     dispatchLoaded=true;
+    await loadJobLinks();
+  }
+  // Each calendar job's linked Smartsheet (jobId -> {id,name,url}), from
+  // /api/job-links. Kept in Azure, not in the crew calendar sheet. Best effort:
+  // a failed load just means no "📊" line in the job popup.
+  let jobLinks={};
+  async function loadJobLinks(){
+    try{
+      const token=await getApiToken();
+      const res=await fetch('/api/job-links',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      if(res.ok) jobLinks=(await res.json()).links||{};
+    }catch(e){ console.warn('job links load failed',e); }
+  }
+  async function saveJobLink(jobId,sheet){
+    const token=await getApiToken();
+    const res=await fetch('/api/job-links/'+encodeURIComponent(jobId),sheet
+      ?{method:'PUT',headers:{'Content-Type':'application/json','X-Jetcity-Authorization':'Bearer '+token},body:JSON.stringify({sheet})}
+      :{method:'DELETE',headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+    if(!res.ok){ let msg='HTTP '+res.status; try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(_){} throw new Error(msg); }
+    if(sheet) jobLinks[jobId]=sheet; else delete jobLinks[jobId];
   }
   // Editors: replace the inactive-crew list, then re-pull so the roster comes back with it applied.
   // The save names the list version the screen was showing; if someone saved since, the server
@@ -7220,6 +7241,15 @@ const JCITDispatch=(function(){
   // typed-but-unsaved fields; flushed to Smartsheet on Save (see the 'save'
   // handler) and cleared whenever a job modal opens/closes.
   let pendingAtts=[];
+  // Smartsheet picked in the open job modal: undefined = unchanged, null =
+  // unlink, {id,name,url} = link. Saved with the job (see the 'save' handler).
+  let pendingSheet;
+  function jobSheetOf(j){ return pendingSheet!==undefined ? pendingSheet : ((j&&j.id&&jobLinks[j.id])||null); }
+  function jobSheetNoteHtml(s){
+    if(!s) return '<span style="color:var(--text3)">No Smartsheet linked</span>';
+    return '📊 <b>'+(s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name||s.id)} ↗</a>`:esc(s.name||s.id))+'</b> <button type="button" class="btn btn-ghost btn-sm" data-dpact="sheet-unlink" style="padding:0 4px;font-size:11px">Unlink</button>';
+  }
+  function renderJobSheetNote(){ const n=document.getElementById('dpf-sheet-note'); if(n&&modal&&modal.type==='job') n.innerHTML=jobSheetNoteHtml(jobSheetOf(modal.job)); }
   function humanSize(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(0)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
   // Renders the staged-file chips into #dpf-att-pending in place (called after
   // picking/removing files) so we never re-render the whole form.
@@ -7243,6 +7273,9 @@ const JCITDispatch=(function(){
       <div id="dpf-att-pending" class="dpf-att-list"></div>
       <input id="dpf-file" type="file" accept="image/*,application/pdf" multiple style="display:none"/>
       <button type="button" class="btn btn-ghost btn-sm" data-dpact="att-pick">📎 Add attachment</button>
+      <label class="dp-fld" style="margin-top:10px">Smartsheet</label>
+      <div id="dpf-sheet-note" style="font-size:13px;margin-bottom:6px">${jobSheetNoteHtml(jobSheetOf(j))}</div>
+      <button type="button" class="btn btn-sm" data-dpact="sheet-pick" style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>
       ${isNew?'':`<div style="margin-top:16px"><button class="btn btn-ghost btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew (${crewOf(j).length})</button></div>`}`,
       '<span></span>'
       +`<div style="display:flex;gap:8px"><button class="btn btn-sm" data-dpact="close">Cancel</button><button class="btn btn-primary btn-sm" data-dpact="save">${isNew?'Create job':'Save'}</button></div>`);
@@ -7331,6 +7364,7 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
       ${locationLineHtml(j.address,mapUrl)}
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
+      ${jobLinks[j.id]?`<div class="dp-wk-job-line">📊 ${jobLinks[j.id].url?`<a href="${esc(jobLinks[j.id].url)}" target="_blank" rel="noopener">${esc(jobLinks[j.id].name||'Smartsheet')} ↗</a>`:esc(jobLinks[j.id].name||'Smartsheet')}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${isManagerView
@@ -7378,8 +7412,10 @@ const JCITDispatch=(function(){
   function onClick(e){
     const el=e.target.closest('[data-dpact]'); if(!el) return;
     const act=el.getAttribute('data-dpact');
-    if(act==='new'){ pendingAtts=[]; modal={type:'job',job:{date:el.getAttribute('data-date'),lead:[],technicians:[],status:''}}; renderModalRoot(); return; }
-    if(act==='edit'){ const j=jobById(el.getAttribute('data-id')); if(j){ pendingAtts=[]; modal={type:'job',job:j}; renderModalRoot(); } return; }
+    if(act==='sheet-pick'){ ppPickSheetModal(function(s){ pendingSheet=s; renderJobSheetNote(); }); return; }
+    if(act==='sheet-unlink'){ pendingSheet=null; renderJobSheetNote(); return; }
+    if(act==='new'){ pendingAtts=[]; pendingSheet=undefined; modal={type:'job',job:{date:el.getAttribute('data-date'),lead:[],technicians:[],status:''}}; renderModalRoot(); return; }
+    if(act==='edit'){ const j=jobById(el.getAttribute('data-id')); if(j){ pendingAtts=[]; pendingSheet=undefined; modal={type:'job',job:j}; renderModalRoot(); } return; }
     if(act==='att-pick'){ const fi=document.getElementById('dpf-file'); if(fi) fi.click(); return; }
     if(act==='att-remove'){ const i=parseInt(el.getAttribute('data-idx'),10); if(i>=0){ pendingAtts.splice(i,1); renderPendingAtts(); } return; }
     if(act==='detail'){ const j=jobById(el.getAttribute('data-id')); if(j){ modal={type:'detail',job:j}; renderModalRoot(); } return; }
@@ -7402,7 +7438,11 @@ const JCITDispatch=(function(){
           try{
             await updateJob(cur.id,data);
             if(atts.length){ btn.textContent='Uploading…'; await uploadAttachments(cur.id,atts); }
-            pendingAtts=[];
+            if(pendingSheet!==undefined){
+              try{ await saveJobLink(cur.id,pendingSheet); }
+              catch(le){ alert('Job saved, but the Smartsheet link could not be saved: '+String(le.message||le).slice(0,140)); }
+            }
+            pendingAtts=[]; pendingSheet=undefined;
             await reloadDispatch();
             modal=null; renderModalRoot(); refreshActiveView();
           }catch(err){
@@ -7437,7 +7477,12 @@ const JCITDispatch=(function(){
             if(newId){ btn.textContent='Uploading…'; await uploadAttachments(newId,atts); }
             else alert('Job created, but the attachments could not be added automatically — open the job and add them from Edit.');
           }
-          pendingAtts=[];
+          if(pendingSheet){
+            const newId=created&&created.rowId;
+            try{ if(!newId) throw new Error('no job id came back'); await saveJobLink('ss-'+newId,pendingSheet); }
+            catch(le){ alert('Job created, but the Smartsheet link could not be saved — open the job, click Edit and link it again. ('+String(le.message||le).slice(0,100)+')'); }
+          }
+          pendingAtts=[]; pendingSheet=undefined;
           await reloadDispatch();
           modal=null; renderModalRoot(); refreshActiveView();
         }catch(err){
@@ -7605,7 +7650,7 @@ const JCITDispatch=(function(){
       // Closing the assign modal without saving reverts any pending crew edits
       // back to the last-saved state so they don't linger in the local view.
       if(modal&&modal.type==='assign'&&modal.orig){ const j=jobById(modal.id); if(j){ j.lead=modal.orig.lead.slice(); j.technicians=modal.orig.technicians.slice(); } }
-      pendingAtts=[]; modal=null; renderModalRoot(); return; }
+      pendingAtts=[]; pendingSheet=undefined; modal=null; renderModalRoot(); return; }
   }
   function onChange(e){
     if(e.target&&e.target.id==='dp-worker-select'){ crewSelectedWorker=e.target.value; renderCrewView(); return; }
