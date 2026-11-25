@@ -8,11 +8,13 @@ const { audit } = require('../lib/audit');
 // calendar sheet, so linking never changes Smartsheet. One doc per job in the
 // shared `dispatch` container, id-namespaced `joblink:<jobId>` (jobId is the
 // app's "ss-<rowId>").
-//   GET    /api/job-links            -> { links: { <jobId>: {id,name,url} } }  (any signed-in user)
+//   GET    /api/job-links            -> { links: { <jobId>: {id,name,url} },     (any signed-in user)
+//                                          planLinks: { <project, lowercased>: {planId, sheet, maps} } }
 //   PUT    /api/job-links/{jobId}    -> body { sheet: {id,name,url} }         (Editors)
 //   DELETE /api/job-links/{jobId}                                             (Editors)
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'joblink:';
+const PLAN_PREFIX = 'plan:'; // project plans share this container (see plans.js)
 
 function clean(s, max) {
   return String(s == null ? '' : s).replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, max);
@@ -42,7 +44,26 @@ app.http('jobLinks', {
         }).fetchAll();
         const links = {};
         resources.forEach((r) => { if (r.jobId && r.sheet) links[r.jobId] = r.sheet; });
-        return { jsonBody: { links } };
+        // The project plan is the master for a job's Smartsheet / floor plans:
+        // a job with nothing linked by hand falls back to the plan that shares
+        // its PROJECT NAME (same case-insensitive match as the job popup's
+        // "Project plan" button). Only the links are sent, not the plan body.
+        // Newest plan wins when several share a name.
+        const { resources: plans } = await container.items.query({
+          query: 'SELECT c.id, c.project, c.sheet, c.maps, c.updatedAt FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
+          parameters: [{ name: '@p', value: PLAN_PREFIX }],
+        }).fetchAll();
+        const planLinks = {};
+        plans.forEach((p) => {
+          const key = String(p.project || '').trim().toLowerCase();
+          if (!key) return;
+          const sheet = p.sheet && p.sheet.id ? { id: p.sheet.id, name: p.sheet.name || '', url: p.sheet.url || '' } : null;
+          const maps = Array.isArray(p.maps) ? p.maps.filter((m) => m && m.id).map((m) => ({ id: m.id, name: m.name || '' })) : [];
+          const cur = planLinks[key] || (planLinks[key] = { planId: p.id, sheet: null, maps: [] });
+          if (!cur.sheet && sheet) cur.sheet = sheet;
+          if (!cur.maps.length && maps.length) cur.maps = maps;
+        });
+        return { jsonBody: { links, planLinks } };
       }
       requireEditor(user); // changing shared job data -- editors only, like editing the job
       const jobId = String(request.params.jobId || '');

@@ -6460,12 +6460,22 @@ const JCITDispatch=(function(){
   // /api/job-links. Kept in Azure, not in the crew calendar sheet. Best effort:
   // a failed load just means no "📊" line in the job popup.
   let jobLinks={};
+  // Project plan links by lowercased project name ({planId, sheet, maps}). The
+  // plan is the master: a job with no Smartsheet linked by hand uses its plan's.
+  let planLinks={};
   async function loadJobLinks(){
     try{
       const token=await getApiToken();
       const res=await fetch('/api/job-links',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-      if(res.ok) jobLinks=(await res.json()).links||{};
+      if(res.ok){ const d=await res.json(); jobLinks=d.links||{}; planLinks=d.planLinks||{}; }
     }catch(e){ console.warn('job links load failed',e); }
+  }
+  function planLinksOf(j){ const k=String((j&&j.project)||'').trim().toLowerCase(); return (k&&planLinks[k])||null; }
+  // The Smartsheet a job shows: one linked by hand on the job wins; otherwise
+  // its project plan's. Returns {sheet, fromPlan} or null.
+  function effectiveJobSheet(j){
+    if(j&&j.id&&jobLinks[j.id]) return {sheet:jobLinks[j.id],fromPlan:false};
+    const p=planLinksOf(j); return (p&&p.sheet)?{sheet:p.sheet,fromPlan:true}:null;
   }
   async function saveJobLink(jobId,sheet){
     const token=await getApiToken();
@@ -7245,11 +7255,13 @@ const JCITDispatch=(function(){
   // unlink, {id,name,url} = link. Saved with the job (see the 'save' handler).
   let pendingSheet;
   function jobSheetOf(j){ return pendingSheet!==undefined ? pendingSheet : ((j&&j.id&&jobLinks[j.id])||null); }
-  function jobSheetNoteHtml(s){
-    if(!s) return '<span style="color:var(--text3)">No Smartsheet linked</span>';
+  function jobSheetNoteHtml(s,j){
+    if(!s){ const p=planLinksOf(j); return (p&&p.sheet)
+      ? '<span style="color:var(--text3)">Using the project plan’s: 📊 '+(p.sheet.url?`<a href="${esc(p.sheet.url)}" target="_blank" rel="noopener">${esc(p.sheet.name||p.sheet.id)} ↗</a>`:esc(p.sheet.name||p.sheet.id))+' · link one here to override</span>'
+      : '<span style="color:var(--text3)">No Smartsheet linked</span>'; }
     return '📊 <b>'+(s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name||s.id)} ↗</a>`:esc(s.name||s.id))+'</b> <button type="button" class="btn btn-ghost btn-sm" data-dpact="sheet-unlink" style="padding:0 4px;font-size:11px">Unlink</button>';
   }
-  function renderJobSheetNote(){ const n=document.getElementById('dpf-sheet-note'); if(n&&modal&&modal.type==='job') n.innerHTML=jobSheetNoteHtml(jobSheetOf(modal.job)); }
+  function renderJobSheetNote(){ const n=document.getElementById('dpf-sheet-note'); if(n&&modal&&modal.type==='job') n.innerHTML=jobSheetNoteHtml(jobSheetOf(modal.job),modal.job); }
   function humanSize(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(0)+' KB'; return (n/1024/1024).toFixed(1)+' MB'; }
   // Renders the staged-file chips into #dpf-att-pending in place (called after
   // picking/removing files) so we never re-render the whole form.
@@ -7274,7 +7286,7 @@ const JCITDispatch=(function(){
       <input id="dpf-file" type="file" accept="image/*,application/pdf" multiple style="display:none"/>
       <button type="button" class="btn btn-ghost btn-sm" data-dpact="att-pick">📎 Add attachment</button>
       <label class="dp-fld" style="margin-top:10px">Smartsheet</label>
-      <div id="dpf-sheet-note" style="font-size:13px;margin-bottom:6px">${jobSheetNoteHtml(jobSheetOf(j))}</div>
+      <div id="dpf-sheet-note" style="font-size:13px;margin-bottom:6px">${jobSheetNoteHtml(jobSheetOf(j),j)}</div>
       <button type="button" class="btn btn-sm" data-dpact="sheet-pick" style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>
       ${isNew?'':`<div style="margin-top:16px"><button class="btn btn-ghost btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew (${crewOf(j).length})</button></div>`}`,
       '<span></span>'
@@ -7364,7 +7376,8 @@ const JCITDispatch=(function(){
       <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
       ${locationLineHtml(j.address,mapUrl)}
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
-      ${jobLinks[j.id]?`<div class="dp-wk-job-line">📊 ${jobLinks[j.id].url?`<a href="${esc(jobLinks[j.id].url)}" target="_blank" rel="noopener">${esc(jobLinks[j.id].name||'Smartsheet')} ↗</a>`:esc(jobLinks[j.id].name||'Smartsheet')}</div>`:''}
+      ${(()=>{ const es=effectiveJobSheet(j); if(!es) return ''; const s=es.sheet;
+        return `<div class="dp-wk-job-line">📊 ${s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name||'Smartsheet')} ↗</a>`:esc(s.name||'Smartsheet')}${es.fromPlan?' <span style="color:var(--text3);font-size:12px">(from project plan)</span>':''}</div>`; })()}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
       ${isManagerView
@@ -7645,7 +7658,7 @@ const JCITDispatch=(function(){
     if(act==='attachment'){ e.preventDefault(); viewAttachment(el.getAttribute('data-att-id'),el.getAttribute('data-att-name'),el.getAttribute('data-att-mime')); return; }
     if(act==='viewreport'){ e.preventDefault(); const j=jobById(el.getAttribute('data-id')); if(j) viewReport(j); return; }
     if(act==='planlink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobPlanModal({id:j.id,project:j.project,client:j.client,date:j.date,leadNames:crewOf(j).filter(c=>c.lead).map(c=>c.name)}); return; }
-    if(act==='floormaplink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobFloorMap(j.project); return; }
+    if(act==='floormaplink'){ const j=jobById(el.getAttribute('data-id')); if(j) openJobFloorMap(j.project,(planLinksOf(j)||{}).maps); return; }
     if(act==='close'||act==='overlay'){ if(act==='overlay'&&e.target!==el) return;
       // Closing the assign modal without saving reverts any pending crew edits
       // back to the last-saved state so they don't linger in the local view.
@@ -9014,20 +9027,23 @@ function enterPlanningTab(){
 // Finds the maps linked to this job's PROJECT NAME (a map's "Crew-calendar
 // project" in ⚙ Details, or a map whose job name equals it): one map opens
 // straight away in the Floor Maps tab; several (e.g. one per floor) get a
-// picker; none explains how to link one.
-async function openJobFloorMap(project){
+// picker; none explains how to link one. The project plan is the master:
+// when no map is linked to the project directly, the plan's own linked floor
+// plans (planMaps, [{id,name}]) are used instead -- a direct link always wins.
+async function openJobFloorMap(project,planMaps){
   project=String(project||'').trim();
-  let maps=[];
+  let maps=[], fromPlan=false;
   try{ if(project) maps=(await fmFetch('GET','/floormaps?project='+encodeURIComponent(project))).maps||[]; }
   catch(e){ alert('Could not look up floor plans: '+(e.message||e)); return; }
+  if(!maps.length&&Array.isArray(planMaps)&&planMaps.length){ maps=planMaps.slice(); fromPlan=true; }
   if(maps.length===1){ fmGoToMap(maps[0].id); return; }
   maps.sort((a,b)=>String(a.floorLabel||a.name).localeCompare(String(b.floorLabel||b.name),undefined,{numeric:true}));
   const ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'+
     '<div class="dp-modal-hd"><span class="dp-modal-title">🗺️ Floor plan</span><button class="dp-close" data-jfm="close">✕</button></div>'+
     '<div class="dp-modal-bd">'+(maps.length
-      ? '<div style="font-size:13px;color:var(--text3);margin-bottom:10px">'+maps.length+' floor plans are linked to <b>'+jsEsc(project)+'</b>:</div><div style="display:grid;gap:8px">'+
-        maps.map(m=>'<button class="btn btn-sm" style="justify-content:flex-start" data-jfm="open" data-id="'+jsEsc(fmIdOf(m.id))+'">'+jsEsc(m.floorLabel? m.floorLabel+' · '+m.name : m.name)+' <span style="color:var(--text3);margin-left:auto">'+m.pinCount+' desks</span></button>').join('')+'</div>'
+      ? '<div style="font-size:13px;color:var(--text3);margin-bottom:10px">'+maps.length+' floor plans are linked to '+(fromPlan?'the project plan for ':'')+'<b>'+jsEsc(project)+'</b>:</div><div style="display:grid;gap:8px">'+
+        maps.map(m=>'<button class="btn btn-sm" style="justify-content:flex-start" data-jfm="open" data-id="'+jsEsc(fmIdOf(m.id))+'">'+jsEsc(m.floorLabel? m.floorLabel+' · '+m.name : (m.name||'Floor plan'))+(m.pinCount!=null?' <span style="color:var(--text3);margin-left:auto">'+m.pinCount+' desks</span>':'')+'</button>').join('')+'</div>'
       : '<div style="font-size:14px;color:var(--text2)">No floor plan is linked to <b>'+jsEsc(project||'this job')+'</b> yet.</div>'+
         '<div style="font-size:13px;color:var(--text3);margin-top:8px">To link one: open it in Project Planning › Floor Plans → ⚙ Details → <b>Crew-calendar project</b>, and pick this project.</div>')+
     '</div><div class="dp-modal-ft"><span></span>'+(maps.length?'':'<button class="btn btn-sm" data-jfm="tab">Go to Floor Plans</button>')+'<button class="btn btn-sm" data-jfm="close">Close</button></div></div>';
