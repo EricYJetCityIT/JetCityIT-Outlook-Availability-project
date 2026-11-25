@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { getContainer } = require('../lib/cosmos');
-const { fetchRowsModifiedSince, fetchSheetColumns, putRows } = require('../lib/smartsheet');
+const { fetchRowsModifiedSince, putRows } = require('../lib/smartsheet');
 const { safeEqual } = require('../lib/secure');
 
 const CONTAINER_ID = 'dispatch';
@@ -12,6 +12,56 @@ const CURSOR_DOC_ID = 'report-match-state';
 // write back to the calendar.
 const JOB_ID_COLUMN_TITLE = 'Job ID';
 const RPT_RECEIVED_COLUMN_TITLE = "Proj Rpt Rec'd";
+const REPORT_PROJECT_TITLE = 'Project Name';
+const REPORT_DATE_TITLE = 'Service Date';
+const CAL_PROJECT_TITLE = 'Project';
+const CAL_DATE_TITLE = 'Date';
+
+const normName = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const dayOf = (v) => { const m = String(v || '').match(/^(\d{4}-\d{2}-\d{2})/); return m ? m[1] : ''; };
+
+// Which Crew Calendar row each report should tick. reports: [{jobRowId,
+// project, date}]; calRows: [{id, project, date}]. Returns {ids:Set, moved,
+// byName}.
+//  - The Job ID's row, when its date matches the report's Service Date (the
+//    normal case) or the report has no date.
+//  - When the dates differ -- the tech opened the Daily report link from
+//    ANOTHER day's job of the same project (seen 11/2026: a T-Mobile 11/9
+//    report carried the 11/2 job's id, so 11/9 kept getting overdue emails) --
+//    the same-named project's row on the Service Date instead, if there is
+//    exactly one. Otherwise the Job ID's row as before (e.g. an extra day with
+//    no calendar row of its own).
+//  - No Job ID (filed from the bare form link, e.g. the reminder email): the
+//    one row with that exact project name on that Service Date, if exactly one.
+function resolveTargets(reports, calRows) {
+  const byId = new Map(calRows.map((r) => [r.id, r]));
+  const byNameDay = new Map();
+  calRows.forEach((r) => {
+    if (!r.date || !r.project) return;
+    const k = normName(r.project) + '|' + r.date;
+    byNameDay.set(k, (byNameDay.get(k) || []).concat(r));
+  });
+  const sameDay = (project, date) => {
+    const hits = (project && date) ? (byNameDay.get(normName(project) + '|' + date) || []) : [];
+    return hits.length === 1 ? hits[0] : null;
+  };
+  const ids = new Set();
+  let moved = 0, byName = 0;
+  reports.forEach((rep) => {
+    if (rep.jobRowId) {
+      const cal = byId.get(rep.jobRowId);
+      if (cal && rep.date && cal.date && cal.date !== rep.date) {
+        const right = sameDay(cal.project || rep.project, rep.date) || sameDay(rep.project, rep.date);
+        if (right) { ids.add(right.id); moved++; return; }
+      }
+      ids.add(rep.jobRowId);
+      return;
+    }
+    const hit = sameDay(rep.project, rep.date);
+    if (hit) { ids.add(hit.id); byName++; }
+  });
+  return { ids, moved, byName };
+}
 
 function getReportSheetId() {
   const id = process.env.REPORT_SHEET_ID;
@@ -47,11 +97,12 @@ async function readCursor(container) {
 }
 
 // Reads Daily Project Report rows submitted since the last run and ticks
-// "Proj Rpt Rec'd" on the exact Crew Calendar row each one names via its
-// hidden Job ID. Only ever SETS the box true — it never unchecks, so manual
-// ticks and history are preserved. Idempotent: re-ticking an already-checked
-// row is a harmless no-op, and reports with no Job ID (filed from the bare
-// form link) are skipped by design.
+// "Proj Rpt Rec'd" on the Crew Calendar row each one is for -- normally the
+// row its hidden Job ID names, corrected to the right day when the report's
+// Service Date says otherwise, and matched by exact project name + date when
+// there's no Job ID (see resolveTargets). Only ever SETS the box true — it
+// never unchecks, so manual ticks and history are preserved. Idempotent:
+// re-ticking an already-checked row is a harmless no-op.
 async function runReportMatch(context) {
   const container = getContainer(CONTAINER_ID);
   const cursor = await readCursor(container);
@@ -73,22 +124,43 @@ async function runReportMatch(context) {
   }
 
   const newRows = reportSheet.rows || [];
-  const wantedIds = new Set();
-  for (const row of newRows) {
-    const cell = (row.cells || []).find((c) => c.columnId === jobIdCol.id);
-    const rowId = parseCalRowId(cell && (cell.value != null ? cell.value : cell.displayValue));
-    if (rowId) wantedIds.add(rowId);
-  }
+  const colId = (title) => ((reportSheet.columns || []).find((c) => c.title === title) || {}).id;
+  const repProjectCol = colId(REPORT_PROJECT_TITLE), repDateCol = colId(REPORT_DATE_TITLE);
+  const cellOf = (row, id) => (id == null ? null : (row.cells || []).find((c) => c.columnId === id));
+  const textOf = (cell) => (cell ? String(cell.value != null ? cell.value : (cell.displayValue || '')).trim() : '');
+  const reports = newRows.map((row) => {
+    const cell = cellOf(row, jobIdCol.id);
+    return {
+      jobRowId: parseCalRowId(cell && (cell.value != null ? cell.value : cell.displayValue)),
+      project: textOf(cellOf(row, repProjectCol)),
+      date: dayOf(textOf(cellOf(row, repDateCol))),
+    };
+  }).filter((r) => r.jobRowId || (r.project && r.date));
 
   let checked = 0;
   let failed = 0;
-  if (wantedIds.size) {
+  let moved = 0;
+  let byName = 0;
+  if (reports.length) {
     const calId = getCalendarSheetId();
-    const { columns } = await fetchSheetColumns(calId);
+    // Whole calendar (columns + rows): needed to check each report's date
+    // against its job's date. Only read when new reports came in.
+    const cal = await fetchRowsModifiedSince(calId);
+    const columns = cal.columns || [];
     const rptCol = columns.find((c) => c.title === RPT_RECEIVED_COLUMN_TITLE);
     if (!rptCol) {
       throw new Error(`Calendar column "${RPT_RECEIVED_COLUMN_TITLE}" not found — sheet layout may have changed`);
     }
+    const calProjectId = (columns.find((c) => c.title === CAL_PROJECT_TITLE) || {}).id;
+    const calDateId = (columns.find((c) => c.title === CAL_DATE_TITLE) || {}).id;
+    const calRows = (cal.rows || []).map((r) => ({
+      id: String(r.id),
+      project: textOf(cellOf(r, calProjectId)),
+      date: dayOf(textOf(cellOf(r, calDateId))),
+    }));
+    const target = resolveTargets(reports, calRows);
+    moved = target.moved; byName = target.byName;
+    const wantedIds = target.ids;
     const body = Array.from(wantedIds).map((id) => ({ id, cells: [{ columnId: rptCol.id, value: true }] }));
     // allowPartialSuccess so one stale Job ID (a since-deleted calendar row)
     // doesn't reject every other tick in the batch.
@@ -104,8 +176,8 @@ async function runReportMatch(context) {
     lastCheckedCount: checked,
   });
 
-  context.log(`report-match: ${newRows.length} new report row(s), checked ${checked}, failed ${failed}.`);
-  return { newReportRows: newRows.length, checked, failed };
+  context.log(`report-match: ${newRows.length} new report row(s), checked ${checked}, failed ${failed}, moved to the service date ${moved}, matched by name ${byName}.`);
+  return { newReportRows: newRows.length, checked, failed, moved, byName };
 }
 
 // HTTP-triggered (same reason as smartsheetSync — SWA managed Functions don't
@@ -132,4 +204,4 @@ app.http('reportMatch', {
   },
 });
 
-module.exports = { runReportMatch };
+module.exports = { runReportMatch, resolveTargets };
