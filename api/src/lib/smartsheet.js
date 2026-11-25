@@ -1061,6 +1061,52 @@ async function sheetProgress(sheetId) {
   };
 }
 
+// One client job sheet for the Project Planning client tabs (KP / PSE /
+// Brooks): READ-ONLY, one Smartsheet call, no photo links. Returns
+// {id, name, permalink, columns:[{key,label,type}], progressKey, statusKey,
+// photoKey, rows}. Rows hold text, booleans for checkboxes, and true/false
+// for "has a photo". statusKey = a dropdown column worth counting (one titled
+// "status", else the first dropdown with a short list of values), or null.
+const DETAIL_MAX_COLUMNS = 16;
+const DETAIL_MAX_ROWS = 3000;
+async function sheetDetail(sheetId) {
+  const sheet = await fetchGenericSheet(sheetId);
+  const { cols, progressCol } = analyzeJobSheet(sheet);
+  const srcType = new Map((sheet.columns || []).map((c) => [c.id, c.type]));
+  const idCol = cols.find((c) => c.type === 'identifier');
+  const cellOf = (row, columnId) => (row.cells || []).find((c) => c.columnId === columnId);
+  const rows = [];
+  (sheet.rows || []).forEach((row) => {
+    if (rows.length >= DETAIL_MAX_ROWS) return;
+    if (idCol && !cellText(cellOf(row, idCol.columnId))) return; // spacer row
+    const obj = {};
+    cols.forEach((col) => {
+      const cell = cellOf(row, col.columnId);
+      if (col.type === 'photo') obj[col.key] = !!(cell && (cell.image || cellText(cell)));
+      else if (col.type === 'checkbox') obj[col.key] = !!(cell && (cell.value === true || cell.value === 'true'));
+      else obj[col.key] = (cell ? cellText(cell) : '').slice(0, 300);
+    });
+    rows.push(obj);
+  });
+  // Dropdown columns whose values are worth a stat card each.
+  const pick = cols.filter((c) => c.type === 'text' && /PICKLIST/.test(srcType.get(c.columnId) || ''))
+    .map((c) => {
+      const vals = rows.map((r) => r[c.key]).filter(Boolean);
+      return { c, filled: rows.length ? vals.length / rows.length : 0, distinct: new Set(vals).size };
+    })
+    .filter((x) => x.distinct >= 1 && x.distinct <= 12);
+  const statusCol = (pick.find((x) => /status/i.test(x.c.label)) || pick.find((x) => x.filled >= 0.3) || {}).c || null;
+  const photoCol = cols.find((c) => c.type === 'photo') || null;
+  return {
+    id: String(sheet.id), name: sheet.name || '', permalink: sheet.permalink || '',
+    columns: cols.slice(0, DETAIL_MAX_COLUMNS).map((c) => ({ key: c.key, label: c.label, type: c.type })),
+    progressKey: progressCol ? progressCol.key : null,
+    statusKey: statusCol ? statusCol.key : null,
+    photoKey: photoCol ? photoCol.key : null,
+    rows,
+  };
+}
+
 // Builds the read-only viewer payload for one job sheet: {name, columns,
 // progressKey, rows}. Photo cells become a temporary image URL (or null when
 // empty); checkboxes booleans; everything else text. Rows with a blank
@@ -1233,6 +1279,7 @@ module.exports = {
   searchSheets,
   fetchSheetInfo,
   sheetProgress,
+  sheetDetail,
   fetchWorkspaceSheets,
   fetchGenericSheet,
   fetchImageUrls,

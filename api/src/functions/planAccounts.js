@@ -18,6 +18,42 @@ const MAX_SHEETS = 40;
 // Blank starting points and copies marked not-for-use aren't jobs.
 const isJunk = (name) => /^\s*template\b/i.test(name || '') || /do not use/i.test(name || '');
 
+async function accountSheets(acct) {
+  const sheets = await ss.fetchWorkspaceSheets(process.env[acct.env] || acct.workspaceId);
+  return sheets.filter((s) => !isJunk(s.name)).slice(0, MAX_SHEETS);
+}
+
+function accountError(e, context) {
+  if (e instanceof AuthError) return authErrorResponse(e, context);
+  try { context.error(e); } catch (_) { /* logging must never break the response */ }
+  return { status: 500, jsonBody: { error: 'Smartsheet lookup failed' } };
+}
+
+// GET /api/plan-accounts/{key}/sheet?id=<sheetId> -- one sheet from that
+// client's workspace, read-only (stat cards + searchable table). Sheet ids
+// from anywhere else are refused.
+app.http('planAccountSheet', {
+  methods: ['GET'],
+  authLevel: 'anonymous',
+  route: 'plan-accounts/{key}/sheet',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requirePlanner(user);
+      const acct = ACCOUNTS[String(request.params.key || '').toLowerCase()];
+      if (!acct) return { status: 404, jsonBody: { error: 'No Smartsheet workspace for that client' } };
+      const id = String(request.query.get('id') || '').trim();
+      if (!/^\d{1,20}$/.test(id)) return { status: 400, jsonBody: { error: 'Missing sheet id' } };
+      if (!(await accountSheets(acct)).some((s) => s.id === id)) {
+        return { status: 404, jsonBody: { error: `That sheet is not in the ${acct.label} workspace.` } };
+      }
+      return { jsonBody: await ss.sheetDetail(id) };
+    } catch (e) {
+      return accountError(e, context);
+    }
+  },
+});
+
 app.http('planAccountSheets', {
   methods: ['GET'],
   authLevel: 'anonymous',
@@ -29,18 +65,15 @@ app.http('planAccountSheets', {
       const key = String(request.params.key || '').toLowerCase();
       const acct = ACCOUNTS[key];
       if (!acct) return { status: 404, jsonBody: { error: 'No Smartsheet workspace for that client' } };
-      const sheets = await ss.fetchWorkspaceSheets(process.env[acct.env] || acct.workspaceId);
+      const sheets = await accountSheets(acct);
       return {
         jsonBody: {
           label: acct.label,
-          sheets: sheets.filter((s) => !isJunk(s.name)).slice(0, MAX_SHEETS)
-            .map((s) => ({ id: s.id, name: s.name, modifiedAt: s.modifiedAt })),
+          sheets: sheets.map((s) => ({ id: s.id, name: s.name, modifiedAt: s.modifiedAt })),
         },
       };
     } catch (e) {
-      if (e instanceof AuthError) return authErrorResponse(e, context);
-      try { context.error(e); } catch (_) { /* logging must never break the response */ }
-      return { status: 500, jsonBody: { error: 'Smartsheet lookup failed' } };
+      return accountError(e, context);
     }
   },
 });

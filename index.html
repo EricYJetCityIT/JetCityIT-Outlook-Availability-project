@@ -8051,7 +8051,7 @@ async function ppRenderAccount(key){
       :(p.sheet&&p.sheet.id?'':'<div style="margin-top:8px;font-size:12px;color:var(--text3)">No Smartsheet linked'+(key==='amazon'?' (Amazon tracks in its own Smartsheet)':'')+'</div>');
     return '<button class="pp-card" onclick="openPlan(\''+esc(p.id)+'\')"><div class="pp-card-top"><span class="pp-card-title">'+(esc(p.project)||'Untitled plan')+'</span>'+(p.bisDate?'<span class="pp-card-sub">BIS '+esc(p.bisDate)+'</span>':'')+'</div>'
       +(p.projectId?'<div class="pp-card-sub">'+esc(p.projectId)+'</div>':'')+(meta.length?'<div class="pp-card-meta">'+meta.join('')+'</div>':'')+prog+'</button>';
-  }).join('')+'</div>':'<div style="font-size:13px;color:var(--text3)">No '+esc(a.label)+' plans yet.'+(canEdit?' Click “+ New '+esc(a.label)+' plan”'+(a.sheets?', or “+ Plan” on a job sheet below':'')+'.':'')+'</div>')+'</div>';
+  }).join('')+'</div>':'<div style="font-size:13px;color:var(--text3)">No '+esc(a.label)+' plans yet.'+(canEdit?' Click “+ New '+esc(a.label)+' plan”'+(a.sheets?', or “+ Plan from this sheet” below':'')+'.':'')+'</div>')+'</div>';
   var sheetsHtml='';
   if(!a.sheets){
     sheetsHtml='<div class="pp-sec" style="font-size:13px;color:var(--text3)">Amazon tracks its jobs in its own Smartsheet account, which Jet City can’t open, so there’s no job-sheet list here.</div>';
@@ -8062,42 +8062,119 @@ async function ppRenderAccount(key){
   ppFillProgress(root);
   if(a.sheets&&canEdit) ppLoadAccountSheets(key);
 }
+// Job-sheet view for KP / PSE / Brooks, laid out like the T-Mobile view:
+// sheet picker, stat cards that filter, searchable table. READ-ONLY -- it
+// only reads the sheet (GET /api/plan-accounts/{key}/sheet). These clients'
+// sheets don't share a template yet, so the cards come from what any sheet
+// has: items, its done column, a photo column, and a status-style dropdown.
+function ppAcctFetch(key,path){
+  return getApiToken().then(function(token){
+    return fetch('/api/plan-accounts/'+key+path,{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+  }).then(function(res){
+    if(res.ok) return res.json();
+    return res.json().catch(function(){ return {}; }).then(function(j){ throw new Error((j&&j.error)||('HTTP '+res.status)); });
+  });
+}
 async function ppLoadAccountSheets(key){
-  if(!ppAccountSheets[key]){
-    try{
-      var token=await getApiToken();
-      var res=await fetch('/api/plan-accounts/'+key+'/sheets',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      ppAccountSheets[key]={sheets:(await res.json()).sheets||[], shown:12};
-    }catch(e){ ppAccountSheets[key]={error:'Couldn’t load the Smartsheet workspace: '+e.message}; }
+  var st=ppAccountSheets[key];
+  if(!st||st.error){
+    st=ppAccountSheets[key]={sheets:null,sheetId:'',data:null,loading:true,error:'',filter:'all',q:''};
+    ppPaintAccountSheets(key);
+    try{ st.sheets=(await ppAcctFetch(key,'/sheets')).sheets||[]; }
+    catch(e){ st.error='Couldn’t load the Smartsheet workspace: '+e.message; }
+    st.loading=false;
+    if(st.sheets&&st.sheets.length){ st.sheetId=st.sheets[0].id; return ppLoadAccountSheet(key); }
   }
   ppPaintAccountSheets(key);
+}
+async function ppLoadAccountSheet(key){
+  var st=ppAccountSheets[key]; if(!st||!st.sheetId) return;
+  st.loading=true; st.error=''; st.data=null; ppPaintAccountSheets(key);
+  var id=st.sheetId;
+  try{ var d=await ppAcctFetch(key,'/sheet?id='+encodeURIComponent(id)); if(st.sheetId===id) st.data=d; }
+  catch(e){ if(st.sheetId===id) st.error='Couldn’t load that sheet: '+e.message; }
+  if(st.sheetId===id){ st.loading=false; ppPaintAccountSheets(key); }
+}
+function ppAcctPick(key,id){ var st=ppAccountSheets[key]; st.sheetId=id; st.filter='all'; st.q=''; ppLoadAccountSheet(key); }
+function ppAcctRefresh(key){ var st=ppAccountSheets[key]; if(st&&st.sheetId) ppLoadAccountSheet(key); }
+// Stat cards for one sheet: [{key,n,label}] -- each is also a table filter.
+function ppAcctStats(d){
+  var rows=d.rows||[], out=[{key:'all',n:rows.length,label:'Items'}];
+  if(d.progressKey){
+    var done=rows.filter(function(r){ return !!r[d.progressKey]; }).length;
+    var col=(d.columns||[]).find(function(c){ return c.key===d.progressKey; });
+    out.push({key:'done',n:done,label:'Done'+(col?' ('+col.label+')':'')},{key:'open',n:rows.length-done,label:'Still open'});
+  }
+  if(d.photoKey&&d.photoKey!==d.progressKey) out.push({key:'photo',n:rows.filter(function(r){ return !!r[d.photoKey]; }).length,label:'With a photo'});
+  if(d.statusKey){
+    var counts={}; rows.forEach(function(r){ var v=r[d.statusKey]; if(v) counts[v]=(counts[v]||0)+1; });
+    Object.keys(counts).sort(function(x,y){ return counts[y]-counts[x]; }).forEach(function(v){ out.push({key:'st:'+v,n:counts[v],label:v}); });
+  }
+  return out;
+}
+function ppAcctMatch(d,st,r){
+  var f=st.filter;
+  if(f==='done'&&!r[d.progressKey]) return false;
+  if(f==='open'&&r[d.progressKey]) return false;
+  if(f==='photo'&&!r[d.photoKey]) return false;
+  if(f.indexOf('st:')===0&&r[d.statusKey]!==f.slice(3)) return false;
+  var q=st.q.trim().toLowerCase();
+  if(!q) return true;
+  return (d.columns||[]).some(function(c){ var v=r[c.key]; return typeof v==='string'&&v.toLowerCase().indexOf(q)>=0; });
 }
 function ppPaintAccountSheets(key){
   var root=ppEl(); if(!root||ppView!==key) return;
   var box=root.querySelector('[data-pp-acct-sheets]'); if(!box) return;
-  var st=ppAccountSheets[key];
-  if(st.error){ box.innerHTML='<span style="font-size:13px;color:var(--red)">'+esc(st.error)+'</span>'; return; }
-  if(!st.sheets.length){ box.innerHTML='<span style="font-size:13px;color:var(--text3)">No job sheets in this workspace.</span>'; return; }
-  var list=st.sheets.slice(0,st.shown);
-  box.innerHTML='<div style="display:grid;gap:8px">'+list.map(function(s){
-    return '<div class="pp-box" style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center">'
-      +'<div style="min-width:0"><div style="font-weight:600;font-size:14px;overflow-wrap:anywhere">'+esc(s.name)+'</div><div style="font-size:12px;color:var(--text3)">'+(s.modifiedAt?'Updated '+ppWhen(s.modifiedAt):'')+'</div></div>'
-      +'<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><a class="btn btn-sm" data-pp-open="'+esc(s.id)+'" target="_blank" rel="noopener" style="display:none">Open ↗</a>'
-      +'<button type="button" class="btn btn-sm" onclick="ppPlanFromSheet(\''+key+'\',\''+esc(s.id)+'\')">+ Plan</button></div>'
-      +'<div style="grid-column:1/-1" data-pp-prog="'+esc(s.id)+'"><span style="font-size:12px;color:var(--text3)">Loading progress…</span></div></div>';
-  }).join('')+'</div>'
-    +(st.sheets.length>st.shown?'<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="ppMoreAccountSheets(\''+key+'\')">Show more ('+(st.sheets.length-st.shown)+')</button>':'');
-  ppFillProgress(box);
+  var st=ppAccountSheets[key]; if(!st) return;
+  var html='';
+  if(st.sheets&&st.sheets.length){
+    html+='<div class="tm-pick"><select onchange="ppAcctPick(\''+key+'\',this.value)" aria-label="Job sheet">'+st.sheets.map(function(s){
+      return '<option value="'+esc(s.id)+'"'+(s.id===st.sheetId?' selected':'')+'>'+esc(s.name)+'</option>'; }).join('')+'</select>'
+      +'<button class="btn btn-ghost btn-sm" onclick="ppAcctRefresh(\''+key+'\')">↻ Refresh</button></div>';
+  }
+  if(st.error) html+='<div style="font-size:13px;color:var(--red);margin:8px 0">'+esc(st.error)+'</div>';
+  else if(st.loading) html+='<div style="font-size:13px;color:var(--text3);margin:8px 0">Loading…</div>';
+  else if(st.sheets&&!st.sheets.length) html+='<div style="font-size:13px;color:var(--text3)">No job sheets in this workspace.</div>';
+  else if(st.data){
+    var d=st.data;
+    html+='<div class="tm-stats">'+ppAcctStats(d).map(function(s){
+      var on=st.filter===s.key;
+      return '<button class="tm-stat'+(on?' active':'')+'" data-pp-acct-filter="'+esc(s.key)+'" aria-pressed="'+on+'"><b>'+s.n+'</b><span>'+esc(s.label)+'</span></button>';
+    }).join('')+'</div>';
+    html+='<div class="tm-actions">'+(d.permalink?'<a class="btn btn-ghost btn-sm" href="'+esc(d.permalink)+'" target="_blank" rel="noopener">Open in Smartsheet ↗</a>':'')
+      +'<button type="button" class="btn btn-sm" onclick="ppPlanFromSheet(\''+key+'\')">+ Plan from this sheet</button></div>';
+    html+='<div class="fm-muted">'+(d.progressKey?'Done = the sheet’s “'+esc(((d.columns||[]).find(function(c){ return c.key===d.progressKey; })||{}).label||'')+'” column.':'This sheet has no done column, so there’s no done count.')
+      +' Read-only: nothing here changes the sheet. Walk/completion PDFs come once '+esc(PP_ACCOUNTS[key].label)+' has a sheet template.</div>';
+    html+='<div class="tm-tools"><input type="search" placeholder="Search the sheet…" aria-label="Search the sheet" value="'+esc(st.q)+'" data-pp-acct-q><span class="fm-muted" data-pp-acct-count></span></div>'
+      +'<div class="tm-table-wrap"><table class="tm-table"><thead><tr>'+(d.columns||[]).map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody data-pp-acct-tbody></tbody></table></div>';
+  }
+  box.innerHTML=html;
+  if(st.data) ppPaintAccountRows(key);
+  box.onclick=function(ev){ var b=ev.target.closest('[data-pp-acct-filter]'); if(!b) return; var f=b.getAttribute('data-pp-acct-filter'); st.filter=(st.filter===f&&f!=='all')?'all':f; ppPaintAccountSheets(key); };
+  var qi=box.querySelector('[data-pp-acct-q]'); if(qi) qi.oninput=function(){ st.q=qi.value; ppPaintAccountRows(key); };
 }
-function ppMoreAccountSheets(key){ var st=ppAccountSheets[key]; if(st&&st.sheets){ st.shown+=12; ppPaintAccountSheets(key); } }
+// Only the rows repaint while typing, so the search box keeps focus.
+function ppPaintAccountRows(key){
+  var root=ppEl(), st=ppAccountSheets[key]; if(!root||!st||!st.data) return;
+  var tb=root.querySelector('[data-pp-acct-tbody]'); if(!tb) return;
+  var d=st.data, cols=d.columns||[], rows=(d.rows||[]).filter(function(r){ return ppAcctMatch(d,st,r); });
+  var shown=rows.slice(0,500);
+  tb.innerHTML=shown.length?shown.map(function(r){
+    return '<tr>'+cols.map(function(c){
+      var v=r[c.key];
+      if(c.type==='photo'||c.type==='checkbox') return '<td class="tm-c">'+(v?'✓':'')+'</td>';
+      return '<td'+(c.type==='identifier'?' class="tm-nw"':'')+'>'+esc(v||'')+'</td>';
+    }).join('')+'</tr>';
+  }).join(''):'<tr><td colspan="'+Math.max(1,cols.length)+'" style="color:var(--text3)">No matching rows.</td></tr>';
+  var cnt=root.querySelector('[data-pp-acct-count]');
+  if(cnt) cnt.textContent=rows.length+' of '+(d.rows||[]).length+' shown'+(rows.length>shown.length?' (first 500 listed)':'');
+}
 function ppNewAccountPlan(key){ openPlanEdit({account:key}); }
-// "+ Plan" on a job sheet: a new plan for this client, named after the sheet
+// "+ Plan from this sheet": a new plan for this client, named after the sheet
 // and already linked to it (nothing is saved until the planner clicks Save).
-async function ppPlanFromSheet(key,id){
-  var st=ppAccountSheets[key], s=st&&st.sheets&&st.sheets.find(function(x){ return x.id===id; });
-  var pr=await ppProgress(id);
-  openPlanEdit({account:key, project:s?s.name:'', sheet:{id:id, name:s?s.name:id, url:(pr&&pr.permalink)||''}});
+function ppPlanFromSheet(key){
+  var st=ppAccountSheets[key], d=st&&st.data; if(!d) return;
+  openPlanEdit({account:key, project:d.name||'', sheet:{id:d.id, name:d.name||d.id, url:d.permalink||''}});
 }
 
 // ── T-Mobile view (Project Planning) ──────────────────────────────────────────
