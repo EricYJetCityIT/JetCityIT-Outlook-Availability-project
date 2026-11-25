@@ -6760,6 +6760,26 @@ const JCITDispatch=(function(){
   // keeping the street + city/state/zip. Unit values must be number-like or a
   // single letter, so a real word — e.g. the city in "2nd fl Bellevue" — is
   // never eaten. Verified against all live job addresses (no city lost).
+  // Online meetings ("Teams Meeting", "Virtual - Teams Meeting", Zoom...) are
+  // typed into the same Location column as street addresses, but they aren't
+  // places: don't send them to Google Maps or the parking finder. The calendar
+  // row rarely holds the meeting link itself (that's in the Outlook invite), so
+  // a real https link in the location is used when there is one; otherwise a
+  // Teams meeting gets an "Open Teams" link and anything else is plain text.
+  function meetingUrl(a){ var m=String(a||'').match(/https:\/\/[^\s<>"']+/i); return m?m[0].replace(/[),.;]+$/,''):''; }
+  function isOnlineLocation(a){
+    var s=String(a||'');
+    if(meetingUrl(s)) return true;
+    return /\b(teams|zoom|webex|google meet|virtual|remote|online)\b/i.test(s) && !/\b\d{2,}\s+[A-Za-z]/.test(s); // "401 Union St" = still a real address
+  }
+  function locationLineHtml(a,mapUrl){
+    if(!a) return '';
+    if(!isOnlineLocation(a)) return `<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(a)}</a></div>`;
+    var url=meetingUrl(a), label=esc(String(a).replace(/https:\/\/[^\s<>"']+/ig,'').replace(/\s{2,}/g,' ').replace(/^[\s\-–:]+|[\s\-–:]+$/g,'')||'Online meeting');
+    var link=url?` · <a href="${esc(url)}" target="_blank" rel="noopener">Join meeting ↗</a>`
+      :(/\bteams\b/i.test(a)?` · <a href="https://teams.microsoft.com/" target="_blank" rel="noopener">Open Teams ↗</a>`:'');
+    return `<div class="dp-wk-job-line">💻 ${label}${link}</div>`;
+  }
   function mapQuery(a){
     var s=String(a||'');
     s=s.replace(/^[^,]{1,25}?\s-\s+(?=\d)/,'');                                              // leading building/tenant code
@@ -7162,13 +7182,13 @@ const JCITDispatch=(function(){
         return `<div class="dp-wk-job${cat?' dp-wk-job-'+cat:''}${j.cancelled?' dp-wk-job-cancelled':''}">
           <div class="dp-wk-job-project">${esc(j.project)}${isLead?' <span class="hrs-tag" style="font-size:10px">You lead</span>':''}</div>
           <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
-          ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
+          ${locationLineHtml(j.address,mapUrl)}
           ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
           ${mates.length?`<div class="dp-wk-job-line">👥 With ${esc(mates.join(', '))}</div>`:'<div class="dp-wk-job-line" style="color:var(--text3)">Solo</div>'}
           ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
           ${j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:''}
           ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}
-          ${(j.address&&/\d/.test(j.address)&&!j.cancelled)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><a class="btn btn-primary btn-sm" href="${esc(reportFormUrl(j))}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button></div>`:''}
+          ${(j.address&&/\d/.test(j.address)&&!isOnlineLocation(j.address)&&!j.cancelled)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><a class="btn btn-primary btn-sm" href="${esc(reportFormUrl(j))}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button></div>`:''}
         </div>`;
       }).join('');
       return `<div class="dp-wk-day"><div class="dp-wk-day-hd">${DAYS[i]} · ${fmtMon(d)}</div>${jobs}</div>`;
@@ -7309,7 +7329,7 @@ const JCITDispatch=(function(){
     return overlay(j.project,
       `${j.cancelled?`<div style="display:inline-block;background:var(--red);color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 10px;border-radius:6px;margin-bottom:10px">🚫 Cancelled</div>`:''}
       <div class="dp-wk-job-line">🕒 ${esc(j.startTime||'TBD')}${j.duration?' · '+esc(j.duration)+' hrs':''}</div>
-      ${j.address?`<div class="dp-wk-job-line">📍 <a href="${esc(mapUrl)}" target="_blank" rel="noopener">${esc(j.address)}</a></div>`:''}
+      ${locationLineHtml(j.address,mapUrl)}
       ${j.client?`<div class="dp-wk-job-line">🏢 ${esc(j.client)}</div>`:''}
       <div class="dp-wk-job-line">👥 ${crewLine}</div>
       ${j.poc?`<div class="dp-wk-job-line">☎ ${phoneLink(j.poc)}</div>`:''}
@@ -7324,7 +7344,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${currentUserIsPlanner?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor plan</button>`:''}${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${currentUserIsPlanner?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor plan</button>`:''}${(j.address&&!isManagerView&&!isOnlineLocation(j.address))?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
