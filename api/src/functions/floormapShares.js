@@ -1,6 +1,6 @@
 const { app } = require('@azure/functions');
 const { randomBytes, randomUUID } = require('crypto');
-const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
+const { requireUser, requirePlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const { checkRateLimit } = require('../lib/ratelimit');
 const { audit } = require('../lib/audit');
@@ -65,7 +65,7 @@ function publicError(e, context) {
 }
 function publicFail(status, message) { const e = new Error(message); e.publicStatus = status; return e; }
 
-// Shape a link for the Testers' management list.
+// Shape a link for the Project Planners' management list.
 function shareSummary(sh) {
   return {
     token: sh.token, label: sh.label, level: sh.level, showNotes: !!sh.showNotes,
@@ -80,7 +80,7 @@ function feedbackOut(f, withShare) {
   return o;
 }
 
-// ── Testers: manage a map's links + read its client feedback ───────────────
+// ── Project Planners: manage a map's links + read its client feedback ───────────────
 
 // GET  /api/floormaps/{id}/shares -> { shares, feedback }
 // POST /api/floormaps/{id}/shares  JSON { label, level, days, showNotes } -> { share }
@@ -91,7 +91,7 @@ app.http('floormapShares', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requirePlanner(user);
       const container = getContainer(CONTAINER_ID);
       const mapId = mapDocId(request.params.id);
       const map = await readDoc(container, mapId);
@@ -141,7 +141,7 @@ app.http('floormapShareRevoke', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requirePlanner(user);
       const container = getContainer(CONTAINER_ID);
       const token = String(request.params.token || '');
       if (!TOKEN_RE.test(token)) return { status: 400, jsonBody: { error: 'Bad link id' } };

@@ -1,21 +1,22 @@
 const { app } = require('@azure/functions');
 const { randomUUID } = require('crypto');
-const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
+const { requireUser, requirePlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const ss = require('../lib/smartsheet');
 
-// Floor Maps tab (Testers group). A floor map = one rendered floor-plan image
+// Floor Plans view in Project Planning (Project Planners group; was the
+// Testers-only Floor Maps tab). A floor map = one rendered floor-plan image
 // + a list of pins (normalized x/y + a label such as a desk number) + the job
 // sheet the pins match against. Pins are matched to sheet rows BY LABEL at
 // view time (the sheet's identifier column), so re-sorting or re-adding rows
 // in Smartsheet never breaks a map. Photos and row data are NOT copied here --
-// the client reads them live from the Testers-gated /api/jobsheet/sheet.
+// the client reads them live from the Testers-or-Planners-gated /api/jobsheet/sheet.
 //
 // Storage: the map doc lives in the shared `dispatch` Cosmos container,
 // id-namespaced `floormap:<uuid>` (same pattern as `plan:`). The image is a
 // sheet-level attachment on the linked Smartsheet (see addSheetAttachment),
 // streamed back through GET /api/floormaps/{id}/image. Everything is
-// Testers-only, read and write -- client floor plans are sensitive.
+// Project Planners only, read and write -- client floor plans are sensitive.
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'floormap:';
 const MAX_PINS = 3000;
@@ -101,7 +102,7 @@ app.http('floormaps', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requirePlanner(user);
       const container = getContainer(CONTAINER_ID);
       const docId = toDocId(request.params.id);
 
@@ -207,7 +208,7 @@ app.http('floormaps', {
 });
 
 // GET /api/floormaps/{id}/image — streams the map's floor-plan image from its
-// Smartsheet attachment. Testers-only (the client fetches it with the auth
+// Smartsheet attachment. Project Planners only (the client fetches it with the auth
 // header and hands the blob to the map as an object URL).
 app.http('floormapImage', {
   methods: ['GET'],
@@ -216,7 +217,7 @@ app.http('floormapImage', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requirePlanner(user);
       const docId = toDocId(request.params.id);
       const map = await readMap(getContainer(CONTAINER_ID), docId);
       if (!map || !map.attachmentId) return { status: 404, jsonBody: { error: 'Floor map not found' } };

@@ -229,6 +229,15 @@ function requireEditorOrPlanner(user) {
   }
 }
 
+// Gate for the Job Sheets endpoints that Floor Plans (Project Planners) also
+// needs: reading a job sheet, its activity, sheet search, and the cell /
+// photo writes a floor-plan pin makes. The Job Sheets tab itself stays Testers.
+function requireTesterOrPlanner(user) {
+  if (!user || (!user.isTester && !user.isPlanner)) {
+    deny(user, 'You do not have permission to view this.');
+  }
+}
+
 // Gate for the Expenses tab: cardholders submit, the Financial group approves.
 function requireCardholderOrFinance(user) {
   if (!user || (!user.isCardholder && !user.isFinance)) {
@@ -257,4 +266,4 @@ function authErrorResponse(e, context) {
   return { status: 500, jsonBody: { error: 'Internal server error' } };
 }
 
-module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireEditorOrPlanner, requireCardholderOrFinance, requireAccessAdmin, requireAccessKnown, deny, azureAccessLists, AuthError, authErrorResponse };
+module.exports = { requireUser, requireEditor, requireFinance, requirePlanner, requireTester, requireTesterOrPlanner, requireEditorOrPlanner, requireCardholderOrFinance, requireAccessAdmin, requireAccessKnown, deny, azureAccessLists, AuthError, authErrorResponse };

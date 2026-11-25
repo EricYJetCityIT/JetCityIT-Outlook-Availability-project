@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { requireUser, requireTester, authErrorResponse, AuthError } = require('../lib/auth');
+const { requireUser, requireTester, requireTesterOrPlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const ss = require('../lib/smartsheet');
 const { logJobSheetActivity, listJobSheetActivity } = require('../lib/jobsheetActivity');
 const { readRange, isDay, readTechDay } = require('../lib/jobsheetRollup');
@@ -64,7 +64,7 @@ app.http('jobsheetSearch', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requireTesterOrPlanner(user); // Floor Plans (Project Planners) reads/writes through this too
       const q = (new URL(request.url).searchParams.get('q') || '').trim();
       if (!q) return { jsonBody: { results: [] } };
       const results = await ss.searchSheets(q);
@@ -102,7 +102,7 @@ app.http('jobsheetSheet', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requireTesterOrPlanner(user); // Floor Plans (Project Planners) reads/writes through this too
       const id = new URL(request.url).searchParams.get('id');
       if (!id) return { status: 400, jsonBody: { error: 'Missing sheet id' } };
       const view = await ss.fetchJobSheetView(id);
@@ -123,7 +123,7 @@ app.http('jobsheetActivityList', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requireTesterOrPlanner(user); // Floor Plans (Project Planners) reads/writes through this too
       const params = new URL(request.url).searchParams;
       const sheetId = params.get('sheetId');
       if (!sheetId) return { status: 400, jsonBody: { error: 'Missing sheetId' } };
@@ -207,7 +207,7 @@ app.http('jobsheetCell', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requireTesterOrPlanner(user); // Floor Plans (Project Planners) reads/writes through this too
       const body = await request.json().catch(() => null);
       if (!body || !body.sheetId || !body.rowId || !body.columnId) {
         return { status: 400, jsonBody: { error: 'Missing sheetId, rowId, or columnId' } };
@@ -245,7 +245,7 @@ app.http('jobsheetPhotoUpload', {
   handler: async (request, context) => {
     try {
       const user = await requireUser(request);
-      requireTester(user);
+      requireTesterOrPlanner(user); // Floor Plans (Project Planners) reads/writes through this too
       let form;
       try { form = await request.formData(); } catch (e) { return { status: 400, jsonBody: { error: 'Expected a multipart file upload' } }; }
       const sheetId = form.get('sheetId');

@@ -569,10 +569,9 @@ body.is-planner #tab-planning{display:inline-block}
    default, revealed only when the API confirms membership (adds `is-tester`). */
 #tab-jobsheet{display:none}
 body.is-tester #tab-jobsheet{display:inline-block}
-/* Floor Maps tab is also Testers-group only (TESTER_UPNS), gated by the same
-   `is-tester` class. */
+/* Floor Plans (was the Floor Maps tab) now lives inside Project Planning as a
+   sub-tab, so its old top-level tab is always hidden. */
 #tab-floormap{display:none}
-body.is-tester #tab-floormap{display:inline-block}
 /* ── Floor Maps (floor plan + live QA-photo pins) ── */
 .fm-sec{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
 .fm-sec-h{font-size:15px;font-weight:600;margin-bottom:10px;color:var(--text);display:flex;align-items:center}
@@ -1155,10 +1154,11 @@ if('serviceWorker' in navigator){
     </button>
   </div>
 
-  <!-- FLOOR MAPS VIEW (private "Testers" group only — TESTER_UPNS). A floor
+  <!-- FLOOR PLANS VIEW (Project Planners — PLANNER_UPNS; shown as the "Floor
+       Plans" sub-tab of Project Planning, its old top tab stays hidden). A floor
        plan with a clickable pin per desk, matched to a job sheet's rows + live
        QA photos. Rendered by renderFloormap(); data from /api/floormaps. -->
-  <div class="view" id="view-floormap"><div id="fm-root"></div></div>
+  <div class="view" id="view-floormap"><div id="fm-ppnav"></div><div id="fm-root"></div></div>
 
   <!-- JOB SHEETS VIEW (private "Testers" group only — TESTER_UPNS). Phase 1 is
        app-side only: no Smartsheet connection yet. This view is the gated shell
@@ -1719,12 +1719,15 @@ function switchTab(id){
   if(id === 'planning' && !currentUserIsPlanner) return;
   // Job Sheets is Testers-group-only (TESTER_UPNS); same guard.
   if(id === 'jobsheet' && !currentUserIsTester) return;
-  // Floor Maps is Testers-group-only too; same guard.
-  if(id === 'floormap' && !currentUserIsTester) return;
+  // Floor Plans (view-floormap) is the Project Planning "Floor Plans" sub-tab:
+  // Project Planners only, and the Project Planning tab stays highlighted.
+  if(id === 'floormap' && !currentUserIsPlanner) return;
+  if(id === 'planning' && ppView === 'floorplans') ppView = 'plans';
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
-  document.getElementById('tab-'+id).classList.add('active');
+  document.getElementById(id==='floormap'?'tab-planning':'tab-'+id).classList.add('active');
+  if(id==='floormap'){ ppView='floorplans'; var fmNav=document.getElementById('fm-ppnav'); if(fmNav) fmNav.innerHTML='<div class="section-head"><div><h1>Project Planning</h1><p>Floor plans with a pin per desk, matched to a job sheet’s rows and live photos.</p></div></div>'+ppNavHtml(); }
   if(id==='manager')renderManager();
   if(id==='crew')renderCrewView();
   if(id==='planning')renderPlanning();
@@ -3105,8 +3108,8 @@ async function fmLoadList(){
       const c=await fmRaceTimeout(fmCacheGet('list'),3000);
       if(c&&c.maps&&c.owner===fmOwner()){ fm.maps=c.maps; fm.listOfflineAt=c.savedAt; }
       else fm.error='No connection, and no maps have been saved on this device yet.';
-    } else if(fmNoAccess(e)){ fmWipeSaved(); fm.maps=[]; fm.error='You no longer have access to Floor Maps.'; }
-    else fm.error=e.message||'Failed to load floor maps';
+    } else if(fmNoAccess(e)){ fmWipeSaved(); fm.maps=[]; fm.error='You no longer have access to Floor Plans.'; }
+    else fm.error=e.message||'Failed to load floor plans';
   }
   fm.cachedIds=await fmCachedIds();
   fm.loading=false; if(fm.mode==='list') fmPaint();
@@ -3131,7 +3134,7 @@ async function fmSaveAllOffline(){
   fm.saveAll=null; fm.cachedIds=await fmCachedIds(); if(fm.mode==='list') fmPaint();
 }
 async function fmClearOffline(){
-  if(!confirm('Remove all saved floor maps and job sheets from this device? They\'ll need a signal to open again.')) return;
+  if(!confirm('Remove all saved floor plans and job sheets from this device? They\'ll need a signal to open again.')) return;
   await fmWipeSaved(); fm.cachedIds=new Set(); fm.saveMsg='Saved copies removed from this device.'; if(fm.mode==='list') fmPaint();
 }
 // ── Multi-floor jobs ──
@@ -3139,7 +3142,7 @@ async function fmClearOffline(){
 // Smartsheet. Each map keeps its own plan; a floors bar on the map view shows
 // every floor's progress and the job's combined total, and jumps between floors.
 const fmJobKey=m=>(m.jobName&&String(m.jobName).trim())? 'job:'+String(m.jobName).trim().toLowerCase() : 'sheet:'+m.sheetId;
-const fmFloorTitle=m=>(m.floorLabel&&String(m.floorLabel).trim()) || m.name || 'Floor map';
+const fmFloorTitle=m=>(m.floorLabel&&String(m.floorLabel).trim()) || m.name || 'Floor plan';
 function fmJobNames(){ return [...new Set((fm.maps||[]).map(m=>String(m.jobName||'').trim()).filter(Boolean))]; }
 function fmGroupMaps(maps){
   const groups=new Map();
@@ -3151,11 +3154,11 @@ function fmGroupMaps(maps){
 function fmMapCard(m,inGroup){
   const id=jsEsc(fmIdOf(m.id));
   return `<div class="fm-card-row"><button class="pp-card" onclick="fmOpenMap('${id}')">`+
-    `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(inGroup? fmFloorTitle(m) : (m.name||'Floor map'))}</div></div>`+
+    `<div class="pp-card-top"><div class="pp-card-title">${jsEsc(inGroup? fmFloorTitle(m) : (m.name||'Floor plan'))}</div></div>`+
     `<div class="pp-card-sub">${jsEsc(inGroup&&m.floorLabel? (m.name||'') : (m.sheetName||''))}</div>`+
     `<div class="pp-card-meta"><span>${m.pinCount} pins</span>${m.updatedAt?`<span>Updated ${jsEsc(new Date(m.updatedAt).toLocaleDateString())}</span>`:''}`+
       `${fm.cachedIds&&fm.cachedIds.has(fmIdOf(m.id))?'<span style="color:var(--green-dark)">✓ Saved offline</span>':''}</div>`+
-    `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor map" data-id="${id}" data-name="${jsEsc(m.name||'Floor map')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`;
+    `</button><button class="btn btn-sm btn-danger fm-card-del" title="Delete this floor plan" data-id="${id}" data-name="${jsEsc(m.name||'Floor plan')}" onclick="fmDeleteMapById(this.dataset.id,this.dataset.name)">🗑 Delete</button></div>`;
 }
 // Done / open / flagged for some pins against ANY sheet (not just the open map's).
 function fmStateIn(sheet,r){
@@ -3224,7 +3227,7 @@ function fmShowDetails(){
     '<datalist id="fm-job-names2">'+fmJobNames().map(n=>'<option value="'+jsEsc(n)+'">').join('')+'</datalist>'+
     '<div><div class="js-field-label">Floor label</div><input class="fm-input" id="fm-d-floor" maxlength="60" value="'+jsEsc(m.floorLabel||'')+'" placeholder="e.g. Floor 2"></div>'+
     '<div><div class="js-field-label">Crew-calendar project</div><input class="fm-input" id="fm-d-proj" maxlength="200" list="fm-proj-names" value="'+jsEsc(m.project||'')+'" placeholder="Pick or type the project name from the calendar">'+
-      '<datalist id="fm-proj-names"></datalist><div class="fm-muted" style="margin-top:4px">Jobs with this project name get a 🗺️ Floor map button (Testers only).</div></div>'+
+      '<datalist id="fm-proj-names"></datalist><div class="fm-muted" style="margin-top:4px">Jobs with this project name get a 🗺️ Floor plan button (Project Planners).</div></div>'+
     '<div id="fm-d-msg" style="font-size:12.5px;color:var(--text3)"></div>'+
     '<div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="fmSaveDetails()">Save</button><button class="btn btn-sm" onclick="fmCloseDetail()">Cancel</button></div></div>';
   document.getElementById('fm-modal-backdrop').classList.add('open');
@@ -3256,17 +3259,17 @@ function fmPaintList(root){
   let body;
   if(fm.loading) body='<div class="empty"><p>Loading…</p></div>';
   else if(fm.error) body=`<div class="empty"><p>${jsEsc(fm.error)}</p></div>`;
-  else if(!fm.maps||!fm.maps.length) body='<div class="empty"><div class="empty-icon">🗺️</div><p>No floor maps yet.</p><small>Build one from a floor plan PDF and a job sheet.</small></div>';
+  else if(!fm.maps||!fm.maps.length) body='<div class="empty"><div class="empty-icon">🗺️</div><p>No floor plans yet.</p><small>Build one from a floor plan PDF and a job sheet.</small></div>';
   else body='<div class="pp-list">'+fmGroupMaps(fm.maps).map(g=> g.list.length>1
     ? `<div class="fm-group"><div class="fm-group-h">${jsEsc(g.title||g.list[0].sheetName||'Job')} <span class="fm-muted">· ${g.list.length} floors</span></div>${g.list.map(m=>fmMapCard(m,true)).join('')}</div>`
     : fmMapCard(g.list[0],false)).join('')+'</div>';
   root.innerHTML=
     '<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap">'+
-      '<div><h1>Floor Maps</h1><p>Private preview for the Testers group. Floor plan + live Smartsheet QA photos.</p></div>'+
+      '<div><h2 style="margin:0 0 4px">Floor Plans</h2><p>Floor plan + live Smartsheet QA photos, one pin per desk.</p></div>'+
       '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
         (fm.maps&&fm.maps.length? '<button class="btn" '+(fm.saveAll?'disabled':'')+' onclick="fmSaveAllOffline()">'+(fm.saveAll? 'Saving '+fm.saveAll.done+' of '+fm.saveAll.total+'…' : '⬇ Save for offline')+'</button>' : '')+
         '<button class="btn" onclick="fmBatchNew()">+ Several floors at once</button>'+
-        '<button class="btn btn-primary" onclick="fmNew()">+ New floor map</button></div></div>'+
+        '<button class="btn btn-primary" onclick="fmNew()">+ New floor plan</button></div></div>'+
     (fm.listOfflineAt? '<div class="fm-banner fm-warn">📴 Offline — showing the list saved '+jsEsc(new Date(fm.listOfflineAt).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'. Maps marked “Saved offline” will open.</div>' : '')+
     (fm.saveMsg? '<div class="fm-banner">'+jsEsc(fm.saveMsg)+'</div>' : '')+
     body+
@@ -3282,7 +3285,7 @@ function fmNew(){
   fm.mode='new'; fmPaint();
 }
 function fmCancelNew(){
-  if(fm.draft && (fm.draft.boxes||fm.draft.det) && !confirm('Discard this floor map?')) return;
+  if(fm.draft && (fm.draft.boxes||fm.draft.det) && !confirm('Discard this floor plan?')) return;
   fm.draft=null; fmLoadList();
 }
 
@@ -3312,7 +3315,7 @@ function fmPaintNew(root){
         `<button class="btn btn-sm btn-ghost" onclick="fmSkipDetect()">Skip, I'll place pins by hand</button></div>`
     : '<div class="fm-muted">Load a floor plan first.</div>';
   root.innerHTML=
-    '<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmCancelNew()">← Back</button><h2 class="fm-title">New floor map</h2></div>'+
+    '<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmCancelNew()">← Back</button><h2 class="fm-title">New floor plan</h2></div>'+
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">1</span>Job sheet</div>${sheetSec}</div>`+
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">2</span>Floor plan</div>${planSec}</div>`+
     `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">3</span>Find the desks</div>${detectSec}`+
@@ -3321,7 +3324,7 @@ function fmPaintNew(root){
     (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">4</span>Number the desks</div><div id="fm-review"></div></div>` : '')+
     (d.boxes? `<div class="fm-sec"><div class="fm-sec-h"><span class="fm-step">5</span>Save</div>`+
       `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input class="fm-input" style="flex:1;min-width:220px" placeholder="Map name" value="${jsEsc(d.name)}" oninput="fm.draft.name=this.value">`+
-      `<button class="btn btn-primary" ${d.saving||!d.sheet?'disabled':''} onclick="fmSaveDraft()">${d.saving?'Saving…':'Save floor map'}</button></div>`+
+      `<button class="btn btn-primary" ${d.saving||!d.sheet?'disabled':''} onclick="fmSaveDraft()">${d.saving?'Saving…':'Save floor plan'}</button></div>`+
       `<div class="fm-muted" style="font-size:12px;margin:10px 0 4px">Part of a multi-floor job? (optional) Maps with the same job name are grouped, and show a combined progress.</div>`+
       `<div style="display:flex;gap:10px;flex-wrap:wrap"><input class="fm-input" style="flex:1;min-width:200px" placeholder="Job name (e.g. Fred Hutch — Building 3)" list="fm-job-names" maxlength="160" value="${jsEsc(d.job)}" oninput="fm.draft.job=this.value">`+
       `<input class="fm-input" style="width:180px" placeholder="Floor (e.g. Floor 2)" maxlength="60" value="${jsEsc(d.floor)}" oninput="fm.draft.floor=this.value"></div>`+
@@ -3877,7 +3880,7 @@ async function fmOpenMap(id){
     fmApply(b.map,b.sheet,b.blob,b.acts,b.sheetError,null);
   }catch(e){
     if(fm.openToken!==tok) return;
-    fm.error=fmIsOffline(e)? 'No connection, and this map hasn\'t been saved on this device yet. Open it once with signal (or use "Save for offline" on the list) and it will work offline after that.' : (e.message||'Failed to load floor map');
+    fm.error=fmIsOffline(e)? 'No connection, and this map hasn\'t been saved on this device yet. Open it once with signal (or use "Save for offline" on the list) and it will work offline after that.' : (e.message||'Failed to load floor plan');
     fm.loading=false; fmPaint();
   }
 }
@@ -3923,7 +3926,7 @@ async function fmRefreshOpen(id,tok,cached){
     if(fm.openToken!==tok || fm.mode!=='map') return;
     fm.refreshing=false;
     if(fmNoAccess(e)){ // access was removed: drop the saved copy and stop showing it
-      fmCacheDelMap(id); fm.map=null; fm.sheet=null; fm.error='You no longer have access to Floor Maps.'; fm.loading=false; fmPaint(); return;
+      fmCacheDelMap(id); fm.map=null; fm.sheet=null; fm.error='You no longer have access to Floor Plans.'; fm.loading=false; fmPaint(); return;
     }
     if(fmIsOffline(e)) fm.offline=true; else fm.refreshError=String(e.message||e).slice(0,120);
     fmRenderBanner();
@@ -3951,9 +3954,9 @@ function fmRowState(r){ return fmStateIn(fm.sheet,r); } // one rule for open map
 function fmPinState(p){ const r=fmRowFor(p.label); return r? fmRowState(r) : 'nomatch'; }
 
 function fmPaintMap(root){
-  if(fm.loading){ root.innerHTML='<div class="empty"><p>Loading floor map…</p></div>'; return; }
+  if(fm.loading){ root.innerHTML='<div class="empty"><p>Loading floor plan…</p></div>'; return; }
   if(fm.error||!fm.map){
-    root.innerHTML=`<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmLoadList()">← All floor maps</button></div><div class="empty"><p>${jsEsc(fm.error||'Floor map not found')}</p></div>`;
+    root.innerHTML=`<div class="fm-toolbar"><button class="btn btn-sm" onclick="fmLoadList()">← All floor plans</button></div><div class="empty"><p>${jsEsc(fm.error||'Floor plan not found')}</p></div>`;
     return;
   }
   root.innerHTML=
@@ -3970,7 +3973,7 @@ function fmRenderToolbar(){
   const el=document.getElementById('fm-toolbar'); if(!el) return;
   const m=fm.map;
   el.innerHTML=
-    '<button class="btn btn-sm" onclick="fmBackToList()">← All floor maps</button>'+
+    '<button class="btn btn-sm" onclick="fmBackToList()">← All floor plans</button>'+
     `<h2 class="fm-title" style="flex:1;min-width:180px">${jsEsc(m.name)}</h2>`+
     (fm.editing
       ? `<button class="btn btn-sm btn-primary" ${fm.dirty?'':'disabled'} onclick="fmSavePins()">Save changes</button>`+
@@ -4472,7 +4475,7 @@ async function fmPrintReport(){
   const d=fmReportData(); if(!d) return;
   let host=document.getElementById('fm-print'); if(host) host.remove();
   host=document.createElement('div'); host.id='fm-print';
-  host.innerHTML='<h1 style="font-size:20px;margin:0 0 4px">'+jsEsc(fm.map.name||'Floor map')+' — closeout report</h1>'+
+  host.innerHTML='<h1 style="font-size:20px;margin:0 0 4px">'+jsEsc(fm.map.name||'Floor plan')+' — closeout report</h1>'+
     '<div style="font-size:12px;margin-bottom:10px">'+jsEsc(fm.map.sheetName||'')+' · generated '+jsEsc(d.at.toLocaleString())+'<br>'+fmReportSummaryHtml(d)+'</div>'+fmReportTableHtml(d,true);
   document.body.appendChild(host);
   // Give thumbnails a moment to load so they make it onto the page.
@@ -5814,7 +5817,7 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g
 // the same job. The log doesn't say which tab a save came from, so "Floor Maps" =
 // sheets that have a floor map. Days are Pacific calendar days, like the server's.
 const TT_RANGES=[['week','Selected week'],['7','Last 7 days'],['30','Last 30 days'],['90','Last 90 days'],['all','All time']];
-const TT_SOURCES=[['all','All work'],['jobsheet','Job Sheets'],['floormap','Floor Maps']];
+const TT_SOURCES=[['all','All work'],['jobsheet','Job Sheets'],['floormap','Floor Plans']];
 const TT_COLS=[['name','Tech'],['items','Items'],['photos','Photos'],['labor','Time logged'],['avg','Avg / item'],['gap','Avg between items'],['rate','Items / hr'],['vs','vs peers'],['days','Active days'],['last','Last active']];
 // [value getter, direction]: 1 = lowest first (names, pace: faster first), -1 = highest first
 const TT_SORT={name:[t=>String(t.name).toLowerCase(),1],items:[t=>t.items,-1],photos:[t=>t.photos,-1],labor:[t=>t.laborSec,-1],avg:[t=>t.avgSec,1],gap:[t=>t.gapAvg,1],rate:[t=>t.rate,-1],days:[t=>t.dayN,-1],last:[t=>Date.parse(t.last)||0,-1]};
@@ -6006,7 +6009,7 @@ function ttTechTable(m){
     let h=`<tr class="tt-row" onclick="ttToggle(${i})">`+
       `<td class="tt-name"><button class="tt-tog" data-f="row:${i}" aria-expanded="${open}" aria-label="${jsEsc(t.name)}: ${open?'hide':'show'} jobs">${open?'▾':'▸'} ${jsEsc(t.name)}</button></td><td>${t.items}</td><td>${t.photos}</td><td>${t.laborSec? fmFmtHM(t.laborSec) : '–'}</td>`+
       `<td>${ttDur(t.avgSec)}</td><td>${ttDur(t.gapAvg)}</td><td>${t.rate!=null? (Math.round(t.rate*10)/10) : '–'}</td><td>${vs}</td><td>${t.dayN}</td><td>${jsEsc(jsFmtWhen(t.last))}</td></tr>`;
-    if(open) h+=t.jobs.map(j=>`<tr class="tt-sub"><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td>${j.items}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td colspan="5"></td></tr>`).join('')+ttDayChips(t,i);
+    if(open) h+=t.jobs.map(j=>`<tr class="tt-sub"><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor plan</span>':''}</td><td>${j.items}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td colspan="5"></td></tr>`).join('')+ttDayChips(t,i);
     return h;
   }).join('');
   return `<div class="tt-wrap"><table class="tt-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
@@ -6022,7 +6025,7 @@ function ttJobTable(m){
   const shown=m.jobs.slice(0,30);
   const body=shown.map(j=>{
     const names=j.techNames.length>3? j.techNames.slice(0,3).join(', ')+' +'+(j.techNames.length-3) : j.techNames.join(', ');
-    return `<tr><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor map</span>':''}</td><td style="text-align:left;white-space:normal;min-width:140px">${jsEsc(names)}</td><td>${j.items.size}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td>${jsEsc(jsFmtWhen(j.last))}</td></tr>`;
+    return `<tr><td class="tt-name">${jsEsc(j.name)}${j.fm?'<span class="tt-tag">Floor plan</span>':''}</td><td style="text-align:left;white-space:normal;min-width:140px">${jsEsc(names)}</td><td>${j.items.size}</td><td>${j.photos}</td><td>${j.laborSec? fmFmtHM(j.laborSec) : '–'}</td><td>${ttDur(j.timedN? j.laborSec/j.timedN : null)}</td><td>${jsEsc(jsFmtWhen(j.last))}</td></tr>`;
   }).join('');
   return `<div class="tt-wrap"><table class="tt-table"><thead><tr><th>Job</th><th style="text-align:left">Techs</th><th>Items</th><th>Photos</th><th>Time logged</th><th>Avg / item</th><th>Last activity</th></tr></thead><tbody>${body}</tbody></table></div>`+
     (m.jobs.length>shown.length? `<div class="tt-note" style="margin-top:6px">Showing the ${shown.length} most recently worked of ${m.jobs.length} jobs.</div>` : '');
@@ -6033,7 +6036,7 @@ function ttKpi(v,l,s){ return `<div class="tt-kpi"><div class="tt-kpi-v">${v}</d
 function ttCanExport(){ return !!(tt.model&&tt.model.techs.length&&tt.loadedKey===ttKey()&&!tt.loading); }
 function ttVsText(t){ if(t.peerPct==null) return ''; const p=t.peerPct; return (Math.abs(p)<5? 'About the same' : (p<0? (-p)+'% faster' : p+'% slower'))+' ('+t.peerN+' items vs '+t.peerM+' peer items)'; }
 const TT_EXPORT_TECH_HEAD=['Tech','Items','Photos','Time logged','Avg per item','Avg between items','Items per hour','vs peers (same jobs)','Active days','Last active'];
-const TT_EXPORT_JOB_HEAD=['Job','Floor map','Techs','Items','Photos','Time logged','Avg per item','Last activity'];
+const TT_EXPORT_JOB_HEAD=['Job','Floor plan','Techs','Items','Photos','Time logged','Avg per item','Last activity'];
 function ttExportTechRows(){ return tt.rows.map(t=>[t.name,t.items,t.photos,t.laborSec? fmFmtHM(t.laborSec) : '',t.avgSec!=null? ttDur(t.avgSec) : '',t.gapAvg!=null? ttDur(t.gapAvg) : '',t.rate!=null? Math.round(t.rate*10)/10 : '',ttVsText(t),t.dayN,jsFmtWhen(t.last)||'']); }
 function ttExportJobRows(m){ return m.jobs.map(j=>[j.name,j.fm?'Yes':'No',j.techNames.join('; '),j.items.size,j.photos,j.laborSec? fmFmtHM(j.laborSec) : '',j.timedN? ttDur(j.laborSec/j.timedN) : '',jsFmtWhen(j.last)||'']); }
 function ttSourceLabel(){ const s=TT_SOURCES.find(x=>x[0]===tt.source); return s? s[1] : ''; }
@@ -6157,7 +6160,7 @@ function ttPaint(){
   else {
     if(tt.error) h+=`<div class="tt-warn">Couldn't refresh (${jsEsc(tt.error)}) — showing the data from ${jsEsc(new Date(tt.loadedAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}))}. <button class="tt-link" data-f="retry" onclick="ttLoad()">Try again</button></div>`;
     if(tt.truncated) h+=`<div class="tt-warn"><b>Heads up:</b> part of this range couldn't be fully loaded this time (older than two years, or still being summarized), so some days may be missing or incomplete. Refresh to load more.</div>`;
-    if(tt.fmUnknown&&tt.source!=='all') h+='<div class="tt-warn">The floor map list couldn\'t be loaded, so every job is being treated as a Job Sheet.</div>';
+    if(tt.fmUnknown&&tt.source!=='all') h+='<div class="tt-warn">The floor plan list couldn\'t be loaded, so every job is being treated as a Job Sheet.</div>';
     if(!m.techs.length) h+='<div class="tt-empty">No tech activity logged for this range'+(tt.source!=='all'?' and filter':'')+'.</div>';
     else {
       const k=m.kpi;
@@ -6173,7 +6176,7 @@ function ttPaint(){
       const ch=ttChartHtml(m.byDay,tt.bounds);
       h+='<div class="tt-sec"><div class="js-act-sec-h">Items worked '+(ch.weekly? 'per week' : 'per day')+'</div>'+ch.html+'</div>';
       h+='<div class="tt-sec"><div class="js-act-sec-h">By job</div>'+ttJobTable(m)+'</div>';
-      h+='<div class="tt-note">Only work done through this app is counted — photos and edits made directly in Smartsheet aren\'t attributed to anyone. Time logged is how long a tech had an item open before saving; a gap over 20 minutes is treated as a break and left out. Between items is the time from one item to the next on the same job. “vs peers” compares a tech\'s average time per item with the other techs\' on the same jobs (it needs at least 3 timed items from the tech, and 3 from the other techs on each job used), so job type doesn\'t skew it. The log doesn\'t record which tab a save came from, so "Floor Maps" means jobs that have a floor map.</div>';
+      h+='<div class="tt-note">Only work done through this app is counted — photos and edits made directly in Smartsheet aren\'t attributed to anyone. Time logged is how long a tech had an item open before saving; a gap over 20 minutes is treated as a break and left out. Between items is the time from one item to the next on the same job. “vs peers” compares a tech\'s average time per item with the other techs\' on the same jobs (it needs at least 3 timed items from the tech, and 3 from the other techs on each job used), so job type doesn\'t skew it. The log doesn\'t record which tab a save came from, so "Floor Plans" means jobs that have a floor plan.</div>';
     }
   }
   root.innerHTML=h;
@@ -6186,8 +6189,8 @@ let mgrMode='dispatch';
 const ACC_GROUPS=[
   ['editors','Editors','Manager view and changing data: assign crew, jobs, clear availability, feedback, tech tracking links'],
   ['finance','Finance','The Financial tab (costs, prices, profit)'],
-  ['planners','Project planners','The Project Planning tab'],
-  ['testers','Testers','Job Sheets, Floor Maps and Tech tracking (features still being tried out)']
+  ['planners','Project planners','The Project Planning tab, including Floor Plans'],
+  ['testers','Testers','Job Sheets and Tech tracking (features still being tried out)']
 ];
 const acc={data:null,dir:null,dirBusy:false,err:'',notice:null,live:'',loading:false,busy:false,pending:null,confirm:null,confirmAt:0,focusKey:null,seq:0,vals:{}};
 // Manager view → Feedback state (the code is further down, next to openFeedback)
@@ -7321,7 +7324,7 @@ const JCITDispatch=(function(){
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
       ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
-      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${currentUserIsTester?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor map</button>`:''}${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
+      `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${currentUserIsPlanner?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor plan</button>`:''}${(j.address&&!isManagerView)?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
     const root=document.getElementById('dp-modal-root'); if(!root) return;
@@ -7943,12 +7946,20 @@ var PP_ACCOUNTS={
   brooks:{label:'Brooks',icon:'👟',sheets:true,re:/\bbrooks\b/i}
 };
 function ppNavHtml(){
-  var tabs=[['plans','📋 All plans'],['tmobile','📱 T-Mobile']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; }));
+  var tabs=[['plans','📋 All plans'],['floorplans','🗺️ Floor Plans'],['tmobile','📱 T-Mobile']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; }));
   return '<div class="js-mode-toggle" style="flex-wrap:wrap">'+tabs.map(function(v){
     return '<button class="js-mode-btn'+(ppView===v[0]?' active':'')+'" onclick="ppSetView(\''+v[0]+'\')">'+v[1]+'</button>';
   }).join('')+'</div>';
 }
-function ppSetView(v){ ppView=v; renderPlanning(); }
+// Floor Plans has its own view (view-floormap); every other sub-tab renders
+// into the Project Planning view.
+function ppSetView(v){
+  if(v==='floorplans'){ switchTab('floormap'); return; }
+  ppView=v;
+  var pv=document.getElementById('view-planning');
+  if(pv&&!pv.classList.contains('active')) enterPlanningTab();
+  renderPlanning();
+}
 // A plan's client group: the saved one, else guessed from its project/client
 // text (plans made before client groups existed).
 function ppAccountOf(p){
@@ -7960,6 +7971,7 @@ function ppAccountOf(p){
 
 async function renderPlanning(){
   ppWire(); var root=ppEl(); if(!root) return;
+  if(ppView==='floorplans') ppView='plans'; // Floor Plans renders in its own view (switchTab('floormap'))
   if(ppView==='tmobile'){ renderTMobile(); return; }
   if(PP_ACCOUNTS[ppView]){ ppRenderAccount(ppView); return; }
   root.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>Loading…</p></div>';
@@ -8610,7 +8622,7 @@ function openPlanEdit(plan){
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
     +'<button type="button" class="btn btn-sm" data-pp-link style="color:var(--text);font-weight:600">🔗 Link to calendar</button>'
     +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>'
-    +(currentUserIsTester?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor map</button>':'')+'</div></div>'
+    +(currentUserIsPlanner?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor plan</button>':'')+'</div></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')
     +'<label class="dp-fld" style="margin-top:10px">Client group</label><select data-f="account" style="width:100%">'
     +[['','None (All plans only)']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; })).map(function(o){
@@ -8824,15 +8836,15 @@ function ppPickSheetModal(onPick){
 // only Testers get the picker and see the map links; other planners editing the
 // plan keep whatever maps are already linked (ppEditingMaps is saved as-is).
 function ppMapNoteHtml(){
-  if(!currentUserIsTester||!ppEditingMaps.length) return '';
-  return '🗺️ Floor maps: '+ppEditingMaps.map(function(m){
+  if(!currentUserIsPlanner||!ppEditingMaps.length) return '';
+  return '🗺️ Floor plans: '+ppEditingMaps.map(function(m){
     return '<b>'+esc(m.name)+'</b> <button type="button" class="btn btn-ghost btn-sm" data-pp-map-unlink="'+esc(m.id)+'" style="padding:0 4px;font-size:11px">Unlink</button>';
   }).join(' · ');
 }
 function ppRenderMapNote(root){ var n=root.querySelector('[data-pp-mapnote]'); if(n) n.innerHTML=ppMapNoteHtml(); }
 function ppMapLinksHtml(p){
-  if(!currentUserIsTester||!p||!Array.isArray(p.maps)||!p.maps.length) return '';
-  return '<div class="pp-noprint" style="font-size:13px;margin-bottom:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">🗺️ Floor maps:'
+  if(!currentUserIsPlanner||!p||!Array.isArray(p.maps)||!p.maps.length) return '';
+  return '<div class="pp-noprint" style="font-size:13px;margin-bottom:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">🗺️ Floor plans:'
     +p.maps.map(function(m){ return '<button type="button" class="btn btn-sm" style="color:var(--text);font-weight:600" onclick="ppOpenPlanMap(this,\''+esc(m.id)+'\')">'+esc(m.name)+' ↗</button>'; }).join('')+'</div>';
 }
 // Opens a linked map in the Floor Maps tab, closing the job-popup plan
@@ -8841,13 +8853,13 @@ function ppOpenPlanMap(btn,id){
   var ov=btn&&btn.closest('.dp-overlay'); if(ov) ov.remove();
   fmGoToMap(id);
 }
-function ppMapLabel(m){ return (m.floorLabel?m.floorLabel+' · ':'')+(m.name||'Floor map'); }
+function ppMapLabel(m){ return (m.floorLabel?m.floorLabel+' · ':'')+(m.name||'Floor plan'); }
 function ppPickMapModal(onPick){
   var ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:480px;width:94vw">'
-    +'<div class="dp-modal-hd"><span class="dp-modal-title">Link a floor map</span><button class="dp-close" data-pm="close">✕</button></div>'
-    +'<div class="dp-modal-bd"><input type="text" data-pm-q placeholder="Filter by map, floor or job name…" style="width:100%;margin-bottom:10px"/><div data-pm-results style="max-height:50vh;overflow:auto"><div style="padding:8px 2px;color:var(--text3);font-size:13px">Loading floor maps…</div></div></div>'
-    +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Maps from the Floor Maps tab</span><button class="btn btn-sm" data-pm="close">Cancel</button></div></div>';
+    +'<div class="dp-modal-hd"><span class="dp-modal-title">Link a floor plan</span><button class="dp-close" data-pm="close">✕</button></div>'
+    +'<div class="dp-modal-bd"><input type="text" data-pm-q placeholder="Filter by map, floor or job name…" style="width:100%;margin-bottom:10px"/><div data-pm-results style="max-height:50vh;overflow:auto"><div style="padding:8px 2px;color:var(--text3);font-size:13px">Loading floor plans…</div></div></div>'
+    +'<div class="dp-modal-ft"><span style="font-size:11px;color:var(--text3)">Floor plans from Project Planning › Floor Plans</span><button class="btn btn-sm" data-pm="close">Cancel</button></div></div>';
   document.body.appendChild(ov);
   var onKey=function(ev){ if(ev.key==='Escape') cleanup(); };
   function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
@@ -8863,7 +8875,7 @@ function ppPickMapModal(onPick){
       var sub=[m.jobName&&m.jobName!==m.name?m.jobName:'',m.pinCount+' desks',linked?'linked to this project':''].filter(Boolean).join(' · ');
       return '<button type="button" class="pp-job-pick" data-pm-idx="'+i+'" style="display:block;width:100%;text-align:left;padding:8px 6px;border:none;border-bottom:1px solid var(--border);background:none;cursor:pointer;color:inherit">'
         +'<div style="font-weight:600;font-size:14px">'+esc(ppMapLabel(m))+'</div><div style="font-size:12px;color:var(--text3)">'+esc(sub)+'</div></button>';
-    }).join(''):'<div style="padding:8px 2px;color:var(--text3);font-size:13px">'+(all&&all.length?'No matching maps.':'No floor maps yet.')+'</div>';
+    }).join(''):'<div style="padding:8px 2px;color:var(--text3);font-size:13px">'+(all&&all.length?'No matching floor plans.':'No floor plans yet.')+'</div>';
   }
   fmFetch('GET','/floormaps').then(function(d){
     all=(d.maps||[]).slice();
@@ -8871,7 +8883,7 @@ function ppPickMapModal(onPick){
     var score=function(m){ return proj&&(String(m.project||'').toLowerCase()===proj||String(m.jobName||'').toLowerCase()===proj)?0:1; };
     all.sort(function(a,b){ return score(a)-score(b)||ppMapLabel(a).localeCompare(ppMapLabel(b),undefined,{numeric:true}); });
     render();
-  }).catch(function(e){ results.innerHTML='<div style="padding:8px 2px;color:var(--red);font-size:13px">Couldn’t load floor maps: '+esc(String(e.message||e).slice(0,100))+'</div>'; });
+  }).catch(function(e){ results.innerHTML='<div style="padding:8px 2px;color:var(--red);font-size:13px">Couldn’t load floor plans: '+esc(String(e.message||e).slice(0,100))+'</div>'; });
   q.addEventListener('input',function(){ if(all) render(); });
   ov.addEventListener('click',function(ev){
     if(ev.target===ov||ev.target.closest('[data-pm="close"]')){ cleanup(); return; }
@@ -8933,7 +8945,7 @@ function enterPlanningTab(){
   var tab=document.getElementById('tab-planning'); if(tab) tab.classList.add('active');
 }
 
-// The job popup's "🗺️ Floor map" button (Testers only, like the Floor Maps tab).
+// The job popup's "🗺️ Floor plan" button (Project Planners, like the Floor Plans sub-tab).
 // Finds the maps linked to this job's PROJECT NAME (a map's "Crew-calendar
 // project" in ⚙ Details, or a map whose job name equals it): one map opens
 // straight away in the Floor Maps tab; several (e.g. one per floor) get a
@@ -8942,18 +8954,18 @@ async function openJobFloorMap(project){
   project=String(project||'').trim();
   let maps=[];
   try{ if(project) maps=(await fmFetch('GET','/floormaps?project='+encodeURIComponent(project))).maps||[]; }
-  catch(e){ alert('Could not look up floor maps: '+(e.message||e)); return; }
+  catch(e){ alert('Could not look up floor plans: '+(e.message||e)); return; }
   if(maps.length===1){ fmGoToMap(maps[0].id); return; }
   maps.sort((a,b)=>String(a.floorLabel||a.name).localeCompare(String(b.floorLabel||b.name),undefined,{numeric:true}));
   const ov=document.createElement('div'); ov.className='dp-overlay';
   ov.innerHTML='<div class="dp-modal" style="max-width:460px;width:94vw">'+
-    '<div class="dp-modal-hd"><span class="dp-modal-title">🗺️ Floor map</span><button class="dp-close" data-jfm="close">✕</button></div>'+
+    '<div class="dp-modal-hd"><span class="dp-modal-title">🗺️ Floor plan</span><button class="dp-close" data-jfm="close">✕</button></div>'+
     '<div class="dp-modal-bd">'+(maps.length
-      ? '<div style="font-size:13px;color:var(--text3);margin-bottom:10px">'+maps.length+' floor maps are linked to <b>'+jsEsc(project)+'</b>:</div><div style="display:grid;gap:8px">'+
+      ? '<div style="font-size:13px;color:var(--text3);margin-bottom:10px">'+maps.length+' floor plans are linked to <b>'+jsEsc(project)+'</b>:</div><div style="display:grid;gap:8px">'+
         maps.map(m=>'<button class="btn btn-sm" style="justify-content:flex-start" data-jfm="open" data-id="'+jsEsc(fmIdOf(m.id))+'">'+jsEsc(m.floorLabel? m.floorLabel+' · '+m.name : m.name)+' <span style="color:var(--text3);margin-left:auto">'+m.pinCount+' desks</span></button>').join('')+'</div>'
-      : '<div style="font-size:14px;color:var(--text2)">No floor map is linked to <b>'+jsEsc(project||'this job')+'</b> yet.</div>'+
-        '<div style="font-size:13px;color:var(--text3);margin-top:8px">To link one: open the map in Floor Maps → ⚙ Details → <b>Crew-calendar project</b>, and pick this project.</div>')+
-    '</div><div class="dp-modal-ft"><span></span>'+(maps.length?'':'<button class="btn btn-sm" data-jfm="tab">Go to Floor Maps</button>')+'<button class="btn btn-sm" data-jfm="close">Close</button></div></div>';
+      : '<div style="font-size:14px;color:var(--text2)">No floor plan is linked to <b>'+jsEsc(project||'this job')+'</b> yet.</div>'+
+        '<div style="font-size:13px;color:var(--text3);margin-top:8px">To link one: open it in Project Planning › Floor Plans → ⚙ Details → <b>Crew-calendar project</b>, and pick this project.</div>')+
+    '</div><div class="dp-modal-ft"><span></span>'+(maps.length?'':'<button class="btn btn-sm" data-jfm="tab">Go to Floor Plans</button>')+'<button class="btn btn-sm" data-jfm="close">Close</button></div></div>';
   document.body.appendChild(ov);
   const onKey=ev=>{ if(ev.key==='Escape') cleanup(); };
   function cleanup(){ ov.remove(); document.removeEventListener('keydown',onKey); }
