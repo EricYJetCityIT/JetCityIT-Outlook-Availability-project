@@ -83,6 +83,14 @@ function sanitizeMap(m) {
   return { id: id.indexOf('floormap:') === 0 ? id : 'floormap:' + id, name: clean(m.name, 200) || 'Floor map' };
 }
 
+// Client group a plan belongs to -- drives the Project Planning sub-tabs
+// (KP / Amazon / PSE / Brooks). '' = no group (shows under All plans only).
+const ACCOUNTS = ['kp', 'amazon', 'pse', 'brooks'];
+function sanitizeAccount(v) {
+  const s = String(v || '').toLowerCase().trim();
+  return ACCOUNTS.includes(s) ? s : '';
+}
+
 function arr(v, fn, cap) {
   return (Array.isArray(v) ? v : []).map(fn).filter(Boolean).slice(0, cap);
 }
@@ -96,6 +104,7 @@ function sanitizePlan(body, id, user) {
     projectId: clean(body.projectId, 60),
     jobId: clean(body.jobId, 60),
     client: clean(body.client, 200),
+    account: sanitizeAccount(body.account),
     sheet: sanitizeSheet(body.sheet),
     maps: arr(body.maps, sanitizeMap, 20),
     planDate: clean(body.planDate, 60),
@@ -122,6 +131,9 @@ function summarize(p) {
     projectId: p.projectId || '',
     jobId: p.jobId || '',
     client: p.client || '',
+    account: p.account || '',
+    sheet: p.sheet && p.sheet.id ? { id: p.sheet.id, name: p.sheet.name || '', url: p.sheet.url || '' } : null,
+    mapCount: Array.isArray(p.maps) ? p.maps.length : 0,
     planDate: p.planDate || '',
     bisDate: p.bisDate || '',
     discTotal: total(p.disconnect),
@@ -210,8 +222,9 @@ app.http('plans', {
 });
 
 // "📊 Link Smartsheet" on the plan form (Project Planners only).
-// GET /api/plan-sheets?q=<term>  -> account-wide sheet-name search
-// GET /api/plan-sheets?id=<id>   -> that sheet's name + permalink
+// GET /api/plan-sheets?q=<term>        -> account-wide sheet-name search
+// GET /api/plan-sheets?id=<id>         -> that sheet's name + permalink
+// GET /api/plan-sheets?progress=<id>   -> {total, done, ...} for progress bars
 // Same Smartsheet search the Job Sheets tab uses, but gated to Planners
 // (Job Sheets is Testers-only). Nothing is stored here; the plan save stores
 // the picked {id, name, url}.
@@ -223,6 +236,17 @@ app.http('planSheets', {
     try {
       const user = await requireUser(request);
       requirePlanner(user);
+      // ?progress=<id> -> how far along that sheet is (done / total items)
+      const progressId = (request.query.get('progress') || '').trim();
+      if (progressId) {
+        if (!/^\d{1,20}$/.test(progressId)) return { status: 400, jsonBody: { error: 'Bad sheet id' } };
+        try {
+          return { jsonBody: { progress: await ss.sheetProgress(progressId) } };
+        } catch (e) {
+          if (/error (403|404)/.test(String(e && e.message))) return { status: 404, jsonBody: { error: 'Sheet not found' } };
+          throw e;
+        }
+      }
       const id = (request.query.get('id') || '').trim();
       if (id) {
         if (!/^\d{1,20}$/.test(id)) return { status: 400, jsonBody: { error: 'Bad sheet id' } };

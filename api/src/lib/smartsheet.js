@@ -1036,6 +1036,31 @@ function analyzeJobSheet(sheet) {
   return { cols, progressCol: pickProgressColumn(cols) };
 }
 
+// How far along one job sheet is, for the Project Planning client tabs:
+// {id, name, permalink, total, done, progressLabel}. Counts the same way the
+// Job Sheets viewer and Floor Maps do: rows with an identifier are items, and
+// an item is done when its progress column (a Done-style checkbox, else a
+// photo column, else the first checkbox) is ticked / has a photo. No photo
+// URLs are resolved, so this is one Smartsheet call per sheet.
+async function sheetProgress(sheetId) {
+  const sheet = await fetchGenericSheet(sheetId);
+  const { cols, progressCol } = analyzeJobSheet(sheet);
+  const idCol = cols.find((c) => c.type === 'identifier');
+  let total = 0, done = 0;
+  (sheet.rows || []).forEach((row) => {
+    const cellOf = (columnId) => (row.cells || []).find((c) => c.columnId === columnId);
+    if (idCol && !cellText(cellOf(idCol.columnId))) return; // spacer row
+    total++;
+    if (!progressCol) return;
+    const cell = cellOf(progressCol.columnId);
+    if (progressCol.type === 'photo' ? !!(cell && (cell.image || cellText(cell))) : !!(cell && (cell.value === true || cell.value === 'true'))) done++;
+  });
+  return {
+    id: String(sheet.id), name: sheet.name || '', permalink: sheet.permalink || '',
+    total, done, progressLabel: progressCol ? progressCol.label : '',
+  };
+}
+
 // Builds the read-only viewer payload for one job sheet: {name, columns,
 // progressKey, rows}. Photo cells become a temporary image URL (or null when
 // empty); checkboxes booleans; everything else text. Rows with a blank
@@ -1207,6 +1232,7 @@ module.exports = {
   fetchAllWorkspaces,
   searchSheets,
   fetchSheetInfo,
+  sheetProgress,
   fetchWorkspaceSheets,
   fetchGenericSheet,
   fetchImageUrls,

@@ -7933,18 +7933,35 @@ async function ppFetch(path,opts){
 
 function ppWire(){ var root=ppEl(); if(!root||root._wired) return; root._wired=1; root.addEventListener('click',ppOnClick); }
 
-// Project Planning has two views: the plans list and T-Mobile move reports.
+// Project Planning views: all plans, T-Mobile move reports, and one sub-tab per
+// client group (KP / Amazon / PSE / Brooks -- see ppRenderAccount).
 var ppView='plans';
+var PP_ACCOUNTS={
+  kp:{label:'KP',icon:'🏥',sheets:true,re:/\b(kp|kaiser)\b/i},
+  amazon:{label:'Amazon',icon:'📦',sheets:false,re:/\bamazon\b/i},
+  pse:{label:'PSE',icon:'⚡',sheets:true,re:/\b(pse|puget sound energy)\b/i},
+  brooks:{label:'Brooks',icon:'👟',sheets:true,re:/\bbrooks\b/i}
+};
 function ppNavHtml(){
-  return '<div class="js-mode-toggle">'+[['plans','📋 Plans'],['tmobile','📱 T-Mobile']].map(function(v){
+  var tabs=[['plans','📋 All plans'],['tmobile','📱 T-Mobile']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; }));
+  return '<div class="js-mode-toggle" style="flex-wrap:wrap">'+tabs.map(function(v){
     return '<button class="js-mode-btn'+(ppView===v[0]?' active':'')+'" onclick="ppSetView(\''+v[0]+'\')">'+v[1]+'</button>';
   }).join('')+'</div>';
 }
 function ppSetView(v){ ppView=v; renderPlanning(); }
+// A plan's client group: the saved one, else guessed from its project/client
+// text (plans made before client groups existed).
+function ppAccountOf(p){
+  if(p&&p.account&&PP_ACCOUNTS[p.account]) return p.account;
+  var t=((p&&p.project)||'')+' '+((p&&p.client)||'');
+  for(var k in PP_ACCOUNTS){ if(PP_ACCOUNTS[k].re.test(t)) return k; }
+  return '';
+}
 
 async function renderPlanning(){
   ppWire(); var root=ppEl(); if(!root) return;
   if(ppView==='tmobile'){ renderTMobile(); return; }
+  if(PP_ACCOUNTS[ppView]){ ppRenderAccount(ppView); return; }
   root.innerHTML='<div class="empty"><div class="empty-icon">📋</div><p>Loading…</p></div>';
   try{ var data=await ppFetch(''); ppRenderList(data); }
   catch(e){ console.error('plans load failed',e); root.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t load project plans. Please try again.</p></div>'; }
@@ -7962,9 +7979,125 @@ function ppRenderList(data){
     if(p.discTotal) meta.push('<span>Disconnect '+Number(p.discTotal).toLocaleString()+' HC</span>');
     if(p.reconTotal) meta.push('<span>Reconnect '+Number(p.reconTotal).toLocaleString()+' HC</span>');
     if(p.updatedAt) meta.push('<span>Updated '+ppWhen(p.updatedAt)+'</span>');
+    var acct=PP_ACCOUNTS[ppAccountOf(p)];
+    if(acct) meta.unshift('<span>'+acct.icon+' '+esc(acct.label)+'</span>');
     return '<button class="pp-card" onclick="openPlan(\''+esc(p.id)+'\')"><div class="pp-card-top"><span class="pp-card-title">'+(esc(p.project)||'Untitled plan')+'</span>'+(p.bisDate?'<span class="pp-card-sub">BIS '+esc(p.bisDate)+'</span>':'')+'</div>'+(p.projectId?'<div class="pp-card-sub">'+esc(p.projectId)+'</div>':'')+(meta.length?'<div class="pp-card-meta">'+meta.join('')+'</div>':'')+'</button>';
   }).join('')+'</div>';
   root.innerHTML=head+ppNavHtml()+body;
+}
+
+// ── Client sub-tabs (KP / Amazon / PSE / Brooks) ──────────────────────────────
+// Each tab is a place to start plans for that client and to see how its work is
+// going: the client's plans (with progress from each plan's linked Smartsheet)
+// and, except for Amazon (its own Smartsheet account), the recent job sheets in
+// the client's Smartsheet workspace with their own progress. Progress = items
+// done / items, counted the same way Job Sheets and Floor Maps count them.
+var ppProgressCache={};   // sheet id -> Promise<{total,done,permalink,...}|null>
+var ppProgressQueue=[], ppProgressActive=0;
+function ppProgress(id){
+  if(!ppProgressCache[id]) ppProgressCache[id]=new Promise(function(resolve){
+    ppProgressQueue.push(function(){
+      return ppSheetFetch('progress='+encodeURIComponent(id)).then(function(r){ resolve(r.progress||null); },function(){ resolve(null); });
+    });
+    ppPumpProgress();
+  });
+  return ppProgressCache[id];
+}
+function ppPumpProgress(){
+  while(ppProgressActive<4&&ppProgressQueue.length){
+    var job=ppProgressQueue.shift(); ppProgressActive++;
+    job().then(function(){ ppProgressActive--; ppPumpProgress(); });
+  }
+}
+function ppProgressBarHtml(pr){
+  if(!pr) return '<span style="font-size:12px;color:var(--text3)">Progress unavailable</span>';
+  if(!pr.total) return '<span style="font-size:12px;color:var(--text3)">No items yet</span>';
+  var pct=Math.round(pr.done/pr.total*100);
+  return '<div style="display:flex;align-items:center;gap:8px;min-width:0"><div style="flex:1;min-width:80px;height:8px;border-radius:4px;background:var(--surface2);overflow:hidden"><div style="height:100%;width:'+pct+'%;background:var(--green)"></div></div>'
+    +'<span style="font-size:12px;color:var(--text2);white-space:nowrap">'+pr.done+' / '+pr.total+' · '+pct+'%</span></div>'
+    +(pr.progressLabel?'<div style="font-size:11px;color:var(--text3);margin-top:2px">Counting “'+esc(pr.progressLabel)+'”</div>':'');
+}
+// Fills every [data-pp-prog] slot under root once its sheet's progress arrives.
+function ppFillProgress(root){
+  root.querySelectorAll('[data-pp-prog]').forEach(function(el){
+    var id=el.getAttribute('data-pp-prog');
+    ppProgress(id).then(function(pr){
+      if(!el.isConnected) return;
+      el.innerHTML=ppProgressBarHtml(pr);
+      var link=root.querySelector('[data-pp-open="'+id+'"]');
+      if(link&&pr&&pr.permalink){ link.href=pr.permalink; link.style.display=''; }
+    });
+  });
+}
+var ppAccountSheets={};   // key -> {sheets}|{error}
+async function ppRenderAccount(key){
+  var root=ppEl(); if(!root) return; var a=PP_ACCOUNTS[key];
+  root.innerHTML='<div class="empty"><div class="empty-icon">'+a.icon+'</div><p>Loading…</p></div>';
+  var data;
+  try{ data=await ppFetch(''); }
+  catch(e){ root.innerHTML='<div class="empty"><p style="color:var(--red)">Couldn’t load project plans. Please try again.</p></div>'; return; }
+  if(ppView!==key) return;
+  var canEdit=!!data.canEdit, plans=(data.plans||[]).filter(function(p){ return ppAccountOf(p)===key; });
+  ppCurrent=null; ppEditingId=null;
+  var head='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><h1>'+a.icon+' '+esc(a.label)+'</h1><p>'+esc(a.label)+' plans'+(a.sheets?' and job sheets':'')+' — start new work and see how it’s going.</p></div>'
+    +(canEdit?'<button class="btn btn-primary btn-sm" onclick="ppNewAccountPlan(\''+key+'\')">+ New '+esc(a.label)+' plan</button>':'')+'</div>';
+  var plansHtml='<div class="pp-sec"><div class="pp-sec-h">Plans ('+plans.length+')</div>'+(plans.length?'<div class="pp-list">'+plans.map(function(p){
+    var meta=[];
+    if(p.discTotal) meta.push('<span>Disconnect '+Number(p.discTotal).toLocaleString()+' HC</span>');
+    if(p.reconTotal) meta.push('<span>Reconnect '+Number(p.reconTotal).toLocaleString()+' HC</span>');
+    if(p.mapCount) meta.push('<span>🗺️ '+p.mapCount+' map'+(p.mapCount>1?'s':'')+'</span>');
+    if(p.updatedAt) meta.push('<span>Updated '+ppWhen(p.updatedAt)+'</span>');
+    var prog=p.sheet&&p.sheet.id&&canEdit?'<div style="margin-top:8px" data-pp-prog="'+esc(p.sheet.id)+'"><span style="font-size:12px;color:var(--text3)">Loading progress…</span></div>'
+      :(p.sheet&&p.sheet.id?'':'<div style="margin-top:8px;font-size:12px;color:var(--text3)">No Smartsheet linked'+(key==='amazon'?' (Amazon tracks in its own Smartsheet)':'')+'</div>');
+    return '<button class="pp-card" onclick="openPlan(\''+esc(p.id)+'\')"><div class="pp-card-top"><span class="pp-card-title">'+(esc(p.project)||'Untitled plan')+'</span>'+(p.bisDate?'<span class="pp-card-sub">BIS '+esc(p.bisDate)+'</span>':'')+'</div>'
+      +(p.projectId?'<div class="pp-card-sub">'+esc(p.projectId)+'</div>':'')+(meta.length?'<div class="pp-card-meta">'+meta.join('')+'</div>':'')+prog+'</button>';
+  }).join('')+'</div>':'<div style="font-size:13px;color:var(--text3)">No '+esc(a.label)+' plans yet.'+(canEdit?' Click “+ New '+esc(a.label)+' plan”'+(a.sheets?', or “+ Plan” on a job sheet below':'')+'.':'')+'</div>')+'</div>';
+  var sheetsHtml='';
+  if(!a.sheets){
+    sheetsHtml='<div class="pp-sec" style="font-size:13px;color:var(--text3)">Amazon tracks its jobs in its own Smartsheet account, which Jet City can’t open, so there’s no job-sheet list here.</div>';
+  } else if(canEdit){
+    sheetsHtml='<div class="pp-sec"><div class="pp-sec-h">Job sheets in the '+esc(a.label)+' Smartsheet workspace</div><div data-pp-acct-sheets><span style="font-size:13px;color:var(--text3)">Loading…</span></div></div>';
+  }
+  root.innerHTML=head+ppNavHtml()+plansHtml+sheetsHtml;
+  ppFillProgress(root);
+  if(a.sheets&&canEdit) ppLoadAccountSheets(key);
+}
+async function ppLoadAccountSheets(key){
+  if(!ppAccountSheets[key]){
+    try{
+      var token=await getApiToken();
+      var res=await fetch('/api/plan-accounts/'+key+'/sheets',{headers:{'X-Jetcity-Authorization':'Bearer '+token}});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      ppAccountSheets[key]={sheets:(await res.json()).sheets||[], shown:12};
+    }catch(e){ ppAccountSheets[key]={error:'Couldn’t load the Smartsheet workspace: '+e.message}; }
+  }
+  ppPaintAccountSheets(key);
+}
+function ppPaintAccountSheets(key){
+  var root=ppEl(); if(!root||ppView!==key) return;
+  var box=root.querySelector('[data-pp-acct-sheets]'); if(!box) return;
+  var st=ppAccountSheets[key];
+  if(st.error){ box.innerHTML='<span style="font-size:13px;color:var(--red)">'+esc(st.error)+'</span>'; return; }
+  if(!st.sheets.length){ box.innerHTML='<span style="font-size:13px;color:var(--text3)">No job sheets in this workspace.</span>'; return; }
+  var list=st.sheets.slice(0,st.shown);
+  box.innerHTML='<div style="display:grid;gap:8px">'+list.map(function(s){
+    return '<div class="pp-box" style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center">'
+      +'<div style="min-width:0"><div style="font-weight:600;font-size:14px;overflow-wrap:anywhere">'+esc(s.name)+'</div><div style="font-size:12px;color:var(--text3)">'+(s.modifiedAt?'Updated '+ppWhen(s.modifiedAt):'')+'</div></div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><a class="btn btn-sm" data-pp-open="'+esc(s.id)+'" target="_blank" rel="noopener" style="display:none">Open ↗</a>'
+      +'<button type="button" class="btn btn-sm" onclick="ppPlanFromSheet(\''+key+'\',\''+esc(s.id)+'\')">+ Plan</button></div>'
+      +'<div style="grid-column:1/-1" data-pp-prog="'+esc(s.id)+'"><span style="font-size:12px;color:var(--text3)">Loading progress…</span></div></div>';
+  }).join('')+'</div>'
+    +(st.sheets.length>st.shown?'<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="ppMoreAccountSheets(\''+key+'\')">Show more ('+(st.sheets.length-st.shown)+')</button>':'');
+  ppFillProgress(box);
+}
+function ppMoreAccountSheets(key){ var st=ppAccountSheets[key]; if(st&&st.sheets){ st.shown+=12; ppPaintAccountSheets(key); } }
+function ppNewAccountPlan(key){ openPlanEdit({account:key}); }
+// "+ Plan" on a job sheet: a new plan for this client, named after the sheet
+// and already linked to it (nothing is saved until the planner clicks Save).
+async function ppPlanFromSheet(key,id){
+  var st=ppAccountSheets[key], s=st&&st.sheets&&st.sheets.find(function(x){ return x.id===id; });
+  var pr=await ppProgress(id);
+  openPlanEdit({account:key, project:s?s.name:'', sheet:{id:id, name:s?s.name:id, url:(pr&&pr.permalink)||''}});
 }
 
 // ── T-Mobile view (Project Planning) ──────────────────────────────────────────
@@ -8368,7 +8501,7 @@ function ppDetailBodyHtml(p){
 
 function ppRenderDetail(p,canEdit){
   var root=ppEl(); if(!root) return; p=p||{}; ppCurrent=p;
-  var sub=[]; if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
+  var sub=[]; var acct=PP_ACCOUNTS[ppAccountOf(p)]; if(acct) sub.push(acct.icon+' '+esc(acct.label)); if(p.projectId) sub.push(esc(p.projectId)); if(p.planDate) sub.push(esc(p.planDate));
   var html='<div class="section-head" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap"><div><button class="btn btn-ghost btn-sm pp-noprint" onclick="renderPlanning()" style="margin-bottom:8px">← All plans</button><h1 style="margin:0">'+(esc(p.project)||'Untitled plan')+'</h1>'+(sub.length?'<p style="margin-top:4px">'+sub.join(' · ')+'</p>':'')+'</div>'+(p.bisDate?'<span style="background:var(--red);color:#fff;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;white-space:nowrap">BIS deadline '+esc(p.bisDate)+'</span>':'')+'</div>';
   html+=ppDetailBodyHtml(p);
   html+='<div class="pp-sec pp-noprint" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:14px">';
@@ -8401,7 +8534,10 @@ function openPlanEdit(plan){
     +'<button type="button" class="btn btn-sm" data-pp-link style="color:var(--text);font-weight:600">🔗 Link to calendar</button>'
     +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>'
     +(currentUserIsTester?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor map</button>':'')+'</div></div>'
-    +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')+'</div>'
+    +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')
+    +'<label class="dp-fld" style="margin-top:10px">Client group</label><select data-f="account" style="width:100%">'
+    +[['','None (All plans only)']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; })).map(function(o){
+      var cur=ppAccountOf(plan); return '<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+esc(o[1])+'</option>'; }).join('')+'</select></div>'
     +'<div><label class="dp-fld">Plan date</label>'+ppInput('planDate',plan.planDate,'Sep 11, 2026')+'</div>'
     +'<div><label class="dp-fld">BIS deadline</label>'+ppInput('bisDate',plan.bisDate,'Sep 21')+'</div></div>';
   html+=sect('managers','Project managers (client)',rowsHtml(plan.managers,ppContactErow,'managers'));
@@ -8423,7 +8559,7 @@ function ppCollectRows(root,id){ var out=[]; var c=root.querySelector('[data-row
 async function ppSave(root){
   var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
   var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
-  var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'),
+  var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'), account:g('account'),
     jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null, maps:ppEditingMaps,
     scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
     managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
