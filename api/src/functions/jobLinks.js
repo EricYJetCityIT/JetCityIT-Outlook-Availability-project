@@ -9,7 +9,7 @@ const { audit } = require('../lib/audit');
 // shared `dispatch` container, id-namespaced `joblink:<jobId>` (jobId is the
 // app's "ss-<rowId>").
 //   GET    /api/job-links            -> { links: { <jobId>: {id,name,url} },     (any signed-in user)
-//                                          planLinks: { <project, lowercased>: {planId, sheet, maps} } }
+//                                          planLinks: { <project, lowercased>: {planId, sheet, maps, attachments} } }
 //   PUT    /api/job-links/{jobId}    -> body { sheet: {id,name,url} }         (Editors)
 //   DELETE /api/job-links/{jobId}                                             (Editors)
 const CONTAINER_ID = 'dispatch';
@@ -50,7 +50,7 @@ app.http('jobLinks', {
         // "Project plan" button). Only the links are sent, not the plan body.
         // Newest plan wins when several share a name.
         const { resources: plans } = await container.items.query({
-          query: 'SELECT c.id, c.project, c.sheet, c.maps, c.updatedAt FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
+          query: 'SELECT c.id, c.project, c.sheet, c.maps, c.attachments, c.updatedAt FROM c WHERE STARTSWITH(c.id, @p) ORDER BY c.updatedAt DESC',
           parameters: [{ name: '@p', value: PLAN_PREFIX }],
         }).fetchAll();
         const planLinks = {};
@@ -59,9 +59,11 @@ app.http('jobLinks', {
           if (!key) return;
           const sheet = p.sheet && p.sheet.id ? { id: p.sheet.id, name: p.sheet.name || '', url: p.sheet.url || '' } : null;
           const maps = Array.isArray(p.maps) ? p.maps.filter((m) => m && m.id).map((m) => ({ id: m.id, name: m.name || '' })) : [];
-          const cur = planLinks[key] || (planLinks[key] = { planId: p.id, sheet: null, maps: [] });
+          const files = Array.isArray(p.attachments) ? p.attachments.filter((a) => a && a.id).map((a) => ({ id: String(a.id), name: a.name || 'File', mimeType: a.mimeType || '' })) : [];
+          const cur = planLinks[key] || (planLinks[key] = { planId: p.id, sheet: null, maps: [], attachments: [] });
           if (!cur.sheet && sheet) cur.sheet = sheet;
           if (!cur.maps.length && maps.length) cur.maps = maps;
+          if (!cur.attachments.length && files.length) cur.attachments = files;
         });
         return { jsonBody: { links, planLinks } };
       }

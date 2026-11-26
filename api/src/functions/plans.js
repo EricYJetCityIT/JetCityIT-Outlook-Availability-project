@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 const { requireUser, requirePlanner, requireEditorOrPlanner, authErrorResponse, AuthError } = require('../lib/auth');
 const { getContainer } = require('../lib/cosmos');
 const ss = require('../lib/smartsheet');
+const { audit } = require('../lib/audit');
 
 // Project plans (the "Project Planning" tab). Any signed-in @jetcityit.com user
 // can READ a plan (crew pull it up on-site); only the Project Planners group
@@ -17,6 +18,8 @@ const ss = require('../lib/smartsheet');
 // FROM, e.g. "ss-123") — informational only, not used for the name lookup.
 const CONTAINER_ID = 'dispatch';
 const ID_PREFIX = 'plan:';
+const MAX_PLAN_FILES = 30;
+const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB, same as job attachments
 
 const MAX = {
   contacts: 20,   // managers + leads each
@@ -91,6 +94,16 @@ function sanitizeAccount(v) {
   return ACCOUNTS.includes(s) ? s : '';
 }
 
+// A file attached to the plan ({id, name, mimeType}) -- id is a SHEET-level
+// attachment on the crew calendar sheet (uploaded via POST /api/plan-files),
+// so the job popup's existing /api/attachment/{id} viewer opens it as-is.
+function sanitizeAttachment(a) {
+  if (!a || typeof a !== 'object') return null;
+  const id = clean(a.id, 24);
+  if (!/^\d+$/.test(id)) return null;
+  return { id, name: clean(a.name, 200) || 'File', mimeType: clean(a.mimeType, 120) };
+}
+
 function arr(v, fn, cap) {
   return (Array.isArray(v) ? v : []).map(fn).filter(Boolean).slice(0, cap);
 }
@@ -107,6 +120,7 @@ function sanitizePlan(body, id, user) {
     account: sanitizeAccount(body.account),
     sheet: sanitizeSheet(body.sheet),
     maps: arr(body.maps, sanitizeMap, 20),
+    attachments: arr(body.attachments, sanitizeAttachment, MAX_PLAN_FILES),
     planDate: clean(body.planDate, 60),
     bisDate: clean(body.bisDate, 60),
     managers: arr(body.managers, sanitizeContact, MAX.contacts),
@@ -265,6 +279,64 @@ app.http('planSheets', {
       if (e instanceof AuthError) return authErrorResponse(e, context);
       try { context.error(e); } catch (_) { /* logging must never break the response */ }
       return { status: 500, jsonBody: { error: 'Smartsheet lookup failed' } };
+    }
+  },
+});
+
+// "📎 Add attachment" on the plan form (Project Planners only).
+// POST /api/plan-files  (multipart, one part per file) -> { files: [{id, name, mimeType}] }
+// Each file becomes a SHEET-level attachment on the crew calendar sheet -- the
+// same sheet job attachments live on (as row attachments), so no new storage
+// and the existing viewer (/api/attachment/{id}) opens them for any signed-in
+// user, like job files. Sheet-level attachments are not synced onto any job.
+// The form keeps the returned list and saves it on the plan (plan.attachments);
+// removing one from a plan only unlinks it -- the file stays in Smartsheet.
+function planFileTypeAllowed(mime, name) {
+  const t = String(mime || '');
+  if (/^image\//i.test(t) || /^application\/pdf$/i.test(t)) return true;
+  if (/wordprocessingml|spreadsheetml|^application\/msword$|^application\/vnd\.ms-excel$/i.test(t)) return true;
+  return /\.(jpe?g|png|gif|webp|heic|heif|bmp|tiff?|pdf|docx?|xlsx?)$/i.test(String(name || ''));
+}
+
+app.http('planFiles', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'plan-files',
+  handler: async (request, context) => {
+    try {
+      const user = await requireUser(request);
+      requirePlanner(user);
+      let form;
+      try { form = await request.formData(); } catch (_) { return { status: 400, jsonBody: { error: 'Expected a multipart file upload' } }; }
+      const files = [];
+      for (const value of form.values()) {
+        if (value && typeof value === 'object' && typeof value.arrayBuffer === 'function') files.push(value);
+      }
+      if (!files.length) return { status: 400, jsonBody: { error: 'No file was uploaded' } };
+      if (files.length > 10) return { status: 400, jsonBody: { error: 'Too many files at once (max 10)' } };
+      // Check every file before uploading any, so a bad one doesn't leave half a batch behind.
+      const ready = [];
+      for (const file of files) {
+        const name = clean(file.name, 180) || 'file';
+        if (!planFileTypeAllowed(file.type, name)) return { status: 400, jsonBody: { error: `Unsupported file type: ${name}. Pictures, PDFs, Word and Excel files only.` } };
+        const bytes = Buffer.from(await file.arrayBuffer());
+        if (!bytes.length) continue;
+        if (bytes.length > MAX_FILE_BYTES) return { status: 400, jsonBody: { error: `"${name}" is too large (max 25 MB).` } };
+        ready.push({ name, type: file.type || 'application/octet-stream', bytes });
+      }
+      if (!ready.length) return { status: 400, jsonBody: { error: 'No file was uploaded' } };
+      const out = [];
+      for (const f of ready) {
+        const att = await ss.addSheetAttachment(ss.getSheetId(), `Project plan - ${f.name.replace(/[\/:*?"<>|]+/g, ' ')}`, f.type, f.bytes);
+        if (!att || !att.id) throw new Error('Smartsheet did not return an attachment id');
+        out.push({ id: String(att.id), name: f.name, mimeType: att.mimeType || f.type });
+      }
+      audit(context, user, 'plan.attach', { count: out.length });
+      return { jsonBody: { files: out } };
+    } catch (e) {
+      if (e instanceof AuthError) return authErrorResponse(e, context);
+      try { context.error(e); } catch (_) { /* logging must never break the response */ }
+      return { status: 500, jsonBody: { error: 'Could not attach the file' } };
     }
   },
 });

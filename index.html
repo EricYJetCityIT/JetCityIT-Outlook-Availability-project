@@ -7390,7 +7390,8 @@ const JCITDispatch=(function(){
             </div>
           </div>`
         : (j.notes?`<div class="dp-wk-job-line" style="color:var(--text3)">${esc(j.notes)}</div>`:'')}
-      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}`,
+      ${(j.attachments&&j.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(j.attachments)}</div>`:''}
+      ${(()=>{ const p=planLinksOf(j); return (p&&p.attachments&&p.attachments.length)?`<div class="dp-wk-job-line" style="align-items:flex-start">${attListHtml(p.attachments)} <span style="color:var(--text3);font-size:12px;white-space:nowrap">(from project plan)</span></div>`:''; })()}`,
       `<div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn btn-primary btn-sm" href="${esc(reportUrl)}" target="_blank" rel="noopener">📝 Daily report</a><button class="btn btn-sm" data-dpact="planlink" data-id="${j.id}">📋 Project plan</button>${(currentUserIsPlanner&&!isManagerView)?`<button class="btn btn-sm" data-dpact="floormaplink" data-id="${j.id}">🗺️ Floor plan</button>`:''}${(j.address&&!isManagerView&&!isOnlineLocation(j.address))?`<button class="btn btn-sm" onclick="openParkingList(this.getAttribute('data-addr'))" data-addr="${esc(mapQuery(j.address))}">🅿️ Parking</button>`:''}${j.reportReceived?`<button class="btn btn-sm" data-dpact="viewreport" data-id="${j.id}">📄 View report</button>`:''}${isDispatch?`<button class="btn btn-sm" data-dpact="edit" data-id="${j.id}">✏️ Edit job</button><button class="btn btn-sm" data-dpact="assign-open" data-id="${j.id}">Assign crew</button>`:''}${isDispatch?(j.status==='Cancelled'?`<button class="btn btn-sm" data-dpact="cancel-job" data-id="${j.id}" data-status="">↩ Restore job</button>`:`<button class="btn btn-sm dp-btn-cancel" data-dpact="cancel-job" data-id="${j.id}" data-status="Cancelled">🚫 Cancel job</button>`):''}${isDispatch?`<button class="btn btn-sm dp-btn-danger" data-dpact="delete-open" data-id="${j.id}">🗑 Delete job</button>`:''}${isReports?(j.reportReceived?`<button class="btn btn-sm dp-btn-rpt-done" data-dpact="report-received" data-id="${j.id}" data-received="0">✓ Report complete</button>`:`<button class="btn btn-primary btn-sm" data-dpact="report-received" data-id="${j.id}" data-received="1">✓ Mark report complete</button>`):''}</div><button class="btn btn-sm" data-dpact="close">Close</button>`);
   }
   function renderModalRoot(){
@@ -7996,6 +7997,7 @@ var ppEditingId=null;   // id being edited (null = creating a new plan)
 var ppEditingJobId=null;   // linked dispatch job id carried through the edit form (jobId isn't a visible field)
 var ppEditingClient='';    // linked job's client, same treatment
 var ppEditingSheet=null;   // linked Smartsheet {id,name,url} on the edit form, or null
+var ppEditingAtts=[];      // plan files [{id,name,mimeType}] on the edit form (sheet-level attachments on the crew calendar sheet)
 var ppEditingMaps=[];      // linked floor maps [{id,name}] on the edit form (Testers pick them)
 
 function ppEl(){ return document.getElementById('pp-root'); }
@@ -8648,6 +8650,7 @@ function ppDetailBodyHtml(p){
   var chips=function(rows){ return (rows||[]).map(function(r){ return '<span class="pp-chip">'+esc(r.floor||'')+'<b>'+(parseInt(r.hc,10)||0)+'</b></span>'; }).join(''); };
   var html=p.sheet&&p.sheet.id?'<div style="font-size:13px;margin-bottom:12px">📊 Smartsheet: <b>'+ppSheetLinkHtml(p.sheet)+'</b></div>':'';
   html+=ppMapLinksHtml(p);
+  if(Array.isArray(p.attachments)&&p.attachments.length) html+='<div class="pp-noprint" style="font-size:13px;margin-bottom:12px;display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center">📎 Attachments: '+ppAttLinksHtml(p.attachments)+'</div>';
   html+='<div class="pp-two">'+ppContactBox('Project managers (client)',p.managers,true)+ppContactBox('JCIT project leads',p.leads,false)+'</div>';
   if(p.scope) html+='<div class="pp-sec"><div class="pp-sec-h">Move scope</div><div class="pp-scope">'+esc(p.scope)+'</div></div>';
   if((p.disconnect&&p.disconnect.length)||(p.reconnect&&p.reconnect.length)){
@@ -8688,6 +8691,7 @@ function openPlanEdit(plan){
   ppEditingJobId=plan.jobId||null; ppEditingClient=plan.client||'';
   ppEditingSheet=plan.sheet&&plan.sheet.id?plan.sheet:null;
   ppEditingMaps=Array.isArray(plan.maps)?plan.maps.slice():[];
+  ppEditingAtts=Array.isArray(plan.attachments)?plan.attachments.slice():[];
   var isNew=!plan.id;
   var rowsHtml=function(list,fn,arg){ return (list&&list.length?list:[{}]).map(function(x){ return arg?fn(arg,x):fn(x); }).join(''); };
   var sect=function(id,label,rows){ return '<div class="pp-sec"><div class="pp-sec-h">'+label+'</div><div data-rows="'+id+'">'+rows+'</div><button type="button" class="btn btn-ghost btn-sm" data-add="'+id+'" style="margin-top:2px">+ Add row</button></div>'; };
@@ -8697,10 +8701,13 @@ function openPlanEdit(plan){
     +'<div data-pp-linknote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppLinkNoteHtml(plan.project)+'</div>'
     +'<div data-pp-sheetnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppSheetNoteHtml()+'</div>'
     +'<div data-pp-mapnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppMapNoteHtml()+'</div>'
+    +'<div data-pp-attnote style="margin-top:4px;font-size:12px;color:var(--text3)">'+ppAttNoteHtml()+'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'
     +'<button type="button" class="btn btn-sm" data-pp-link style="color:var(--text);font-weight:600">🔗 Link to calendar</button>'
     +'<button type="button" class="btn btn-sm" data-pp-sheet style="color:var(--text);font-weight:600">📊 Link Smartsheet</button>'
-    +(currentUserIsPlanner?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor plan</button>':'')+'</div></div>'
+    +(currentUserIsPlanner?'<button type="button" class="btn btn-sm" data-pp-map style="color:var(--text);font-weight:600">🗺️ Link floor plan</button>':'')
+    +'<button type="button" class="btn btn-sm" data-pp-att style="color:var(--text);font-weight:600">📎 Add attachment</button>'
+    +'<input type="file" data-pp-att-file multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" style="display:none" onchange="ppAttPicked(this)"/></div></div>'
     +'<div><label class="dp-fld">Project ID</label>'+ppInput('projectId',plan.projectId,'P-897202')
     +'<label class="dp-fld" style="margin-top:10px">Client group</label><select data-f="account" style="width:100%">'
     +[['','None (All plans only)']].concat(Object.keys(PP_ACCOUNTS).map(function(k){ return [k,PP_ACCOUNTS[k].icon+' '+PP_ACCOUNTS[k].label]; })).map(function(o){
@@ -8727,11 +8734,12 @@ async function ppSave(root){
   var msg=root.querySelector('[data-msg]'), btn=root.querySelector('[data-save]');
   var g=function(f){ var el=root.querySelector('#pp-form [data-f="'+f+'"]'); return el?el.value.trim():''; };
   var payload={ project:g('project'), projectId:g('projectId'), planDate:g('planDate'), bisDate:g('bisDate'), account:g('account'),
-    jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null, maps:ppEditingMaps,
+    jobId:ppEditingJobId||'', client:ppEditingClient||'', sheet:ppEditingSheet||null, maps:ppEditingMaps, attachments:ppEditingAtts,
     scope:g('scope'), pmhc:g('pmhc'), requirements:g('requirements'),
     managers:ppCollectRows(root,'managers'), leads:ppCollectRows(root,'leads'),
     disconnect:ppCollectRows(root,'disconnect'), reconnect:ppCollectRows(root,'reconnect'), timeline:ppCollectRows(root,'timeline') };
   if(!payload.project){ if(msg){ msg.style.color='var(--red)'; msg.textContent='Add a project name first.'; } var pn=root.querySelector('[data-f="project"]'); if(pn) pn.focus(); return; }
+  if(ppAttUploading){ if(msg){ msg.style.color='var(--red)'; msg.textContent='Wait for the attachments to finish uploading.'; } return; }
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{
     var res=ppEditingId?await ppFetch('/'+encodeURIComponent(ppEditingId),{method:'PUT',body:payload}):await ppFetch('',{method:'POST',body:payload});
@@ -8814,6 +8822,8 @@ function ppOnClick(ev){
   if(ev.target.closest('[data-pp-unlink]')){ ppEditingJobId=null; ppEditingClient=''; ppRenderLinkNote(root); return; }
   if(ev.target.closest('[data-pp-sheet]')){ ppPickSheetModal(function(sheet){ ppEditingSheet=sheet; ppRenderSheetNote(root); }); return; }
   if(ev.target.closest('[data-pp-sheet-unlink]')){ ppEditingSheet=null; ppRenderSheetNote(root); return; }
+  if(ev.target.closest('[data-pp-att]')){ var fi=root.querySelector('[data-pp-att-file]'); if(fi) fi.click(); return; }
+  var au=ev.target.closest('[data-pp-att-unlink]'); if(au){ var aid=au.getAttribute('data-pp-att-unlink'); ppEditingAtts=ppEditingAtts.filter(function(x){ return String(x.id)!==aid; }); ppRenderAttNote(root); return; }
   if(ev.target.closest('[data-pp-map]')){ ppPickMapModal(function(m){ if(!ppEditingMaps.some(function(x){ return x.id===m.id; })) ppEditingMaps.push(m); ppRenderMapNote(root); }); return; }
   var mu=ev.target.closest('[data-pp-map-unlink]'); if(mu){ var mid=mu.getAttribute('data-pp-map-unlink'); ppEditingMaps=ppEditingMaps.filter(function(x){ return x.id!==mid; }); ppRenderMapNote(root); return; }
   if(ev.target.closest('[data-save]')){ ppSave(root); return; }
@@ -8920,6 +8930,40 @@ function ppMapNoteHtml(){
   }).join(' · ');
 }
 function ppRenderMapNote(root){ var n=root.querySelector('[data-pp-mapnote]'); if(n) n.innerHTML=ppMapNoteHtml(); }
+// Plan files (plan.attachments = [{id,name,mimeType}]). Each one is uploaded
+// straight away via POST /api/plan-files (a sheet-level attachment on the crew
+// calendar sheet) and saved with the plan; calendar jobs sharing the plan's
+// project name show them too. Links use data-dpact="attachment", so the
+// calendar's in-app viewer (delegated on document) opens them anywhere.
+var ppAttUploading=0;
+function ppAttIcon(m){ return String(m||'').toLowerCase().indexOf('image/')===0?'🖼️':'📄'; }
+function ppAttLinksHtml(list){
+  return (list||[]).map(function(a){ return '<a href="#" data-dpact="attachment" data-att-id="'+esc(String(a.id))+'" data-att-name="'+esc(a.name||'File')+'" data-att-mime="'+esc(a.mimeType||'')+'">'+ppAttIcon(a.mimeType)+' '+esc(a.name||'File')+'</a>'; }).join(' ');
+}
+function ppAttNoteHtml(){
+  var h=ppEditingAtts.length?'📎 Attachments: '+ppEditingAtts.map(function(a){
+    return '<b>'+ppAttLinksHtml([a])+'</b> <button type="button" class="btn btn-ghost btn-sm" data-pp-att-unlink="'+esc(String(a.id))+'" style="padding:0 4px;font-size:11px">Remove</button>';
+  }).join(' · '):'';
+  if(ppAttUploading) h+=(h?' · ':'')+'Uploading '+ppAttUploading+' file'+(ppAttUploading>1?'s':'')+'…';
+  return h;
+}
+function ppRenderAttNote(root){ root=root||ppEl(); var n=root&&root.querySelector('[data-pp-attnote]'); if(n) n.innerHTML=ppAttNoteHtml(); }
+async function ppAttPicked(input){
+  var files=Array.prototype.slice.call(input.files||[]); input.value='';
+  if(!files.length) return;
+  if(files.length>10){ alert('Pick up to 10 files at a time.'); return; }
+  var big=files.filter(function(f){ return f.size>25*1024*1024; });
+  if(big.length){ alert('“'+big[0].name+'” is too large (max 25 MB).'); return; }
+  ppAttUploading+=files.length; ppRenderAttNote();
+  try{
+    var token=await getApiToken(), fd=new FormData();
+    files.forEach(function(f,i){ fd.append('file'+i,f,f.name); });
+    var res=await fetch('/api/plan-files',{method:'POST',headers:{'X-Jetcity-Authorization':'Bearer '+token},body:fd});
+    if(!res.ok){ var m='HTTP '+res.status; try{ var j=await res.json(); if(j&&j.error) m=j.error; }catch(_){ } throw new Error(m); }
+    ((await res.json()).files||[]).forEach(function(a){ ppEditingAtts.push(a); });
+  }catch(e){ alert('Couldn’t attach: '+String(e.message||e).slice(0,160)); }
+  finally{ ppAttUploading=Math.max(0,ppAttUploading-files.length); ppRenderAttNote(); }
+}
 function ppMapLinksHtml(p){
   if(!currentUserIsPlanner||!p||!Array.isArray(p.maps)||!p.maps.length) return '';
   return '<div class="pp-noprint" style="font-size:13px;margin-bottom:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">🗺️ Floor plans:'

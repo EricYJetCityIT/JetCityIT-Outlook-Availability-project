@@ -1274,6 +1274,7 @@ async function deleteSheetAttachment(sheetId, attachmentId) {
 module.exports = {
   fetchSheet,
   addSheetAttachment,
+  getSheetId,
   deleteSheetAttachment,
   fetchAllWorkspaces,
   searchSheets,
